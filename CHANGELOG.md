@@ -20,6 +20,14 @@
   `decompress_to_uninit` as `MaybeUninit<u8>`, so an uninitialized C buffer is
   no longer viewed as `&mut [u8]`. The ABI and its results are unchanged.
   FFI_PLACEHOLDER
+- Add the `encoder_session` and `decoder_session` AFL targets, which own
+  session coverage for both codecs: borrowed and owned sessions with `process`
+  and `process_uninit` mixed call by call, the `flush` and `finish`
+  shorthands, idempotence after `Finished`, no writes past `produced`, `reinit`
+  from every state an owned session can be in, and the codec an owned session
+  hands back. `streaming_equivalence`, `output_capacity` and `decompress` check
+  `compress_to_uninit` and `decompress_to_uninit`. Both targets run in the
+  `CI Fuzz` matrix and their regression corpora in `ci.yml`.
 - `EncoderConfig::new()`, `DecoderConfig::new()`, and, behind `experimental`,
   `FramedEncodeConfig::new()` and `FramedDecodeConfig::new()` return the
   default configuration as a `const fn`, so configurations can be built in

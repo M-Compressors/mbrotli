@@ -55,7 +55,7 @@ export AFL_SKIP_CPUFREQ=1 AFL_NO_AFFINITY=1 AFL_I_DONT_CARE_ABOUT_MISSING_CRASHE
 stable="q0_roundtrip q1_roundtrip q3_roundtrip q4_roundtrip q5_roundtrip q6_roundtrip \
 q7_roundtrip q8_roundtrip q9_roundtrip q10_roundtrip q11_roundtrip params_roundtrip \
 simd_equivalence differential_c streaming_equivalence output_capacity parameter_parsing \
-large_window dictionary compressor_lifecycle parallel decode_roundtrip c_abi"
+large_window dictionary compressor_lifecycle parallel decode_roundtrip c_abi encoder_session"
 experimental="$stable serialized_dictionary framing"
 
 seeds_for() {

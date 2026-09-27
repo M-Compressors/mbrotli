@@ -56,7 +56,7 @@ mkdir -p "$root"
 export AFL_SKIP_CPUFREQ=1 AFL_NO_AFFINITY=1 AFL_I_DONT_CARE_ABOUT_MISSING_CRASHES=1 AFL_NO_UI=1
 
 base="decompress decode_streaming decode_roundtrip decode_dictionary \
-decode_lifecycle decode_io_limits"
+decode_lifecycle decode_io_limits decoder_session"
 experimental="$base decode_serialized"
 
 # Set SEED_ROOT to carry a previous campaign's exploration forward: when
@@ -68,7 +68,7 @@ seeds_for() {
         return
     fi
     case "$2" in
-        decompress | decode_streaming | decode_io_limits) echo seeds/decoder ;;
+        decompress | decode_streaming | decode_io_limits | decoder_session) echo seeds/decoder ;;
         decode_roundtrip) echo seeds/params ;;
         *) echo "regressions/$2" ;;
     esac

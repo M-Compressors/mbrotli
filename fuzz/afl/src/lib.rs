@@ -20,6 +20,7 @@ use std::ffi::c_int;
 pub mod c_abi_targets;
 mod decode_oracle;
 pub mod decode_targets;
+pub mod session_targets;
 pub mod targets;
 
 /// Every quality this crate implements.

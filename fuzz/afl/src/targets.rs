@@ -51,6 +51,8 @@ pub const TARGETS: &[(&str, TargetFn)] = &[
     ("decode_lifecycle", crate::decode_targets::decode_lifecycle),
     ("decode_io_limits", crate::decode_targets::decode_io_limits),
     ("decode_streaming", crate::decode_targets::decode_streaming),
+    ("decoder_session", crate::session_targets::decoder_session),
+    ("encoder_session", crate::session_targets::encoder_session),
     ("parallel", parallel),
     ("q0_roundtrip", q0_roundtrip),
     ("q1_roundtrip", q1_roundtrip),
@@ -227,34 +229,10 @@ pub fn streaming_equivalence(ctx: &Context, input: &[u8]) {
         }
     };
 
-    let session = drive_session(
-        &mut encoder,
-        case.data,
-        case.chunk.max(1),
-        case.stream,
-        false,
-    );
-    let uninit = drive_session(
-        &mut encoder,
-        case.data,
-        case.chunk.max(1),
-        case.stream,
-        true,
-    );
+    let session = drive_session(&mut encoder, case.data, case.chunk.max(1), case.stream);
 
     assert_eq!(written, read, "the writer and reader adapters disagree");
     assert_eq!(written, session, "the writer and the session disagree");
-    assert_eq!(written, uninit, "process and process_uninit disagree");
-    let owned = drive_owned_uninit(
-        ctx.encoder(case.config),
-        case.data,
-        case.chunk.max(1),
-        case.stream,
-    );
-    assert_eq!(
-        written, owned,
-        "the owned session's process_uninit disagrees"
-    );
     assert_round_trip(case.data, &written);
 
     // The stream declares the payload's true length, so it has to reach the
@@ -290,18 +268,15 @@ pub fn streaming_equivalence(ctx: &Context, input: &[u8]) {
     );
 }
 
-/// Drives `data` through a session in `chunk` sized steps, through
-/// `process_uninit` when `uninit` is set.
+/// Drives `data` through a session in `chunk` sized steps.
 fn drive_session(
     encoder: &mut Compressor,
     data: &[u8],
     chunk: usize,
     stream: StreamConfig,
-    uninit: bool,
 ) -> Vec<u8> {
     let mut output = Vec::new();
     let mut buffer = vec![0u8; chunk];
-    let mut spare = sentinel_output(chunk);
     let mut session = encoder.start(stream).expect("a legal stream");
     let mut offset = 0usize;
     loop {
@@ -311,26 +286,9 @@ fn drive_session(
         } else {
             Operation::Process
         };
-        let input = &data[offset..offset + take];
-        let progress = if uninit {
-            let progress = session
-                .process_uninit(input, &mut spare, operation)
-                .expect("the session failed");
-            let bytes = read_output(&spare);
-            assert!(
-                bytes[progress.produced..]
-                    .iter()
-                    .all(|&byte| byte == SENTINEL),
-                "process_uninit wrote past `produced`"
-            );
-            buffer[..progress.produced].copy_from_slice(&bytes[..progress.produced]);
-            spare.fill(std::mem::MaybeUninit::new(SENTINEL));
-            progress
-        } else {
-            session
-                .process(input, &mut buffer, operation)
-                .expect("the session failed")
-        };
+        let progress = session
+            .process(&data[offset..offset + take], &mut buffer, operation)
+            .expect("the session failed");
         // A call that moved nothing has to say why, or a caller would spin.
         assert!(
             progress.consumed > 0
@@ -350,52 +308,6 @@ fn drive_session(
             return output;
         }
     }
-}
-
-/// Drives `data` through an owned session's `process_uninit` in `chunk`
-/// sized steps, then checks the compressor it hands back still works.
-fn drive_owned_uninit(
-    compressor: Compressor,
-    data: &[u8],
-    chunk: usize,
-    stream: StreamConfig,
-) -> Vec<u8> {
-    let mut session = compressor.into_session(stream).expect("a legal stream");
-    let mut spare = sentinel_output(chunk);
-    let mut output = Vec::new();
-    let mut offset = 0usize;
-    loop {
-        let take = (data.len() - offset).min(chunk);
-        let operation = if offset + take == data.len() {
-            Operation::Finish
-        } else {
-            Operation::Process
-        };
-        let progress = session
-            .process_uninit(&data[offset..offset + take], &mut spare, operation)
-            .expect("the owned session failed");
-        let bytes = read_output(&spare);
-        assert!(
-            bytes[progress.produced..]
-                .iter()
-                .all(|&byte| byte == SENTINEL),
-            "the owned process_uninit wrote past `produced`"
-        );
-        output.extend_from_slice(&bytes[..progress.produced]);
-        spare.fill(std::mem::MaybeUninit::new(SENTINEL));
-        offset += progress.consumed;
-        if progress.status == EncoderStatus::Finished {
-            assert!(session.is_finished());
-            break;
-        }
-    }
-    let mut compressor = session.into_compressor();
-    assert_eq!(
-        compressor.compress(data).expect("compression failed"),
-        output,
-        "the returned compressor disagrees with its own session"
-    );
-    output
 }
 
 /// The slice entry point must respect an exact and a one-byte-short buffer.

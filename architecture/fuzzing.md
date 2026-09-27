@@ -21,12 +21,12 @@ enabling the serialized dictionary parser and its C oracle together. The targets
 `serialized_dictionary`, `framing`, `decode_serialized`, `framed_decode`, and
 `framed_roundtrip` require it: their
 Cargo binary entries, target bodies, private helpers, C helpers, and `TARGETS`
-entries share the gate. The default build contains 28 targets; enabling the
-feature contains all 33.
+entries share the gate. The default build contains 30 targets; enabling the
+feature contains all 36.
 
 ```mermaid
 flowchart TD
-    Build[Fuzz package feature selection] --> Stable[28 stable targets and regression corpora]
+    Build[Fuzz package feature selection] --> Stable[30 stable targets and regression corpora]
     Build --> Enabled{experimental enabled?}
     Enabled -->|yes| Dependencies[Rust experimental APIs and C experimental oracle]
     Dependencies --> Extra[Serialized dictionary, framing and decode_serialized binaries and bodies]
@@ -157,7 +157,8 @@ target that can reach the validating conversions and the large-window refusal.
 | `params_roundtrip` | header | bound, round-trip, and that a reused compressor, a second call on it and a fresh one all agree, over every legal setting |
 | `simd_equivalence` | header | every distinct host backend emits identical bytes |
 | `differential_c` | header | byte identity with Google Brotli v1.2.0 streaming FINISH configured with the same quality, window, mode, block size, size hint, distance layout and context setting, including empty input |
-| `streaming_equivalence` | header | vector, append, exact slice, uninitialized slice, writer, reader and low-level session (`process` and `process_uninit` on a borrowed session, `process_uninit` on an owned one, the uninitialized calls writing nothing past `produced`, and the owned session's returned compressor still compressing identically) emit identical bytes with declared size at arbitrary chunk sizes, including empty and incompressible inputs; every `process` call that moved nothing reports why; the stream round-trips |
+| `streaming_equivalence` | header | vector, append, exact slice, uninitialized slice (nothing written past the stream), writer, reader and low-level session emit identical bytes with declared size at arbitrary chunk sizes, including empty and incompressible inputs; every `process` call that moved nothing reports why; the stream round-trips |
+| `encoder_session` | header, then a plan byte last | borrowed and owned sessions reach `compress`'s bytes with `process` and `process_uninit` mixed per call by complementary plans and the `flush`/`finish` shorthands; the same flushing schedule gives both shapes identical bytes that round-trip through C; every call reports no more than it was given, and `process_uninit` writes nothing past `produced`; a finished session consumes and produces nothing through any method; `reinit` after finishing, abandoning, flushing and a rejected restart (which fails the session until the next one) starts a stream identical to a fresh one; both compressors still match a fresh one |
 | `output_capacity` | header | exactly sized `dst` accepted, one byte short reported as `OutputTooSmall` by `compress_to_slice` and `compress_to_uninit`, appending preserves the destination's prefix and returns the range it added, and a failed call does not change the next one |
 | `parameter_parsing` | numeric | `TryFrom` and `Window` contracts hold; every legal quality compresses and round-trips; `Compressor::new` refuses a large window at qualities 0 to 2 and accepts it above |
 | `large_window` | large window | `Window::large` contract holds; qualities 0, 1 and 2 refuse when the compressor is built rather than dropping the request; bound, determinism, backend identity; C decoder round-trip up to 30 declared bits, and above it the stream differs from the 30-bit stream only in the six header bits |
@@ -277,7 +278,7 @@ forkserver timeouts during corpus minimization. It measures coverage with the
 target per
 feature configuration, each with its own seed corpus and output directory, all
 bounded by the same wall-clock duration and a fixed execution timeout. The
-`experimental` feature reaches into the encoder, so its 23 stable targets are
+`experimental` feature reaches into the encoder, so its 24 stable targets are
 fuzzed twice — once from each build — and the two experimental-only targets
 once. The builds occupy separate target directories, because the shared
 binaries have the same names.
@@ -362,11 +363,14 @@ absolute offsets and length checks under the same decode/determinism oracle.
 `decode_lifecycle`, and `decode_io_limits` in the base profile, with
 `decode_serialized` gated at binary, body and registry levels by `experimental`.
 The first target compares independent C results and exact member consumption;
-streaming checks one-shot equivalence and cumulative progress, alternating
-`process` and `process_uninit` when the first byte's top bit is set, and
-drives an owned session through `process_uninit` alone to the same outcome,
-with its returned decoder decoding identically; `decompress`
-also compares `decompress_to_uninit` with ring delivery. A successful
+streaming checks one-shot equivalence and cumulative progress; `decompress`
+also compares `decompress_to_uninit` with ring delivery. `session_targets`
+adds `decoder_session`: borrowed and owned sessions driven by complementary
+plans that mix `process`, `process_uninit`, `flush` and `finish` reach the same
+bytes and ending as each other and as one-shot decoding, `process_uninit`
+writes nothing past `produced` even on failure, a finished session stays
+inert, `reinit` after finishing, failing or half a stream reproduces the same
+outcome, and both decoders still match a fresh one. A successful
 bounded arbitrary-input decode is replayed with default limits to exercise
 complete stored-member recognition; the first decode proves that this replay
 can produce at most 64 KiB. Malformed inputs retain the bounded path. Raw/serialized

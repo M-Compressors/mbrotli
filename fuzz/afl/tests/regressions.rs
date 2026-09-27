@@ -84,6 +84,7 @@ fn arbitrary_decoder_bytes_do_not_panic_on_any_host_backend() {
             }
             mbrotli_afl::decode_targets::decompress(&context, &input);
             mbrotli_afl::decode_targets::decode_streaming(&context, &input);
+            mbrotli_afl::session_targets::decoder_session(&context, &input);
         }
     }
 }

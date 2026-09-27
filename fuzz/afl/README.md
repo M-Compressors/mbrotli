@@ -62,14 +62,16 @@ the forkserver for `afl-cmin` folder-mode coverage collection.
 | `params_roundtrip` | `seeds/params` | Legal configurations across qualities 0–11, determinism, and C decoding |
 | `simd_equivalence` | `seeds/params` | Every available host backend agrees; forced scalar equivalence lives in library unit tests |
 | `differential_c` | `seeds/params` | Byte identity with equivalent C streaming settings |
-| `streaming_equivalence` | `seeds/params` | Vector, slice, session, reader, and writer identity |
-| `output_capacity` | `seeds/params` | Exact and undersized output buffers |
+| `streaming_equivalence` | `seeds/params` | Vector, slice, uninitialized slice, session, reader, and writer identity |
+| `encoder_session` | `seeds/params` | Borrowed and owned sessions against `compress`: `process` and `process_uninit` mixed per call by the input's last byte, `flush`/`finish` shorthands, identical flushed streams for both shapes, idempotence after `Finished`, nothing written past `produced`, `reinit` from finished, abandoned, flushed and failed states, and the returned compressor |
+| `output_capacity` | `seeds/params` | Exact and undersized output buffers, initialized and uninitialized |
 | `parameter_parsing` | `seeds/params` | Numeric validation and rejection paths |
 | `large_window` | `seeds/large_window` | Header/quality validation, backend identity, and available C decoding |
 | `dictionary` | `seeds/dictionary` | Preparation limits, prefix matching, quality restrictions, and C compatibility |
 | `compressor_lifecycle` | `regressions/compressor_lifecycle` | Reuse, trim, reconfiguration, failures, abandonment, and recovery |
-| `decompress` | `seeds/decoder` | Arbitrary compressed bytes against the C decoder's typed outcome, plus an unbounded replay of every accepted stream |
+| `decompress` | `seeds/decoder` | Arbitrary compressed bytes against the C decoder's typed outcome, plus an unbounded replay of every accepted stream; `decompress_to_slice` and `decompress_to_uninit` against ring delivery |
 | `decode_streaming` | `seeds/decoder` | Chunked sessions against one-shot decoding: exact progress, cumulative counters, and termination |
+| `decoder_session` | `seeds/decoder` | Borrowed and owned sessions against `decompress`: `process` and `process_uninit` mixed per call by the input's second byte, `flush`/`finish` shorthands, identical outcomes for both shapes, idempotence after `Finished`, nothing written past `produced` even on failure, `reinit` from finished, failed and mid-stream states, and the returned decoder |
 | `decode_io_limits` | `seeds/decoder` | Output budgets crossed with one retryable sink failure, which may neither duplicate nor drop payload |
 | `decode_dictionary` | `regressions/decode_dictionary` | A bounded raw prefix, then attached decoding against C with the same attachment, and reuse determinism |
 | `decode_lifecycle` | `regressions/decode_lifecycle` | Forgotten sessions, abandonment, recovery, trim and reconfiguration between decodes |

@@ -6,9 +6,11 @@ use mbrotli::{
     Decompressor,
 };
 
-const MAX_OUTPUT: usize = 64 * 1024;
+/// Output budget of every decoder target.
+pub(crate) const MAX_OUTPUT: usize = 64 * 1024;
 
-fn config() -> DecoderConfig {
+/// The bounded configuration every decoder target decodes with.
+pub(crate) fn config() -> DecoderConfig {
     DecoderConfig::default().with_limits(
         DecodeLimits::default()
             .with_max_output_bytes(Some(MAX_OUTPUT as u64))
@@ -163,31 +165,18 @@ pub fn decode_streaming(ctx: &Context, data: &[u8]) {
     let expected = decoder.decompress(data);
     let chunk = data.first().map_or(1, |value| usize::from(value % 31) + 1);
     let output_size = data.last().map_or(1, |value| usize::from(value % 31) + 1);
-    // The top input bit sends every other call through `process_uninit`,
-    // which must behave exactly as `process` on the same stream.
-    let alternate = data.first().is_some_and(|value| value & 0x80 != 0);
-    owned_uninit_matches(ctx, data, chunk, output_size, &expected);
     let mut session = decoder.start(DecodeStreamConfig::default()).unwrap();
     let mut cursor = 0;
     let mut actual = Vec::new();
-    for call in 0..data.len() + MAX_OUTPUT + 2 {
+    for _ in 0..data.len() + MAX_OUTPUT + 2 {
         let end = (cursor + chunk).min(data.len());
         let operation = if end == data.len() {
             DecodeOperation::Finish
         } else {
             DecodeOperation::Process
         };
-        let mut output = [SENTINEL; 32];
-        let result = if alternate && call % 2 == 1 {
-            let mut spare = sentinel_output(output.len());
-            let result =
-                session.process_uninit(&data[cursor..end], &mut spare[..output_size], operation);
-            output.copy_from_slice(&read_output(&spare));
-            result
-        } else {
-            session.process(&data[cursor..end], &mut output[..output_size], operation)
-        };
-        match result {
+        let mut output = [0xa5; 32];
+        match session.process(&data[cursor..end], &mut output[..output_size], operation) {
             Err(failure) => {
                 assert!(failure.consumed <= end - cursor && failure.produced <= output_size);
                 assert!(output[output_size..].iter().all(|&byte| byte == 0xa5));
@@ -225,82 +214,6 @@ pub fn decode_streaming(ctx: &Context, data: &[u8]) {
         }
     }
     panic!("decoder exceeded the progress bound");
-}
-
-/// An owned session driven only through `process_uninit` reaches the one-shot
-/// outcome, writes nothing past `produced`, and hands back a decoder that
-/// still decodes the same way.
-fn owned_uninit_matches(
-    ctx: &Context,
-    data: &[u8],
-    chunk: usize,
-    output_size: usize,
-    expected: &Result<Vec<u8>, DecodeError>,
-) {
-    let mut session = Decompressor::builder(config())
-        .with_backend(ctx.level)
-        .build()
-        .unwrap()
-        .into_session(DecodeStreamConfig::default())
-        .unwrap();
-    let mut spare = sentinel_output(output_size);
-    let mut cursor = 0;
-    let mut actual = Vec::new();
-    let mut ended = false;
-    for _ in 0..data.len() + MAX_OUTPUT + 2 {
-        let end = (cursor + chunk).min(data.len());
-        let operation = if end == data.len() {
-            DecodeOperation::Finish
-        } else {
-            DecodeOperation::Process
-        };
-        let result = session.process_uninit(&data[cursor..end], &mut spare, operation);
-        let produced = match &result {
-            Ok(progress) => progress.produced,
-            Err(failure) => failure.produced,
-        };
-        let bytes = read_output(&spare);
-        assert!(
-            bytes[produced..].iter().all(|&byte| byte == SENTINEL),
-            "the owned process_uninit wrote past `produced`"
-        );
-        actual.extend_from_slice(&bytes[..produced]);
-        spare.fill(std::mem::MaybeUninit::new(SENTINEL));
-        match result {
-            Err(_) => {
-                assert!(expected.is_err(), "owned session rejected a valid stream");
-                ended = true;
-                break;
-            }
-            Ok(progress) => {
-                cursor += progress.consumed;
-                if progress.status == DecoderStatus::Finished {
-                    match expected {
-                        Ok(expected) => assert_eq!(&actual, expected),
-                        Err(DecodeError::TrailingData { offset }) => {
-                            assert_eq!(cursor as u64, *offset)
-                        }
-                        Err(error) => {
-                            panic!("owned session finished after one-shot failure: {error}")
-                        }
-                    }
-                    ended = true;
-                    break;
-                }
-                assert!(
-                    progress.consumed != 0 || progress.produced != 0,
-                    "active owned decoder made no progress"
-                );
-            }
-        }
-    }
-    assert!(ended, "owned decoder exceeded the progress bound");
-    let mut decoder = session.into_decompressor();
-    assert_eq!(
-        format!("{:?}", decoder.decompress(data)),
-        format!("{expected:?}"),
-        "the returned decoder disagrees with the one-shot outcome"
-    );
 }
 
 /// Bounded raw prefix construction followed by arbitrary attached decoding.
