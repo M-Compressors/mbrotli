@@ -167,7 +167,7 @@ fn drive_encoder(
             blocks += 1;
             operation = if block_end == data.len() {
                 Operation::Finish
-            } else if flush_every.is_some_and(|every| blocks % every == 0) {
+            } else if flush_every.is_some_and(|every| blocks.is_multiple_of(every)) {
                 Operation::Flush
             } else {
                 Operation::Process
