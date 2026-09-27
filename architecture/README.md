@@ -39,7 +39,7 @@ FFI do not appear in public signatures. Each codec compiles independently.
 | --- | --- |
 | [Codec features](codec-features.md) | Codec gates, shared types and isolated consumer checks. |
 | [No standard library](no-std.md) | Alloc-backed APIs, feature precedence and compile-time SIMD. |
-| [Shared primitives](shared-primitives.md) | Common data, transforms and private ownership. |
+| [Shared primitives](shared-primitives.md) | Common data, transforms, fixed boxed tables and private ownership. |
 
 ## Compression
 

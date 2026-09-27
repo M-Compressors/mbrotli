@@ -28,6 +28,7 @@ use crate::shared::bitstream::{MetaBlockWriter, store_uncompressed_meta_block};
 use crate::shared::command::Command;
 use crate::shared::command::CommandExtension;
 use crate::shared::constants::{OUTPUT_RESERVE_CONST, OUTPUT_SLACK};
+use crate::shared::fixed::grow_zeroed;
 use crate::shared::format::ContextMode;
 use crate::shared::histogram::{HistogramLiteral, bits_entropy};
 use crate::shared::metablock::{MetaBlockSplit, optimize_histograms};
@@ -391,9 +392,7 @@ impl GreedyEncoder {
         else {
             return Err(BrotliCompressError::BufferOverflow);
         };
-        if self.storage.len() < reserve {
-            self.storage = vec![0u8; reserve];
-        }
+        grow_zeroed(&mut self.storage, reserve);
         Ok(())
     }
 

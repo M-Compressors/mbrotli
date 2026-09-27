@@ -145,7 +145,11 @@ errors; consuming `finish` returns the writer inside `FinishError` on failure.
 Dropping an adapter performs no I/O or finalization.
 
 `EncoderReader` owns its source and a cursor-addressed input buffer, writing
-compressed bytes directly into the caller's slice. Empty reads have no side
+compressed bytes directly into the caller's slice. The buffer is sized to its
+64 KiB chunk once, and `input[head..end]` marks the bytes the encoder has not yet
+taken; a refill reads over the previous chunk rather than clearing and
+zero-filling it again, so streaming 64 KiB costs no memset after the first
+read. Empty reads have no side
 effects; interrupted source reads retry. EOF switches to `Finish`. `into_parts`
 returns the source and unaccepted read-ahead bytes.
 

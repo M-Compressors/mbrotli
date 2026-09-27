@@ -1080,6 +1080,10 @@ fn store_data_with_huffman_codes(
     dist_bits: &[u16],
     w: &mut BitWriter,
 ) {
+    // A literal is a byte, so a table of exactly one entry per byte value
+    // needs no bounds check.
+    let lit_depth = &lit_depth[..NUM_LITERAL_SYMBOLS];
+    let lit_bits = &lit_bits[..NUM_LITERAL_SYMBOLS];
     let mut pos = start_pos;
     for command in commands {
         let cmd_code = usize::from(command.cmd_prefix);

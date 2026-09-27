@@ -135,8 +135,9 @@ classDiagram
 
 The hash table and the scratch output buffer grow but never shrink. Only the
 active table range is cleared between fragments; unused capacity is left
-untouched. A buffer that has to grow is replaced by a freshly zeroed
-allocation. The Huffman node pools (`tree`, `tmp_tree`) start empty and are
+untouched. Both grow through `shared::fixed::grow_zeroed`: the first
+allocation comes from the allocator's zeroing path, and a later, larger
+fragment extends the same vector with `resize`, zero-filling only the new tail. The Huffman node pools (`tree`, `tmp_tree`) start empty and are
 sized by each build to the symbols it actually uses, see
 [encoder-workspace.md](encoder-workspace.md).
 

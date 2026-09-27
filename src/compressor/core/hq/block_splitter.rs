@@ -140,10 +140,10 @@ pub(crate) struct SplitArena<const N: usize> {
     new_id: Vec<u16>,
     histogram_symbols: Vec<u32>,
     block_lengths: Vec<u32>,
-    sizes: Vec<u32>,
-    new_clusters: Vec<u32>,
-    symbols: Vec<u32>,
-    remap: Vec<u32>,
+    sizes: [u32; HISTOGRAMS_PER_BATCH],
+    new_clusters: [u32; HISTOGRAMS_PER_BATCH],
+    symbols: [u32; HISTOGRAMS_PER_BATCH],
+    remap: [u32; HISTOGRAMS_PER_BATCH],
     all_histograms: Vec<Histogram<N>>,
     cluster_size: Vec<u32>,
     batch: Vec<Histogram<N>>,
@@ -163,10 +163,6 @@ impl<const N: usize> SplitArena<N> {
             + (self.new_id.capacity()) * size_of::<u16>()
             + (self.histogram_symbols.capacity()
                 + self.block_lengths.capacity()
-                + self.sizes.capacity()
-                + self.new_clusters.capacity()
-                + self.symbols.capacity()
-                + self.remap.capacity()
                 + self.cluster_size.capacity()
                 + self.clusters.capacity()
                 + self.new_index.capacity())
@@ -188,10 +184,10 @@ impl<const N: usize> Default for SplitArena<N> {
             new_id: Vec::new(),
             histogram_symbols: Vec::new(),
             block_lengths: Vec::new(),
-            sizes: Vec::new(),
-            new_clusters: Vec::new(),
-            symbols: Vec::new(),
-            remap: Vec::new(),
+            sizes: [0; HISTOGRAMS_PER_BATCH],
+            new_clusters: [0; HISTOGRAMS_PER_BATCH],
+            symbols: [0; HISTOGRAMS_PER_BATCH],
+            remap: [0; HISTOGRAMS_PER_BATCH],
             all_histograms: Vec::new(),
             cluster_size: Vec::new(),
             batch: Vec::new(),
@@ -255,9 +251,7 @@ fn refine_entropy_codes<const N: usize>(
             stride
         };
         tmp.add_vector(&data[pos..pos + sample]);
-        let target = &mut histograms[iter % num_histograms];
-        let source = tmp.clone();
-        target.add_histogram(&source);
+        histograms[iter % num_histograms].add_histogram(tmp);
     }
 }
 
@@ -441,15 +435,21 @@ fn find_blocks<const N: usize>(
 
     // Cost of each symbol under each code: `log2(total) - log2(count)`, with an
     // unseen symbol priced two bits above the total.
-    insert_cost[..alphabet_size * lanes].fill(0.0);
-    for index in 0..num_histograms {
-        insert_cost[index] = fast_log2(histograms[index].total_count);
+    debug_assert!(num_histograms <= MAX_LITERAL_HISTOGRAMS);
+    let histograms = &histograms[..num_histograms];
+    let mut totals = [0f64; MAX_LITERAL_HISTOGRAMS];
+    for (total, histogram) in totals.iter_mut().zip(histograms) {
+        *total = fast_log2(histogram.total_count);
     }
-    for symbol in (0..alphabet_size).rev() {
-        // Reversed, so the first row can serve as scratch for the totals.
-        for j in 0..num_histograms {
-            insert_cost[symbol * lanes + j] = insert_cost[j] - bit_cost(histograms[j].data[symbol]);
+    for (symbol, row) in insert_cost[..alphabet_size * lanes]
+        .chunks_exact_mut(lanes)
+        .enumerate()
+    {
+        let (row, padding) = row.split_at_mut(num_histograms);
+        for ((slot, &total), histogram) in row.iter_mut().zip(&totals).zip(histograms) {
+            *slot = total - bit_cost(histogram.data[symbol]);
         }
+        padding.fill(0.0);
     }
 
     cost[..num_histograms].fill(0.0);
@@ -514,8 +514,8 @@ fn build_block_histograms<const N: usize>(
     for histogram in histograms.iter_mut().take(num_histograms) {
         histogram.clear();
     }
-    for (index, &symbol) in data.iter().enumerate() {
-        histograms[usize::from(block_ids[index])].add(usize::from(symbol));
+    for (&symbol, &id) in data.iter().zip(block_ids) {
+        histograms[usize::from(id)].add(usize::from(symbol));
     }
 }
 
@@ -535,16 +535,12 @@ fn cluster_blocks<const N: usize>(
     let length = data.len();
     arena.histogram_symbols.clear();
     arena.histogram_symbols.resize(num_blocks, 0);
-    arena.block_lengths.clear();
+    // Every block length is written from the runs of ids below.
     arena.block_lengths.resize(num_blocks, 0);
-    arena.sizes.clear();
-    arena.sizes.resize(HISTOGRAMS_PER_BATCH, 0);
-    arena.new_clusters.clear();
-    arena.new_clusters.resize(HISTOGRAMS_PER_BATCH, 0);
-    arena.symbols.clear();
-    arena.symbols.resize(HISTOGRAMS_PER_BATCH, 0);
-    arena.remap.clear();
-    arena.remap.resize(HISTOGRAMS_PER_BATCH, 0);
+    arena.sizes.fill(0);
+    arena.new_clusters.fill(0);
+    arena.symbols.fill(0);
+    arena.remap.fill(0);
     arena.all_histograms.clear();
     arena.cluster_size.clear();
     arena.batch.clear();
@@ -552,15 +548,13 @@ fn cluster_blocks<const N: usize>(
         .batch
         .resize(num_blocks.min(HISTOGRAMS_PER_BATCH), Histogram::default());
 
+    // Turn the run of ids into a list of block lengths.
+    for (block_length, run) in arena
+        .block_lengths
+        .iter_mut()
+        .zip(block_ids[..length].chunk_by(|left, right| left == right))
     {
-        // Turn the run of ids into a list of block lengths.
-        let mut block_idx = 0usize;
-        for index in 0..length {
-            arena.block_lengths[block_idx] += 1;
-            if index + 1 == length || block_ids[index] != block_ids[index + 1] {
-                block_idx += 1;
-            }
-        }
+        *block_length = run.len() as u32;
     }
 
     let expected_num_clusters = CLUSTERS_PER_BATCH * num_blocks.div_ceil(HISTOGRAMS_PER_BATCH);
@@ -575,10 +569,8 @@ fn cluster_blocks<const N: usize>(
         for j in 0..num_to_combine {
             let block_length = arena.block_lengths[index + j] as usize;
             arena.batch[j].clear();
-            for _ in 0..block_length {
-                arena.batch[j].add(usize::from(data[pos]));
-                pos += 1;
-            }
+            arena.batch[j].add_vector(&data[pos..pos + block_length]);
+            pos += block_length;
             arena.batch[j].bit_cost = population_cost(&arena.batch[j], alphabet_size);
             arena.new_clusters[j] = j as u32;
             arena.symbols[j] = j as u32;
@@ -637,11 +629,10 @@ fn cluster_blocks<const N: usize>(
     {
         let mut next_index = 0u32;
         for index in 0..num_blocks {
+            let block_length = arena.block_lengths[index] as usize;
             arena.assign.clear();
-            for _ in 0..arena.block_lengths[index] {
-                arena.assign.add(usize::from(data[pos]));
-                pos += 1;
-            }
+            arena.assign.add_vector(&data[pos..pos + block_length]);
+            pos += block_length;
             // Among equally good histograms the reference prefers the one the
             // previous block used, which makes the block-type stream cheap.
             let mut best_out = if index == 0 {
@@ -749,18 +740,16 @@ fn split_byte_vector<const N: usize>(
         &mut arena.tmp,
     );
 
+    // `find_blocks` writes every id, cost, insertion cost and switch bit it
+    // reads, and `remap_block_ids` every new id, so a buffer kept from an
+    // earlier block needs sizing, not clearing.
     let bitmaplen = num_histograms.div_ceil(8);
-    arena.block_ids.clear();
     arena.block_ids.resize(length, 0);
-    arena.insert_cost.clear();
     arena
         .insert_cost
         .resize(alphabet_size * padded_histograms(num_histograms), 0.0);
-    arena.cost.clear();
     arena.cost.resize(padded_histograms(num_histograms), 0.0);
-    arena.switch_signal.clear();
     arena.switch_signal.resize(length * bitmaplen, 0);
-    arena.new_id.clear();
     arena.new_id.resize(num_histograms, 0);
 
     let mut num_blocks = 0usize;

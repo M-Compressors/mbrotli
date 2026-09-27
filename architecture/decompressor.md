@@ -204,7 +204,9 @@ zero-fills only slots the fill overwrites rather than a loose worst-case bound.
 partial description. The code-length code of a complex description (18 symbols
 of at most five bits) is a 32-entry table held inline in the builder and rebuilt
 per description, so reading a description allocates nothing and never fills a
-256-entry root for it.
+256-entry root for it. A description's start only zeroes the 18 code lengths when
+it is complex, since those are the only lengths it may leave unset; both shapes
+clear the per-length symbol lists themselves before filling them.
 
 ```mermaid
 classDiagram
@@ -444,8 +446,23 @@ buffers, since an allocator may implement realloc as allocate/copy/free.
 Reported retained bytes count current owned capacities. The history ring,
 context maps, Huffman groups, the distance symbol table and rare
 prefix-crossing scratch reuse capacity across operations; Huffman group storage
-and the distance table never shrink, so a smaller meta-block does not
-reinitialize them. There is no allocation per output byte or transform. Header-only and metadata-only
+never shrinks, so a smaller meta-block does not reinitialize it. Buffers whose
+every entry is written before it is read are refilled instead of zeroed first:
+a context map with more than one tree reserves its size and appends each
+decoded entry and zero run in order (a one-tree map is the only one zero-filled),
+the distance table is cleared and extended with every symbol's split, and
+prefix-crossing scratch is extended with the history bytes it preserves. Their
+allocations stay; only their lengths follow the current meta-block.
+
+```mermaid
+flowchart LR
+    Trees{"context map trees"} -->|one| Zero["Memory::resize: zero-filled map"]
+    Trees -->|several| Reserve["Memory::reserve(size)"]
+    Reserve --> Append["Entries push / Repeat resize(end, 0)"]
+    Append --> Full["len == size before any read"]
+    Layout["new distance layout"] --> Clear["table.clear + Memory::reserve"]
+    Clear --> Extend["extend with every symbol's split"]
+``` There is no allocation per output byte or transform. Header-only and metadata-only
 streams need no heap workspace.
 
 `DecodeDictionary` copies RAW payloads without encoder search structures. Source
@@ -536,7 +553,8 @@ history path and short static-dictionary words still emit byte by byte, which
 does not affect the primary corpora. A first decode on a fresh workspace pays
 about a dozen separate allocations (ring, three Huffman groups, block and
 context-map codes, context maps, the distance table) and the one-time zero fill
-of their storage, which dominates decoding of payloads of a kilobyte and below
+of the storage that is still zero-filled (ring tail, Huffman groups, one-tree
+context maps), which dominates decoding of payloads of a kilobyte and below
 in the cold shape; the per-meta-block tables are not yet folded into one arena.
 Appended and reused `Vec` destinations still zero-fill newly exposed output
 slices; fresh owned results can instead take the history allocation. Completely

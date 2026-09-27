@@ -1623,14 +1623,17 @@ impl Stream {
                             let crossing = self.copy.saturating_sub(prefix_len - offset);
                             let length = usize::try_from(crossing.min(available))
                                 .map_err(|_| DecodeError::SizeOverflow)?;
-                            self.memory.resize(&mut self.prefix_history, length)?;
+                            self.prefix_history.clear();
+                            self.memory.reserve(&mut self.prefix_history, length)?;
                             if length != 0 {
                                 let history = history(&self.ring, output);
                                 let mask = history_mask(history.len());
                                 let start = self.position - available;
-                                for (i, byte) in self.prefix_history.iter_mut().enumerate() {
-                                    *byte = history[((start + i as u64) & mask) as usize];
-                                }
+                                self.prefix_history.extend(
+                                    (start..)
+                                        .take(length)
+                                        .map(|position| history[(position & mask) as usize]),
+                                );
                             }
                         }
                         if self.distance_code != 0 {

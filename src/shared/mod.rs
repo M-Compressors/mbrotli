@@ -36,6 +36,8 @@ pub(crate) mod dictionary;
 pub(crate) mod distance;
 #[cfg(feature = "compression")]
 pub(crate) mod fast_log;
+#[cfg(feature = "compression")]
+pub(crate) mod fixed;
 pub(crate) mod format;
 #[cfg(feature = "compression")]
 pub(crate) mod histogram;

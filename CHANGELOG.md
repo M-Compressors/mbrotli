@@ -6,6 +6,50 @@
   `FramedEncodeConfig::new()` and `FramedDecodeConfig::new()` return the
   default configuration as a `const fn`, so configurations can be built in
   `const` and `static` items. `Default` for each delegates to them.
+- Buffers are sized instead of rebuilt or re-zeroed, several index loops are
+  iterators, and tables that never change length are fixed-size. Output is
+  byte-identical (320 compression, streaming-reader, reuse and decompression
+  cases compared by hash, q0-q11 on `alice29.txt`, `mapsdatazrh`,
+  `plrabn12.txt`, 1/4/16 KiB text and 64 KiB random bytes).
+  - q10/q11: the cost model's histograms and literal price table are
+    `Box<[T; N]>`; the per-byte price spread and carried sum iterate the price
+    slice. The block splitter's per-batch scratch is inline `[u32; 64]`,
+    insertion costs are built row by row, block lengths come from `chunk_by`,
+    block histograms from `add_vector`, and its per-split buffers are resized
+    without a preceding `clear()` (the switch bitmap was zeroed twice).
+    Clustering and refinement no longer clone a histogram to read it: pair
+    pricing uses a new one-pass `Histogram::set_sum`, merges borrow through
+    `split_at_mut`.
+  - q2/q3: the command writer narrows the literal code tables to 256 entries
+    once per meta-block, removing the per-literal bounds checks.
+  - `EncoderReader` keeps its 64 KiB read buffer sized and tracks the valid
+    range, instead of clearing and zero-filling it before every read.
+  - Encoder output storage and the q0/q1 hash table grow through a new
+    `shared::fixed::grow_zeroed`: the first allocation stays a zeroed
+    allocation, later growth uses `Vec::resize` (which a custom allocator can
+    do in place). The quick matchers' small-input map zeroes and extends its
+    vector on reset. `fixed_table` moved to `shared::fixed`.
+  - Decoder: a context map with several trees reserves and appends its
+    entries instead of being zeroed twice after `reset` cleared it; the
+    distance table and prefix-crossing history are refilled without a zero
+    fill; a simple prefix-code description no longer clears the symbol lists
+    and code lengths it never reads.
+
+  Instructions per call (callgrind, cold `Compressor::new` + `compress`, this
+  host): q10 -1.2% on `alice29.txt`, -2.3% on 1 KiB text; q11 -0.7% on
+  `alice29.txt`, -1.1% on 64 KiB random; q2 -3.3% on `mapsdatazrh`, -0.2% on
+  text; q3/q4/q5 -0.2..-0.3% on text; `EncoderReader` -2.1..-2.8% at q0/q1 and
+  -0.7% at q5. q0/q1 one-shot unchanged. Decoding 1 KiB is 1.3-1.5% faster in
+  wall-clock (alternating binaries, min of 9); larger decodes are unchanged
+  within noise. `mapsdatazrh` q5 shows +0.1% instructions where libc `memset`
+  moved inline into `store_meta_block` (callgrind counts `rep stosb` per byte);
+  a reused encoder growing its buffers at q1 shows +6.4% instructions for the
+  same reason but runs 6.7% faster.
+  Rewrites measured and dropped: loops in the Huffman tree writer, the RLE
+  count optimizer and the block-split and context-map writers moved
+  `store_meta_block` by +0.6% to -0.4% depending on the corpus; `H10`'s bucket
+  table as `Box<[u32; N]>` would need an `Option` check costing as much as the
+  bounds check it removes.
 - The literal-cost estimator used by qualities 10 and 11 reads the logarithms
   of its sliding-window counts from a precomputed table instead of a
   one-entry cache in front of the library `log2`. Counts below 256 use the

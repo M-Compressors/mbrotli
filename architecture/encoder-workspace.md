@@ -291,7 +291,19 @@ table dirty. A reused compressor may therefore allocate once more on its
 second stream — the deep dense table — and nothing after that; the
 allocator-instrumented tests warm a compressor twice before they count.
 The quick matchers' `SmallSlots` map is sized for the input at preparation,
-even on a fresh encoder, so it never rehashes during the stream.
+even on a fresh encoder, so it never rehashes during the stream. `reset`
+zeroes the entries it already has and extends the same vector when the input
+needs more, so a larger stream keeps growing one allocation instead of
+replacing it.
+
+```mermaid
+flowchart LR
+    Reset["SmallSlots::reset(input_size)"] --> Size["size = next power of two of 2 × input, at least 32"]
+    Size --> Zero["fill existing entries with 0"]
+    Zero --> Fits{"len >= size?"}
+    Fits -->|yes| Keep["keep length and allocation"]
+    Fits -->|no| Extend["resize the same Vec to size with zeros"]
+```
 
 Forgetful-chain matchers materialize banks on first touch rather than allocating
 every bank's slots up front. Their heads/counters likewise govern validity.

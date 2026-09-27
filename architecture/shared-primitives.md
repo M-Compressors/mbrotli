@@ -53,6 +53,35 @@ operations and custom serialized representations compile only with `experimental
 No transformed dictionary is materialized. Borrowed inputs outlive one application,
 and no core keeps caller pointers between operations.
 
+`shared::fixed` (compression only) builds `Box<[T; N]>` tables:
+`fixed_table(initial)` allocates through a `Vec` of exactly `N` entries, so a
+zero fill reaches the allocator as a zeroed allocation, and
+`fixed_table_from_vec(values, initial)` resizes an existing vector into one
+without copying. The greedy matchers' dense and chain tables and the
+high-quality cost model's histograms use it. A zero-valued table is built
+with `vec!` rather than by collecting an iterator: `vec![0; n]` reaches
+`alloc_zeroed` for every element type, while a collected `u32` table compiles
+to an allocation plus an explicit `memset` (up to 1800× slower on a fresh
+16 MiB table touched in its first page).
+
+`grow_zeroed(buffer, len)` grows a reusable `Vec` workspace. An empty buffer is
+allocated zeroed, so a large buffer most of which is never written costs no
+writes; a buffer that already holds data grows with `Vec::resize`, which an
+allocator may perform in place, and never shrinks. Greedy, high-quality and fast
+encoder output storage and the fast encoder's hash table use it. Buffers that
+are sized per block and written in full before they are read are resized
+without a preceding `clear()`, so only newly exposed elements are zero-filled.
+
+```mermaid
+graph LR
+    Fixed[shared::fixed] --> Greedy[greedy dense / chain tables]
+    Fixed --> Cost[hq ZopfliCostModel histograms and literal prices]
+    Vec["vec![initial; N]"] --> Boxed["into_boxed_slice → Box<[T; N]>"]
+    Grow["grow_zeroed(buffer, len)"] --> Empty{"buffer empty?"}
+    Empty -->|yes| Calloc["vec![0; len]: zeroed allocation"]
+    Empty -->|no| Resize["Vec::resize: zero only the new tail"]
+```
+
 Known gap: encoder-specific primitives remain colocated with format-neutral data;
 there is no standalone common-data crate. This keeps existing private dependencies
 and public API identities intact while making common data accessible to both codecs.

@@ -26,6 +26,7 @@ use fearless_simd::{Simd, SimdBase, SimdMask, u8x16, u8x32};
 use super::params::{BucketShape, ChainShape, HasherPlan};
 use crate::shared::constants::HASH_MUL32;
 use crate::shared::dictionary::{self, DictionaryStats};
+use crate::shared::fixed::{fixed_table, fixed_table_from_vec};
 use crate::shared::match_len::{
     current_window, match_len_at, match_len_at_outlined, match_len_windows,
 };
@@ -479,10 +480,9 @@ impl SmallSlots {
     /// Empties the map, sized so `input_size` distinct keys never grow it.
     fn reset(&mut self, input_size: usize) {
         let size = (2 * input_size).next_power_of_two().max(32);
+        self.entries.fill(0);
         if self.entries.len() < size {
-            self.entries = vec![0; size];
-        } else {
-            self.entries.fill(0);
+            self.entries.resize(size, 0);
         }
         self.count = 0;
     }
@@ -1057,25 +1057,6 @@ impl KeyMap {
             .resize(size.max(self.entries.len()), Self::EMPTY);
         self.count = 0;
     }
-}
-
-/// Allocates a fixed-size table filled with `initial`.
-#[inline(always)]
-fn fixed_table<T: Copy, const N: usize>(initial: T) -> Box<[T; N]> {
-    let Ok(table) = vec![initial; N].into_boxed_slice().try_into() else {
-        unreachable!("table was created with exactly N entries");
-    };
-    table
-}
-
-/// Resizes an existing vector and transfers its allocation into a fixed-size table.
-#[inline(always)]
-fn fixed_table_from_vec<T: Copy, const N: usize>(mut values: Vec<T>, initial: T) -> Box<[T; N]> {
-    values.resize(N, initial);
-    let Ok(table) = values.into_boxed_slice().try_into() else {
-        unreachable!("table was resized to exactly N entries");
-    };
-    table
 }
 
 /// The reference bucket hash plus eight rejection bits below its key.
@@ -3101,23 +3082,15 @@ mod tests {
     }
 
     #[test]
-    fn new_fixed_tables_initialize_every_entry() {
-        assert_eq!(*fixed_table::<u32, 4>(0), [0; 4]);
-        assert_eq!(*fixed_table::<u32, 4>(7), [7; 4]);
-        assert_eq!(*fixed_table::<u32, 0>(7), [0_u32; 0]);
-    }
-
-    #[test]
-    fn an_empty_vector_is_resized_into_an_initialized_table() {
-        assert_eq!(*fixed_table_from_vec::<u32, 4>(Vec::new(), 7), [7; 4]);
-    }
-
-    #[test]
-    fn fixed_tables_preserve_existing_values_and_initialize_only_the_extension() {
-        assert_eq!(*fixed_table_from_vec::<_, 4>(vec![7, 8], 3), [7, 8, 3, 3]);
-        assert_eq!(*fixed_table_from_vec::<_, 1>(vec![7, 8], 3), [7]);
-        assert_eq!(*fixed_table_from_vec::<u32, 0>(vec![7, 8], 3), [0_u32; 0]);
-        assert_eq!(*fixed_table_from_vec::<u32, 0>(Vec::new(), 3), [0_u32; 0]);
+    fn compact_slots_reset_to_a_larger_input_extends_an_empty_map() {
+        let mut slots = SmallSlots::default();
+        slots.reset(16);
+        assert_eq!(slots.entries.len(), 32);
+        slots.write(3, 7);
+        slots.reset(100);
+        assert_eq!(slots.entries.len(), 256);
+        assert!(slots.entries.iter().all(|&entry| entry == 0));
+        assert_eq!((slots.count, slots.read(3)), (0, 0));
     }
 
     #[test]

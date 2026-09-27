@@ -57,6 +57,18 @@ impl<const N: usize> Histogram<N> {
         }
     }
 
+    /// Overwrites this histogram with the sum of `left` and `right`.
+    ///
+    /// The same counts, total and cached bit cost as cloning `left` and then
+    /// [`Histogram::add_histogram`]-ing `right`, in one pass instead of two.
+    pub(crate) fn set_sum(&mut self, left: &Self, right: &Self) {
+        for ((mine, &left), &right) in self.data.iter_mut().zip(&left.data).zip(&right.data) {
+            *mine = left + right;
+        }
+        self.total_count = left.total_count + right.total_count;
+        self.bit_cost = left.bit_cost;
+    }
+
     /// Counts every symbol of `values` (`HistogramAddVector`).
     pub(crate) fn add_vector<T: Copy + Into<usize>>(&mut self, values: &[T]) {
         self.total_count += values.len();
@@ -297,6 +309,27 @@ mod tests {
         assert_eq!(left.data[1], 2);
         assert_eq!(left.data[700], 1);
         assert_eq!(left.total_count, 3);
+    }
+
+    #[test]
+    fn a_set_sum_matches_cloning_then_adding() {
+        let mut left = HistogramCommand::default();
+        let mut right = HistogramCommand::default();
+        left.add(1);
+        left.add(3);
+        left.bit_cost = 12.5;
+        right.add(1);
+        right.add(700);
+        right.bit_cost = 3.0;
+        let mut expected = left.clone();
+        expected.add_histogram(&right);
+
+        let mut sum = HistogramCommand::default();
+        sum.add(5);
+        sum.set_sum(&left, &right);
+        assert_eq!(sum.data, expected.data);
+        assert_eq!(sum.total_count, 4);
+        assert_eq!(sum.bit_cost.to_bits(), expected.bit_cost.to_bits());
     }
 
     #[test]

@@ -91,6 +91,25 @@ explicitly an upstream-vendor update.
   (Measured on the 3745-entry `log2` tail: 6.29 us collected vs 6.52-6.60 us
   for zero-then-fill in any loop form; `core::array::from_fn` in a `Box` was
   slowest at 6.65 us.)
+- This applies to computed tables. A table whose initial value is a constant
+  zero is built with `vec![0; n]` (or `shared::fixed::fixed_table`), which
+  reaches `alloc_zeroed`. Collecting zeros is fused into a zeroed allocation
+  only for `u8`; for `u32`, `i32` and wider elements it compiles to an
+  allocation plus an explicit `memset`. On a fresh process whose table is
+  touched only in its first page, a collected `u32` table of 256 KiB took
+  53.7 us vs 2.2 us and of 16 MiB 3772 us vs 2.1 us; fully touched it was
+  still 35-40% slower. Small tables (a few hundred entries) collect about 6 ns
+  faster, which is below noise. Measure allocation strategies in a fresh
+  process: an allocate/free loop reuses the freed chunk, so `calloc` has to
+  `memset` and the difference disappears.
+- Grow reusable workspace with `Vec::resize` rather than replacing it with a
+  fresh `vec![..]` or boxed slice, unless measurements show a dramatic
+  difference: an allocator can grow in place, which a replacement cannot. The
+  known dramatic case is the first allocation of a large buffer most of which
+  is never written; use `shared::fixed::grow_zeroed`, which allocates an empty
+  buffer zeroed and resizes a non-empty one. Do not `clear()` before
+  `resize()` when every element is written before it is read: only the newly
+  exposed tail then needs zeroing.
 
 ## Errors
 

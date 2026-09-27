@@ -21,7 +21,8 @@ pub(crate) mod q1;
 pub(crate) mod tables;
 pub(crate) mod workspace;
 
-pub(crate) use crate::shared::{bits, huffman, match_len};
+pub(crate) use crate::shared::fixed::grow_zeroed;
+use crate::shared::{bits, huffman, match_len};
 
 use super::dispatch::{self, Kernels};
 use fearless_simd::{Level, Simd};
@@ -352,16 +353,12 @@ impl FastEncoder {
             return 0;
         }
         let entries = self.core.table_entries(input_len);
-        if self.table.len() < entries {
-            // A fresh zeroed allocation, rather than growing in place: the
-            // allocator hands out zero pages, while `resize` would memset a
-            // buffer the encoder is about to overwrite anyway. It also arrives
-            // already cleared.
-            self.table = vec![0i32; entries];
-        } else {
-            // Only the active range is cleared; unused capacity stays untouched.
-            self.table[..entries].fill(0);
-        }
+        // Only the active range is cleared; unused capacity stays untouched.
+        // The first table comes from the allocator's zeroing path, and a
+        // larger fragment later grows the same buffer.
+        let kept = entries.min(self.table.len());
+        self.table[..kept].fill(0);
+        grow_zeroed(&mut self.table, entries);
         entries
     }
 
@@ -450,9 +447,7 @@ impl FastEncoder {
         debug_assert!(input.len() <= self.block_size_limit);
 
         let reserve = Self::fragment_reserve(input.len())?;
-        if self.storage.len() < reserve {
-            self.storage = vec![0u8; reserve];
-        }
+        grow_zeroed(&mut self.storage, reserve);
         let entries = self.prepare_table(input.len(), is_last);
 
         let mut storage = core::mem::take(&mut self.storage);
@@ -484,9 +479,7 @@ impl FastEncoder {
         debug_assert!(input.len() <= self.block_size_limit);
 
         let reserve = Self::fragment_reserve(input.len())?;
-        if self.storage.len() < reserve {
-            self.storage = vec![0u8; reserve];
-        }
+        grow_zeroed(&mut self.storage, reserve);
 
         let mut storage = core::mem::take(&mut self.storage);
         let outcome = self.run_flush(input, &mut storage);

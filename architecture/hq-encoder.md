@@ -160,6 +160,12 @@ allocator's zeroing path after releasing the old allocation. A non-final first
 block can reserve a full window of links even for short input; untouched links
 must not be eagerly materialized. Buckets are initialized with their empty marker
 on first preparation. `ZopfliCostModel::reserve` sizes literal prices per block.
+The model's literal, command and distance histograms and its per-byte literal
+price table never change length, so they are `Box<[T; N]>` tables built by
+`shared::fixed::fixed_table`; a literal byte indexes them with no bounds check.
+The per-byte price spread and the carried cumulative sum walk the price slice
+`1..=num_bytes` by iterator, in the same order and with the same `f32`
+operations as the reference.
 
 Three bounds shape what it finds, all from the reference:
 
@@ -387,6 +393,22 @@ first, which the reference calls a heap and treats as one only at that first
 position; reproducing that — including which pair is displaced when the array is
 full — is what keeps the merge order, and therefore the context map, identical.
 
+No histogram is copied to be read. A candidate pair's combined cost is
+priced from `Histogram::set_sum`, which writes `left + right` into the scratch
+histogram in one pass, where the reference clones one side and adds the other.
+A merge adds the absorbed histogram into the survivor through `split_at_mut`,
+since pairs are always ordered `idx1 < idx2`, and remapping adds every input
+histogram into its cluster straight from the borrowed input.
+
+```mermaid
+flowchart LR
+    Pair["candidate pair idx1 < idx2"] --> Sum["tmp.set_sum(out[idx1], out[idx2])"]
+    Sum --> Cost["population_cost(tmp)"]
+    Cost --> Best{"best saving?"}
+    Best -->|merge| Split["out.split_at_mut(idx2)"]
+    Split --> Add["out[idx1].add_histogram(&out[idx2])"]
+```
+
 ```mermaid
 flowchart TD
     A["commands"] --> B["choose_distance_params<br/>price every (npostfix, ndirect)"]
@@ -416,6 +438,34 @@ the output: change it and a different partition falls out.
 
 Switching block type is discounted over the first 2000 symbols, which lets the
 partition adapt quickly before the statistics settle.
+
+Each split stream keeps a `SplitArena`. Buffers whose length follows the
+stream (histograms, costs, block ids and lengths, cluster lists) are retained
+`Vec`s; the four per-batch tables of the 64-block pre-clustering (`sizes`,
+`new_clusters`, `symbols`, `remap`) always hold exactly 64 entries, so they are
+inline `[u32; 64]` arrays zeroed per split. The block ids, insertion costs,
+running costs, switch bitmap and id remap are resized to the stream without a
+preceding `clear()`: `find_blocks` and `remap_block_ids` write every entry they
+later read, so a kept buffer is not zeroed again (the switch bitmap, up to
+thirteen bytes per symbol, was previously zeroed twice per split). Refinement adds each sample
+histogram into its target directly. Insertion costs are built row by row: the
+`log2` totals of at most 100 histograms go to a stack array, each symbol's row
+is written from it, and its padding lanes are zeroed explicitly.
+Block lengths come from `chunk_by` over the assigned ids, whose run count is the
+block count the trace-back produced, and per-block histograms are counted with
+`add_vector` over each block's slice. Together with clustering without copies,
+q10/q11 compression runs 0.7-2.3% fewer instructions (callgrind, `alice29.txt`,
+`mapsdatazrh`, 1 KiB and 64 KiB random inputs), with byte-identical output.
+
+```mermaid
+flowchart TD
+    Ids["block ids after find_blocks + remap"] --> Runs["chunk_by equal ids → block_lengths"]
+    Runs --> Batch["64-block batch: add_vector per block"]
+    Batch --> Scratch["inline [u32; 64] sizes / new_clusters / symbols / remap"]
+    Scratch --> Combine["combine_batch"]
+    Combine --> Final["combine surviving clusters"]
+    Final --> Assign["assign: add_vector per block, move_cost per cluster"]
+```
 
 ## 8. Context mode
 

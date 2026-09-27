@@ -242,7 +242,8 @@ generic constants in an array type. `BucketMatcher::new` checks
 `SLOTS == BUCKETS * BLOCK` in an inline const assertion, so an inconsistent shape
 fails at compilation. The hash helper uses only `HASH64` and `BUCKETS`; runs keep
 their existing nested array views and do not carry the storage-size parameter.
-The inlined `fixed_table(initial)` creates an initialized vector of the final
+The inlined `fixed_table(initial)`, shared from `crate::shared::fixed` with the
+high-quality cost model, creates an initialized vector of the final
 length and converts it to a boxed array. The separate inlined
 `fixed_table_from_vec(values, initial)` always resizes the supplied vector,
 including an empty one, before transferring ownership into a boxed array.
@@ -748,6 +749,13 @@ written as the fifty-nine and twenty-eight literal bits their descriptions
 encode to. Above that all three codes are built, but by the leaves-ordered-by-
 count builder `build_and_store_huffman_tree_fast` rather than the full
 package-merge `store_meta_block_trivial` uses.
+
+Both paths write their commands through `store_data_with_huffman_codes`. It narrows the literal
+depth and bit tables to exactly 256 entries once per meta-block, so a literal
+byte indexes them with no bounds check in the per-literal loop; the command and
+distance tables keep their checked lookups because static and built codes have
+different lengths. On a 285 KB binary map (`mapsdatazrh`) this is 3.3% fewer
+instructions at q2 and 0.1% on text at q2 and q3.
 
 `ShouldCompress` refuses blocks of at most two bytes outright, and samples
 every thirteenth literal of a block that is almost all literals: if the sample's
