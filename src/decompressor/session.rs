@@ -188,7 +188,8 @@ impl DecoderSession<'_, '_> {
     /// Behaves exactly as [`Self::process`]: the same bytes, the same
     /// `consumed` and `produced` counts, the same statuses and errors, and
     /// calls of the two methods may be mixed on one stream. Use it to decode
-    /// straight into spare capacity, such as [`Vec::spare_capacity_mut`],
+    /// straight into spare capacity, such as
+    /// [`Vec::spare_capacity_mut`](alloc::vec::Vec::spare_capacity_mut),
     /// without zeroing it first.
     ///
     /// Exactly `output[..produced]` is initialized when the call returns,
@@ -497,7 +498,8 @@ impl<D: AsRef<DecodeDictionary> + 'static> DecoderSessionOwned<D> {
     /// Behaves exactly as [`Self::process`]: the same bytes, the same
     /// `consumed` and `produced` counts, the same statuses and errors, and
     /// calls of the two methods may be mixed on one stream. Use it to decode
-    /// straight into spare capacity, such as [`Vec::spare_capacity_mut`],
+    /// straight into spare capacity, such as
+    /// [`Vec::spare_capacity_mut`](alloc::vec::Vec::spare_capacity_mut),
     /// without zeroing it first.
     ///
     /// Exactly `output[..produced]` is initialized when the call returns,

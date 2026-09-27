@@ -397,7 +397,8 @@ impl<'c, 'd> EncoderSession<'c, 'd> {
     /// Behaves exactly as [`Self::process`]: the same bytes, the same
     /// `consumed` and `produced` counts, the same statuses and errors, and
     /// calls of the two methods may be mixed on one stream. Use it to encode
-    /// straight into spare capacity, such as [`Vec::spare_capacity_mut`],
+    /// straight into spare capacity, such as
+    /// [`Vec::spare_capacity_mut`](alloc::vec::Vec::spare_capacity_mut),
     /// without zeroing it first.
     ///
     /// On success exactly `output[..produced]` has been initialized, and no
@@ -652,7 +653,8 @@ impl<D: AsRef<PreparedDictionary> + 'static> EncoderSessionOwned<D> {
     /// Behaves exactly as [`Self::process`]: the same bytes, the same
     /// `consumed` and `produced` counts, the same statuses and errors, and
     /// calls of the two methods may be mixed on one stream. Use it to encode
-    /// straight into spare capacity, such as [`Vec::spare_capacity_mut`],
+    /// straight into spare capacity, such as
+    /// [`Vec::spare_capacity_mut`](alloc::vec::Vec::spare_capacity_mut),
     /// without zeroing it first.
     ///
     /// On success exactly `output[..produced]` has been initialized, and no
