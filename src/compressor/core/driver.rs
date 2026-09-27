@@ -11,6 +11,7 @@
 
 use alloc::boxed::Box;
 use alloc::vec::Vec;
+use core::mem::MaybeUninit;
 
 use fearless_simd::Level;
 
@@ -20,7 +21,7 @@ use super::greedy::params::GreedyParams;
 use super::hq::encoder::HqEncoder;
 use super::hq::params::HqParams;
 use super::rfc9841::context::SharedContextInner;
-use super::stream::{Destination, finish};
+use super::stream::{Destination, Output, finish};
 use crate::compressor::shared::SharedBrotliError;
 use crate::compressor::{BrotliCompressError, BrotliResult, CompressParams, QualityLevel};
 
@@ -380,14 +381,50 @@ pub(crate) fn compress_to_slice_attached(
     src: &[u8],
     dst: &mut [u8],
 ) -> BrotliResult<usize> {
+    compress_to_destination(cache, level, params, attached, src, Destination::Slice(dst))
+}
+
+/// Compresses `src` into uninitialized `dst`; initializes exactly the
+/// returned prefix on success.
+///
+/// # Errors
+///
+/// As [`compress_to_slice_attached`].
+pub(crate) fn compress_to_uninit_attached(
+    cache: &mut EncoderCache,
+    level: Level,
+    params: &CompressParams,
+    attached: Option<&SharedContextInner>,
+    src: &[u8],
+    dst: &mut [MaybeUninit<u8>],
+) -> BrotliResult<usize> {
+    compress_to_destination(
+        cache,
+        level,
+        params,
+        attached,
+        src,
+        Destination::Uninit(dst),
+    )
+}
+
+/// The fixed-destination one-shot path shared by initialized and
+/// uninitialized slices.
+fn compress_to_destination(
+    cache: &mut EncoderCache,
+    level: Level,
+    params: &CompressParams,
+    attached: Option<&SharedContextInner>,
+    src: &[u8],
+    dst: Destination<'_>,
+) -> BrotliResult<usize> {
     check_large_window(params)?;
     if src.is_empty() {
         let (bytes, length) = empty_stream(params);
-        let Some(destination) = dst.get_mut(..length) else {
+        if Output::new(dst).append(&bytes[..length]) < length {
             cache.invalidate();
             return Err(BrotliCompressError::OutputTooSmall);
-        };
-        destination.copy_from_slice(&bytes[..length]);
+        }
         return Ok(length);
     }
 
@@ -398,7 +435,7 @@ pub(crate) fn compress_to_slice_attached(
             return Err(error);
         }
     };
-    match finish(encoder, attached, src, Destination::Slice(dst)) {
+    match finish(encoder, attached, src, dst) {
         Ok(written) => Ok(written),
         Err(error) => {
             cache.invalidate();

@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+- Add output into uninitialized memory: `EncoderSession::process_uninit`,
+  `EncoderSessionOwned::process_uninit`, `Compressor::compress_to_uninit`,
+  `DecoderSession::process_uninit`, `DecoderSessionOwned::process_uninit` and
+  `Decompressor::decompress_to_uninit` take `&mut [MaybeUninit<u8>]`, such as
+  `Vec::spare_capacity_mut`, and write exactly the bytes they report, nothing
+  past them. Bytes, counts, statuses and errors match `process`,
+  `compress_to_slice` and `decompress_to_slice`, and the two kinds of calls may
+  be mixed on one session. The crate stays free of `unsafe`: an uninitialized
+  destination cannot be read back, so q0/q1 encode through scratch and copy
+  each block once instead of writing it in place, and one-shot decoding
+  delivers through the history ring instead of using the destination as
+  history. `process`, `compress_to_slice` and `decompress_to_slice` keep their
+  in-place paths.
+  BENCHMARKS_PLACEHOLDER
+- `mbrotli-ffi` passes the caller's output to `compress_to_uninit` and
+  `decompress_to_uninit` as `MaybeUninit<u8>`, so an uninitialized C buffer is
+  no longer viewed as `&mut [u8]`. The ABI and its results are unchanged.
+  FFI_PLACEHOLDER
 - `EncoderConfig::new()`, `DecoderConfig::new()`, and, behind `experimental`,
   `FramedEncodeConfig::new()` and `FramedDecodeConfig::new()` return the
   default configuration as a `const fn`, so configurations can be built in

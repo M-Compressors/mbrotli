@@ -1,6 +1,6 @@
 //! Decoder grammar and session progress oracles with explicit resource budgets.
 
-use crate::{Context, cap};
+use crate::{Context, SENTINEL, cap, read_output, sentinel_output};
 use mbrotli::{
     DecodeError, DecodeLimits, DecodeOperation, DecodeStreamConfig, DecoderConfig, DecoderStatus,
     Decompressor,
@@ -115,6 +115,24 @@ fn slice_matches_session(ctx: &Context, data: &[u8], size: usize) {
     if matches!(actual, Ok(_) | Err(DecodeError::OutputTooSmall { .. })) {
         assert!(direct == delivered, "slice bytes differ from ring delivery");
     }
+    // The uninitialized one-shot delivers from the ring as the session does;
+    // on success or a full slice it wrote exactly the bytes it reports.
+    let mut uninit = sentinel_output(size);
+    let outcome = build().decompress_to_uninit(data, &mut uninit);
+    assert_eq!(format!("{outcome:?}"), format!("{expected:?}"));
+    let written = match outcome {
+        Ok(written) | Err(DecodeError::OutputTooSmall { written }) => written,
+        Err(_) => return,
+    };
+    let uninit = read_output(&uninit);
+    assert!(
+        uninit[..written] == delivered[..written],
+        "uninitialized bytes differ"
+    );
+    assert!(
+        uninit[written..].iter().all(|&byte| byte == SENTINEL),
+        "decompress_to_uninit wrote past its output"
+    );
 }
 
 fn compare(
@@ -145,18 +163,30 @@ pub fn decode_streaming(ctx: &Context, data: &[u8]) {
     let expected = decoder.decompress(data);
     let chunk = data.first().map_or(1, |value| usize::from(value % 31) + 1);
     let output_size = data.last().map_or(1, |value| usize::from(value % 31) + 1);
+    // The top input bit sends every other call through `process_uninit`,
+    // which must behave exactly as `process` on the same stream.
+    let alternate = data.first().is_some_and(|value| value & 0x80 != 0);
     let mut session = decoder.start(DecodeStreamConfig::default()).unwrap();
     let mut cursor = 0;
     let mut actual = Vec::new();
-    for _ in 0..data.len() + MAX_OUTPUT + 2 {
+    for call in 0..data.len() + MAX_OUTPUT + 2 {
         let end = (cursor + chunk).min(data.len());
         let operation = if end == data.len() {
             DecodeOperation::Finish
         } else {
             DecodeOperation::Process
         };
-        let mut output = [0xa5; 32];
-        match session.process(&data[cursor..end], &mut output[..output_size], operation) {
+        let mut output = [SENTINEL; 32];
+        let result = if alternate && call % 2 == 1 {
+            let mut spare = sentinel_output(output.len());
+            let result =
+                session.process_uninit(&data[cursor..end], &mut spare[..output_size], operation);
+            output.copy_from_slice(&read_output(&spare));
+            result
+        } else {
+            session.process(&data[cursor..end], &mut output[..output_size], operation)
+        };
+        match result {
             Err(failure) => {
                 assert!(failure.consumed <= end - cursor && failure.produced <= output_size);
                 assert!(output[output_size..].iter().all(|&byte| byte == 0xa5));

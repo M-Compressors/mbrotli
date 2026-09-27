@@ -53,3 +53,4 @@ pub(crate) mod ringbuffer;
 pub(crate) mod score;
 #[cfg(feature = "compression")]
 pub(crate) mod tables;
+pub(crate) mod uninit;

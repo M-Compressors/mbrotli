@@ -185,6 +185,25 @@ pub fn decode_case(input: &[u8]) -> Case<'_> {
     }
 }
 
+/// Fill for destination bytes a call must leave untouched.
+pub const SENTINEL: u8 = 0xa5;
+
+/// A destination the uninitialized-output APIs write into: every byte starts
+/// as [`SENTINEL`], so it can be read back whether or not the call wrote it.
+pub fn sentinel_output(len: usize) -> Vec<std::mem::MaybeUninit<u8>> {
+    vec![std::mem::MaybeUninit::new(SENTINEL); len]
+}
+
+/// Reads a destination made by [`sentinel_output`].
+pub fn read_output(bytes: &[std::mem::MaybeUninit<u8>]) -> Vec<u8> {
+    // SAFETY: `sentinel_output` initialized every byte, and the calls under
+    // test only ever write initialized bytes over them.
+    bytes
+        .iter()
+        .map(|byte| unsafe { byte.assume_init() })
+        .collect()
+}
+
 /// Truncates a payload to [`MAX_PAYLOAD`].
 pub fn cap(data: &[u8]) -> &[u8] {
     &data[..data.len().min(MAX_PAYLOAD)]

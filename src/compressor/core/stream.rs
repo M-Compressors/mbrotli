@@ -1,12 +1,14 @@
 //! Shared block scheduling for one-shot and incremental compression.
 
 use alloc::vec::Vec;
+use core::mem::MaybeUninit;
 
 use super::driver::Encoder;
 use super::fast::FastEncoder;
 use super::rfc9841::context::SharedContextInner;
 use crate::compressor::session::{EncoderStatus, Operation, Progress};
 use crate::compressor::{BrotliCompressError, BrotliResult};
+use crate::shared::uninit::copy_to_uninit;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(super) enum Phase {
@@ -27,6 +29,10 @@ pub(super) struct StreamState {
 /// The caller's destination. One-shot vectors append without initializing spare capacity.
 pub(super) enum Destination<'a> {
     Slice(&'a mut [u8]),
+    /// Write-only: safe code cannot read these bytes back, so the fast
+    /// encoders' in-place bit writer never runs here and every block is
+    /// copied from retained scratch instead.
+    Uninit(&'a mut [MaybeUninit<u8>]),
     Append(&'a mut Vec<u8>),
 }
 
@@ -45,11 +51,19 @@ impl<'a> Output<'a> {
     }
 
     /// Copies only what fits; an append destination always accepts the whole part.
-    fn append(&mut self, bytes: &[u8]) -> usize {
+    pub(super) fn append(&mut self, bytes: &[u8]) -> usize {
         let count = match &mut self.destination {
             Destination::Slice(output) => {
                 let count = bytes.len().min(output.len() - self.produced);
                 output[self.produced..self.produced + count].copy_from_slice(&bytes[..count]);
+                count
+            }
+            Destination::Uninit(output) => {
+                let count = bytes.len().min(output.len() - self.produced);
+                copy_to_uninit(
+                    &mut output[self.produced..self.produced + count],
+                    &bytes[..count],
+                );
                 count
             }
             Destination::Append(output) => {

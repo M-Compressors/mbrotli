@@ -40,6 +40,7 @@ FFI do not appear in public signatures. Each codec compiles independently.
 | [Codec features](codec-features.md) | Codec gates, shared types and isolated consumer checks. |
 | [No standard library](no-std.md) | Alloc-backed APIs, feature precedence and compile-time SIMD. |
 | [Shared primitives](shared-primitives.md) | Common data, transforms, fixed boxed tables and private ownership. |
+| [Uninitialized output](uninit-output.md) | `process_uninit`, `compress_to_uninit` and `decompress_to_uninit`: write-only destinations, the paths they take and the C ABI's use of them. |
 
 ## Compression
 

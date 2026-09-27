@@ -5,7 +5,9 @@
 //! a borrowed `DictionaryRef` in `DecoderSession`, and over an owned
 //! `Decompressor` and dictionary in `DecoderSessionOwned`.
 
-use super::{Input, Output, Stop};
+use core::mem::MaybeUninit;
+
+use super::{Input, Output, Sink, Stop};
 use crate::Window;
 use crate::decompressor::session::{DecodeFailure, DecodeOperation, DecodeProgress, DecoderStatus};
 use crate::decompressor::{DecodeError, DecodeStreamConfig, Decompressor, MemberMode, OutputSize};
@@ -89,6 +91,47 @@ impl OperationState {
         dictionary: Option<DictionaryRef<'_>>,
         input: &[u8],
         output: &mut [u8],
+        operation: DecodeOperation,
+        delivery: Delivery,
+    ) -> Result<DecodeProgress, DecodeFailure> {
+        self.run(
+            decoder,
+            dictionary,
+            input,
+            Sink::Init(output),
+            operation,
+            delivery,
+        )
+    }
+
+    /// Runs one call of the streaming contract into uninitialized memory.
+    ///
+    /// Always delivers as [`Delivery::Slice`]: `output` cannot serve as
+    /// history, so every byte is copied out of the ring.
+    pub(crate) fn process_uninit(
+        &mut self,
+        decoder: &mut Decompressor,
+        dictionary: Option<DictionaryRef<'_>>,
+        input: &[u8],
+        output: &mut [MaybeUninit<u8>],
+        operation: DecodeOperation,
+    ) -> Result<DecodeProgress, DecodeFailure> {
+        self.run(
+            decoder,
+            dictionary,
+            input,
+            Sink::Uninit(output),
+            operation,
+            Delivery::Slice,
+        )
+    }
+
+    fn run(
+        &mut self,
+        decoder: &mut Decompressor,
+        dictionary: Option<DictionaryRef<'_>>,
+        input: &[u8],
+        output: Sink<'_>,
         operation: DecodeOperation,
         delivery: Delivery,
     ) -> Result<DecodeProgress, DecodeFailure> {

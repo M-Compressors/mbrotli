@@ -23,8 +23,10 @@ use crate::{
     shared::format::{
         CONTEXT_LUT_SIGNED, CONTEXT_LUT_UTF8, COPY_BASE, COPY_EXTRA, INS_BASE, INS_EXTRA,
     },
+    shared::uninit::copy_to_uninit,
 };
 use alloc::vec::Vec;
+use core::mem::MaybeUninit;
 use fearless_simd::{Simd, SimdBase, dispatch, u8x16, u8x32};
 
 /// Smallest ring allocation; growth doubles up to the window size.
@@ -115,8 +117,65 @@ enum Pause {
     Output,
 }
 
+/// The caller's destination for one call.
+///
+/// An uninitialized slice is write-only: safe code cannot read it back, so it
+/// never serves as linear history, and delivery copies out of the ring.
+pub(crate) enum Sink<'a> {
+    Init(&'a mut [u8]),
+    Uninit(&'a mut [MaybeUninit<u8>]),
+}
+
+impl<'a> Sink<'a> {
+    const fn len(&self) -> usize {
+        match self {
+            Self::Init(bytes) => bytes.len(),
+            Self::Uninit(bytes) => bytes.len(),
+        }
+    }
+
+    /// Writes one byte; `index` is below [`Self::len`].
+    #[inline]
+    fn put(&mut self, index: usize, byte: u8) {
+        match self {
+            Self::Init(bytes) => bytes[index] = byte,
+            Self::Uninit(bytes) => {
+                bytes[index].write(byte);
+            }
+        }
+    }
+
+    /// Writes `source` at `start`; the range lies within [`Self::len`].
+    #[inline]
+    fn copy(&mut self, start: usize, source: &[u8]) {
+        match self {
+            Self::Init(bytes) => bytes[start..start + source.len()].copy_from_slice(source),
+            Self::Uninit(bytes) => copy_to_uninit(&mut bytes[start..start + source.len()], source),
+        }
+    }
+
+    /// The initialized slice a linear member decodes into and reads back.
+    /// Linear delivery is only ever chosen with [`Self::Init`]; an
+    /// uninitialized sink yields no history.
+    const fn history(&self) -> &[u8] {
+        match self {
+            Self::Init(bytes) => bytes,
+            Self::Uninit(_) => &[],
+        }
+    }
+
+    /// Takes the linear slice out for bulk work, leaving an empty one behind
+    /// until the caller puts it back as `Sink::Init`.
+    fn take_history(&mut self) -> &'a mut [u8] {
+        match self {
+            Self::Init(bytes) => core::mem::take(bytes),
+            Self::Uninit(_) => &mut [],
+        }
+    }
+}
+
 pub(crate) struct Output<'a> {
-    pub(crate) bytes: &'a mut [u8],
+    pub(crate) bytes: Sink<'a>,
     /// Collect a member in history, stopping before any ring byte is overwritten.
     pub(crate) collect: Option<usize>,
     /// The member began at `bytes[0]` in this call and `bytes` is its
@@ -258,8 +317,9 @@ fn flush_ring(ring: &[u8], position: u64, flushed: &mut u64, output: &mut Output
     if pending != 0 {
         if output.delivers() {
             let start = (*flushed & history_mask(ring.len())) as usize;
-            output.bytes[output.produced..output.produced + pending]
-                .copy_from_slice(&ring[start..start + pending]);
+            output
+                .bytes
+                .copy(output.produced, &ring[start..start + pending]);
         }
         output.produced += pending;
         *flushed = position;
@@ -448,7 +508,11 @@ fn previous_bytes(ring: &[u8], position: u64) -> (u8, u8) {
 /// The bytes history positions index this call: the caller's slice for a
 /// linear member, the ring otherwise.
 fn history<'b>(ring: &'b [u8], output: &'b Output<'_>) -> &'b [u8] {
-    if output.linear { output.bytes } else { ring }
+    if output.linear {
+        output.bytes.history()
+    } else {
+        ring
+    }
 }
 
 #[cold]
@@ -644,7 +708,7 @@ impl Stream {
         }
         self.position = next;
         if output.collect.is_none() {
-            output.bytes[output.produced] = byte;
+            output.bytes.put(output.produced, byte);
         }
         output.produced += 1;
         self.remaining -= 1;
@@ -775,7 +839,7 @@ impl Stream {
         let linear = output.linear;
         let history_end = output.history_end(position, remaining, out_end);
         let linear_bytes: &mut [u8] = if linear {
-            core::mem::take(&mut output.bytes)
+            output.bytes.take_history()
         } else {
             &mut []
         };
@@ -815,7 +879,7 @@ impl Stream {
             () => {{
                 flush_ring(ring, position, &mut flushed, output);
                 if linear {
-                    output.bytes = linear_bytes;
+                    output.bytes = Sink::Init(linear_bytes);
                 }
                 input.consumed = consumed;
                 *saved_bits = bits;
@@ -1311,8 +1375,7 @@ impl Stream {
                         self.write_raw(bytes)?;
                     }
                     if output.collect.is_none() {
-                        output.bytes[output.produced..output.produced + count]
-                            .copy_from_slice(bytes);
+                        output.bytes.copy(output.produced, bytes);
                     }
                     input.consumed += count;
                     output.produced += count;
@@ -1558,7 +1621,7 @@ impl Stream {
                         }
                         self.position = next;
                         if output.collect.is_none() {
-                            output.bytes[output.produced] = byte;
+                            output.bytes.put(output.produced, byte);
                         }
                         output.produced += 1;
                         done += 1;
@@ -1694,7 +1757,7 @@ impl Stream {
                     if output.linear {
                         let history_end =
                             output.history_end(self.position, self.remaining, out_end);
-                        let bytes = core::mem::take(&mut output.bytes);
+                        let bytes = output.bytes.take_history();
                         dispatch!(backend.0, simd => copy_ring(
                             simd,
                             &mut bytes[..history_end],
@@ -1704,7 +1767,7 @@ impl Stream {
                             &mut flushed,
                             output,
                         ));
-                        output.bytes = bytes;
+                        output.bytes = Sink::Init(bytes);
                     } else if !self.repeat_growing(end)? {
                         self.ensure_ring(end)?;
                         dispatch!(backend.0, simd => copy_ring(
@@ -1760,7 +1823,7 @@ impl Stream {
                     let mut flushed = self.position;
                     if output.linear {
                         let start = output.produced;
-                        output.bytes[start..start + n].copy_from_slice(&run[..n]);
+                        output.bytes.copy(start, &run[..n]);
                         self.position = end;
                     } else {
                         self.ensure_ring(end)?;
@@ -1920,7 +1983,7 @@ mod tests {
                 let mut output = Output {
                     collect: None,
                     linear: false,
-                    bytes: &mut bytes,
+                    bytes: Sink::Init(&mut bytes),
                     produced: 0,
                     total_before: decoded.len() as u64,
                     limit: None,
@@ -1935,7 +1998,7 @@ mod tests {
                         Some((&dictionary).into()),
                     )
                     .unwrap();
-                decoded.extend_from_slice(&output.bytes[..output.produced]);
+                decoded.extend_from_slice(&output.bytes.history()[..output.produced]);
                 if result == Stop::Member {
                     break;
                 }
@@ -1980,7 +2043,7 @@ mod tests {
                     let mut output = Output {
                         collect: None,
                         linear: false,
-                        bytes: &mut sink,
+                        bytes: Sink::Init(&mut sink),
                         produced: 0,
                         total_before: 0,
                         limit: None,

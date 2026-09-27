@@ -77,6 +77,8 @@ Failure restores the destination's original length and prefix.
 `compress_to_slice` reports `OutputTooSmall` instead of changing the encoding;
 exact final length suffices, and failure may leave a partial prefix.
 `max_compressed_size` supplies a conservative configuration-independent bound.
+`compress_to_uninit` and the sessions' `process_uninit` write the same bytes
+into `&mut [MaybeUninit<u8>]`; see [uninitialized output](uninit-output.md).
 
 All serial paths use `core::stream::StreamState`. Complete input blocks are
 borrowed directly when their end is known; only an undecided tail is staged.

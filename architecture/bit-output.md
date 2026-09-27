@@ -62,7 +62,9 @@ sequenceDiagram
 ```
 
 Fast slice output still uses the fixed writer when the destination meets its
-fragment reservation. Other destinations, flushes, and greedy/HQ output use
+fragment reservation. An uninitialized destination (`Destination::Uninit`)
+never does: it cannot be read back, so its blocks go through scratch and one
+copy (see [uninitialized output](uninit-output.md)). Other destinations, flushes, and greedy/HQ output use
 retained scratch and the existing delivery logic. Sessions retain undelivered
 suffixes; failed one-shot appends roll back to the caller's original length.
 

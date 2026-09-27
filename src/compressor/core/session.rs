@@ -1,5 +1,7 @@
 //! Public-session ownership and error boundary over the shared block state machine.
 
+use core::mem::MaybeUninit;
+
 use super::stream::{Buffers, Destination, Output, Phase, StreamState};
 use crate::compressor::dictionary::PreparedDictionary;
 use crate::compressor::encoder::Compressor;
@@ -58,6 +60,20 @@ impl<'c, 'd> SessionCore<'c, 'd> {
         self.operation
             .process(self.compressor, self.dictionary, input, output, operation)
     }
+    pub(crate) fn process_uninit(
+        &mut self,
+        input: &[u8],
+        output: &mut [MaybeUninit<u8>],
+        operation: Operation,
+    ) -> Result<Progress, EncodeError> {
+        self.operation.run(
+            self.compressor,
+            self.dictionary,
+            input,
+            Destination::Uninit(output),
+            operation,
+        )
+    }
     pub(crate) const fn is_finished(&self) -> bool {
         self.operation.is_finished(self.compressor)
     }
@@ -88,6 +104,20 @@ impl<D: AsRef<PreparedDictionary>> OwnedSessionCore<D> {
             self.dictionary.as_ref().map(AsRef::as_ref),
             input,
             output,
+            operation,
+        )
+    }
+    pub(crate) fn process_uninit(
+        &mut self,
+        input: &[u8],
+        output: &mut [MaybeUninit<u8>],
+        operation: Operation,
+    ) -> Result<Progress, EncodeError> {
+        self.operation.run(
+            &mut self.compressor,
+            self.dictionary.as_ref().map(AsRef::as_ref),
+            input,
+            Destination::Uninit(output),
             operation,
         )
     }
@@ -138,13 +168,31 @@ impl OperationState {
         }
     }
 
-    /// Validates session state and logical positions, then runs the shared scheduler.
+    /// Runs one call into an initialized slice.
     pub(crate) fn process(
         &mut self,
         compressor: &mut Compressor,
         dictionary: Option<&PreparedDictionary>,
         input: &[u8],
         output: &mut [u8],
+        operation: Operation,
+    ) -> Result<Progress, EncodeError> {
+        self.run(
+            compressor,
+            dictionary,
+            input,
+            Destination::Slice(output),
+            operation,
+        )
+    }
+
+    /// Validates session state and logical positions, then runs the shared scheduler.
+    fn run(
+        &mut self,
+        compressor: &mut Compressor,
+        dictionary: Option<&PreparedDictionary>,
+        input: &[u8],
+        output: Destination<'_>,
         operation: Operation,
     ) -> Result<Progress, EncodeError> {
         if self.state.phase == Phase::Failed {
@@ -188,7 +236,7 @@ impl OperationState {
                 allow_pending: true,
             },
             input,
-            Output::new(Destination::Slice(output)),
+            Output::new(output),
             operation,
         );
         let progress = match outcome {

@@ -1,10 +1,11 @@
 use super::{
-    DecodeConfigError, DecodeError, DecodeOperation, DecodeStreamConfig, DecoderConfig,
-    DecoderSession, DecoderSessionOwned, DecoderStatus, core::Stream,
+    DecodeConfigError, DecodeError, DecodeOperation, DecodeProgress, DecodeStreamConfig,
+    DecoderConfig, DecoderSession, DecoderSessionOwned, DecoderStatus, core::Stream,
 };
 use crate::Backend;
 use crate::RetentionPolicy;
 use crate::dictionary::{DecodeDictionary, DictionaryRef};
+use ::core::mem::MaybeUninit;
 use ::core::ops::Range;
 use alloc::vec::Vec;
 
@@ -460,12 +461,60 @@ impl Decompressor {
         let progress = session
             .finish_linear(src, dst)
             .map_err(super::DecodeFailure::into_error)?;
+        Self::one_shot_outcome(progress, src.len())
+    }
+
+    /// Decodes into uninitialized memory and returns the number of bytes
+    /// written.
+    ///
+    /// Produces exactly what [`Decompressor::decompress_to_slice`] does. Use it
+    /// to decode straight into spare capacity or a foreign buffer without
+    /// zeroing it first. On success exactly `dst[..written]` is initialized
+    /// and no byte after it is written.
+    ///
+    /// Safe code cannot read back memory it has not initialized, so `dst`
+    /// cannot serve as the first member's history the way it does for
+    /// [`Decompressor::decompress_to_slice`]: output passes through the
+    /// decoder's window and is copied into `dst`, as a streaming session does.
+    ///
+    /// # Errors
+    /// As [`Decompressor::decompress_to_slice`]. After
+    /// `OutputTooSmall { written }`, `dst[..written]` is initialized; after any
+    /// other error treat none of `dst` as initialized.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mbrotli::{DecoderConfig, Decompressor};
+    /// let compressed = [0x0b, 0x02, 0x80, b'h', b'e', b'l', b'l', b'o', 0x03];
+    /// let mut decoder = Decompressor::new(DecoderConfig::default())?;
+    /// let mut output = Vec::with_capacity(8);
+    /// let written = decoder.decompress_to_uninit(&compressed, output.spare_capacity_mut())?;
+    /// // SAFETY: `decompress_to_uninit` initialized the first `written` spare bytes.
+    /// unsafe { output.set_len(written) };
+    /// assert_eq!(output, b"hello");
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn decompress_to_uninit(
+        &mut self,
+        src: &[u8],
+        dst: &mut [MaybeUninit<u8>],
+    ) -> Result<usize, DecodeError> {
+        let mut session = DecoderSession::start(self, DecodeStreamConfig::default(), None)?;
+        let progress = session
+            .process_uninit(src, dst, DecodeOperation::Finish)
+            .map_err(super::DecodeFailure::into_error)?;
+        Self::one_shot_outcome(progress, src.len())
+    }
+
+    /// Turns the single `Finish` call of a fixed-slice decode into its result.
+    fn one_shot_outcome(progress: DecodeProgress, input_len: usize) -> Result<usize, DecodeError> {
         if progress.status == DecoderStatus::NeedsOutput {
             return Err(DecodeError::OutputTooSmall {
                 written: progress.produced,
             });
         }
-        if progress.consumed != src.len() {
+        if progress.consumed != input_len {
             return Err(DecodeError::TrailingData {
                 offset: progress.consumed as u64,
             });

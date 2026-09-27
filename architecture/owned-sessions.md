@@ -34,6 +34,7 @@ classDiagram
     }
     class EncOperationState["compressor::core::session::OperationState"] {
         process(compressor, dictionary, input, output, op)
+        process_uninit(compressor, dictionary, input, output, op)
         is_finished(compressor)
         release(compressor)
     }
@@ -55,6 +56,7 @@ classDiagram
     class DecOperationState["decompressor::core::session::OperationState"] {
         start(decoder, stream)
         process(decoder, dictionary, input, output, op, collect)
+        process_uninit(decoder, dictionary, input, output, op)
         release(decoder)
     }
     DecoderSession --> DecOperationState

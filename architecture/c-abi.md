@@ -17,8 +17,8 @@ graph TD
     Core --> Validate[LengthSlot / Region / Arguments: pointer validation]
     Core --> Guard[guarded: catch_unwind]
     Core --> Codec[compress / decompress / compress_bound]
-    Codec --> Compressor[mbrotli::Compressor::compress_to_slice]
-    Codec --> Decompressor[mbrotli::Decompressor::decompress_to_slice]
+    Codec --> Compressor[mbrotli::Compressor::compress_to_uninit]
+    Codec --> Decompressor[mbrotli::Decompressor::decompress_to_uninit]
     Codec --> Stored[stored_stream: uncompressed fallback]
     Tests[tests/c_abi.rs, benches/one_shot.rs, fuzz c_abi] --> Root
     Tests --> Google[google-brotli-ffi oracle]
@@ -27,7 +27,8 @@ graph TD
 The crate root owns only the ABI surface: the `#[repr(C)]` `MbrotliResult`
 enum and three `#[unsafe(no_mangle)] extern "C"` functions with their contract
 documentation. Everything else is in the private `core` module, which owns the
-one `unsafe` pointer-to-slice conversion, the panic guard, parameter
+one `unsafe` pointer-to-slice conversion (the output becomes
+`&mut [MaybeUninit<u8>]`, so a C buffer need not be initialized), the panic guard, parameter
 conversion, the private `thiserror` error `FfiError`, and its reduction to a
 status code. mbrotli's `src/` stays free of `unsafe`; every `unsafe` block is in
 this crate, each with a `// SAFETY:` comment.
@@ -46,7 +47,7 @@ this crate, each with a `// SAFETY:` comment.
 `output_len`, which is never written.
 
 `mbrotli_compress` is byte-identical to `BrotliEncoderCompress(quality, lgwin,
-BROTLI_MODE_GENERIC, ...)`. That holds because `compress_to_slice` declares
+BROTLI_MODE_GENERIC, ...)`. That holds because `compress_to_uninit` declares
 the input length as the size hint, as the C one-shot API does, and because
 `core::compress` reproduces the two places where the C one-shot API does not
 simply return its streaming encoder's bytes:
@@ -73,7 +74,7 @@ sequenceDiagram
     Core->>Core: read capacity, Arguments::new (null, size, overlap)
     Core->>Core: slices() — the only from_raw_parts
     Core->>Codec: guarded(|| codec(src, dst))
-    Codec->>M: Compressor::new + compress_to_slice / Decompressor::new + decompress_to_slice
+    Codec->>M: Compressor::new + compress_to_uninit / Decompressor::new + decompress_to_uninit
     M-->>Codec: Result<usize, EncodeError / DecodeError>
     Codec-->>Core: Result<usize, FfiError>
     Core->>Core: write written or 0 to output_len
@@ -94,7 +95,7 @@ flowchart TD
     Empty -->|yes| One{capacity >= 1?}
     One -->|yes| Byte[write 0x06, OK]
     One -->|no| Small[OUTPUT_TOO_SMALL]
-    Empty -->|no| Encode[Compressor::compress_to_slice]
+    Empty -->|no| Encode[Compressor::compress_to_uninit]
     Encode --> Fits{Ok and written <= bound?}
     Fits -->|yes| Ok[OK]
     Fits -->|no| Cap{capacity >= bound?}
@@ -150,8 +151,13 @@ the status code crosses the ABI.
   non-null and aligned before it is read or written. Buffers may be null only
   with a zero length; lengths above `isize::MAX` or ending past the address
   space are refused; input, output and the `output_len` slot must be pairwise
-  disjoint, since `&[u8]` and `&mut [u8]` may not alias. Empty buffers become
-  empty slices regardless of their pointer.
+  disjoint, since `&[u8]` and `&mut [MaybeUninit<u8>]` may not alias. Empty
+  buffers become empty slices regardless of their pointer.
+- **Output is write-only.** The output is never viewed as `&mut [u8]`, so an
+  uninitialized C buffer is sound; exactly the reported bytes are initialized
+  on `MBROTLI_OK`. q0/q1 compression copies each block once from encoder
+  scratch and decompression delivers through the history ring; see
+  [uninitialized output](uninit-output.md).
 - **Undetectable misuse remains undefined.** Dangling or too-short buffers,
   and concurrent access by another thread, are the caller's contract.
 - **No unwinding into C.** `catch_unwind` wraps each codec call; the closure

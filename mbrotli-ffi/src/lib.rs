@@ -127,7 +127,8 @@ pub enum MbrotliResult {
 /// - When `input_len` is not zero, `input` must be null or valid for reads of
 ///   `input_len` bytes.
 /// - When `*output_len` is not zero, `output` must be null or valid for
-///   writes of `*output_len` bytes.
+///   writes of `*output_len` bytes. It need not be initialized: the call only
+///   writes to it, and on success exactly the reported bytes are initialized.
 /// - No other thread may write to `input`, or access `output` or
 ///   `output_len`, during the call.
 ///
@@ -194,7 +195,8 @@ pub unsafe extern "C" fn mbrotli_compress(
 ///
 /// As [`mbrotli_compress`]: `output_len` must be null or point to a readable
 /// and writable `size_t`, a non-null `input` must be readable for `input_len`
-/// bytes, a non-null `output` writable for `*output_len` bytes, and no other
+/// bytes, a non-null `output` writable for `*output_len` bytes (it need not be
+/// initialized), and no other
 /// thread may write to `input` or access `output` or `output_len` during the
 /// call.
 ///

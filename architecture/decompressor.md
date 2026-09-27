@@ -68,7 +68,9 @@ let mut decoder = Decompressor::new(config)?;
 ```
 
 `decompress` returns a Vec, `decompress_into` appends and returns its range, and
-`decompress_to_slice` fills the caller's initialized slice. Eligible complete
+`decompress_to_slice` fills the caller's initialized slice, and
+`decompress_to_uninit` an uninitialized one through ring delivery (see
+[uninitialized output](uninit-output.md)); sessions have `process_uninit`. Eligible complete
 stored members use the borrowed-payload shortcut described below. Other Vec shapes first
 run the session with no destination at all, which parses up to the first byte
 of output, then reserve what the meta-block declares (`declared_remaining`, at

@@ -1168,6 +1168,138 @@ fn bench_universal(criterion: &mut Criterion) {
     }
 }
 
+/// Output room that lets qualities 0 and 1 encode a whole default-window
+/// block in place: twice the 4 MiB block plus the fragment slack.
+#[cfg(not(feature = "no_std"))]
+const IN_PLACE_OUTPUT: usize = 3 << 22;
+
+/// Registers the session output shapes: an initialized buffer against spare
+/// capacity.
+///
+/// `process` gets room for a whole block, so qualities 0 and 1 take their
+/// in-place bit writer; `process_uninit` encodes straight into the result's
+/// spare capacity, through retained scratch. Quality 5 shows the shared
+/// scratch path both methods take.
+#[cfg(not(feature = "no_std"))]
+fn bench_session_output(criterion: &mut Criterion) {
+    let corpora = corpora();
+
+    for quality in [Quality::Q0, Quality::Q1, Quality::Q5] {
+        let numeric = usize::from(quality.get());
+        let mut group = criterion.benchmark_group(format!("session-output/q{numeric}"));
+        configure(&mut group, quality);
+
+        for corpus in &corpora {
+            let data = corpus.data.as_slice();
+            if data.len() < STREAM_CHUNK {
+                continue;
+            }
+            let stream = StreamConfig::from(InputSize::Exact(data.len() as u64));
+            group.throughput(Throughput::Bytes(data.len() as u64));
+            let mut compressor = encoder(quality);
+            let mut buffer = vec![0u8; IN_PLACE_OUTPUT];
+            let expected = session_in_place(&mut compressor, data, stream, &mut buffer);
+            let mut theirs = Vec::new();
+            c_brotli::compress_streaming(
+                numeric,
+                usize::from(LGWIN.bits()),
+                &data.chunks(STREAM_CHUNK).collect::<Vec<_>>(),
+                &mut theirs,
+            )
+            .expect("C Brotli failed to compress");
+            assert_eq!(expected, theirs, "q{numeric} {}: process", corpus.name);
+            assert_eq!(
+                session_uninit(&mut compressor, data, stream),
+                expected,
+                "q{numeric} {}: process_uninit",
+                corpus.name
+            );
+
+            group.bench_with_input(
+                BenchmarkId::new("process", &corpus.name),
+                &data,
+                |bencher, data| {
+                    bencher.iter(|| {
+                        session_in_place(&mut compressor, black_box(data), stream, &mut buffer)
+                    });
+                },
+            );
+            group.bench_with_input(
+                BenchmarkId::new("process_uninit", &corpus.name),
+                &data,
+                |bencher, data| {
+                    bencher.iter(|| session_uninit(&mut compressor, black_box(data), stream));
+                },
+            );
+        }
+        group.finish();
+    }
+}
+
+/// Streams `data` in [`STREAM_CHUNK`] pieces through `process` into `buffer`.
+#[cfg(not(feature = "no_std"))]
+fn session_in_place(
+    compressor: &mut Compressor,
+    data: &[u8],
+    stream: StreamConfig,
+    buffer: &mut [u8],
+) -> Vec<u8> {
+    let mut output = Vec::new();
+    let mut session = compressor.start(stream).expect("a legal stream");
+    let mut offset = 0usize;
+    loop {
+        let take = (data.len() - offset).min(STREAM_CHUNK);
+        let operation = if offset + take == data.len() {
+            Operation::Finish
+        } else {
+            Operation::Process
+        };
+        let progress = session
+            .process(&data[offset..offset + take], buffer, operation)
+            .expect("the session failed");
+        offset += progress.consumed;
+        output.extend_from_slice(&buffer[..progress.produced]);
+        if progress.status == EncoderStatus::Finished {
+            break;
+        }
+    }
+    output
+}
+
+/// Streams `data` in [`STREAM_CHUNK`] pieces through `process_uninit` into the
+/// result's spare capacity.
+#[cfg(not(feature = "no_std"))]
+fn session_uninit(compressor: &mut Compressor, data: &[u8], stream: StreamConfig) -> Vec<u8> {
+    let mut output = Vec::with_capacity(data.len());
+    let mut session = compressor.start(stream).expect("a legal stream");
+    let mut offset = 0usize;
+    loop {
+        if output.capacity() - output.len() < STREAM_CHUNK {
+            output.reserve(STREAM_CHUNK);
+        }
+        let take = (data.len() - offset).min(STREAM_CHUNK);
+        let operation = if offset + take == data.len() {
+            Operation::Finish
+        } else {
+            Operation::Process
+        };
+        let progress = session
+            .process_uninit(
+                &data[offset..offset + take],
+                output.spare_capacity_mut(),
+                operation,
+            )
+            .expect("the session failed");
+        offset += progress.consumed;
+        // SAFETY: `process_uninit` initialized the first `produced` spare bytes.
+        unsafe { output.set_len(output.len() + progress.produced) };
+        if progress.status == EncoderStatus::Finished {
+            break;
+        }
+    }
+    output
+}
+
 #[cfg(not(feature = "no_std"))]
 criterion_group!(
     benches,
@@ -1176,6 +1308,7 @@ criterion_group!(
     bench_presized,
     bench_tiny,
     bench_streaming,
+    bench_session_output,
     bench_flush,
     bench_dictionary,
     bench_universal

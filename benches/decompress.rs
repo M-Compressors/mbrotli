@@ -52,6 +52,7 @@ use mbrotli::{
 };
 use std::ffi::c_int;
 use std::hint::black_box;
+use std::mem::MaybeUninit;
 use std::sync::OnceLock;
 
 /// Sliding window size every stream is encoded with.
@@ -226,6 +227,47 @@ fn session(
         };
         let progress = session
             .process(
+                &input[read..end],
+                &mut output[written..output_end],
+                operation,
+            )
+            .expect("decoding failed");
+        read += progress.consumed;
+        written += progress.produced;
+        if progress.status == DecoderStatus::Finished {
+            break;
+        }
+        assert!(
+            progress.consumed != 0 || progress.produced != 0,
+            "the decoder stalled"
+        );
+    }
+    assert_eq!((read, written), (input.len(), output.len()));
+}
+
+/// As [`session`], decoding into uninitialized windows of `output`.
+fn session_uninit(
+    decoder: &mut Decompressor,
+    input: &[u8],
+    output: &mut [MaybeUninit<u8>],
+    input_chunk: usize,
+    output_chunk: usize,
+) {
+    let mut session = decoder
+        .start(DecodeStreamConfig::default())
+        .expect("a legal stream");
+    let mut read = 0;
+    let mut written = 0;
+    loop {
+        let end = (read + input_chunk).min(input.len());
+        let output_end = (written + output_chunk).min(output.len());
+        let operation = if end == input.len() {
+            DecodeOperation::Finish
+        } else {
+            DecodeOperation::Process
+        };
+        let progress = session
+            .process_uninit(
                 &input[read..end],
                 &mut output[written..output_end],
                 operation,
@@ -555,6 +597,34 @@ fn bench_streaming(criterion: &mut Criterion) {
                             &mut decoder,
                             black_box(compressed),
                             &mut output,
+                            STREAM_CHUNK,
+                            STREAM_CHUNK,
+                        );
+                    });
+                },
+            );
+
+            let mut spare = vec![MaybeUninit::<u8>::uninit(); stream.payload.len()];
+            session_uninit(
+                &mut decoder,
+                compressed,
+                &mut spare,
+                STREAM_CHUNK,
+                STREAM_CHUNK,
+            );
+            // SAFETY: the session initialized every byte; it asserts that the
+            // whole payload was produced.
+            let decoded: Vec<u8> = spare.iter().map(|b| unsafe { b.assume_init() }).collect();
+            assert_eq!(decoded, stream.payload, "the uninitialized session differs");
+            group.bench_with_input(
+                BenchmarkId::new("mbrotli-session-uninit", &stream.name),
+                &compressed,
+                |bencher, compressed| {
+                    bencher.iter(|| {
+                        session_uninit(
+                            &mut decoder,
+                            black_box(compressed),
+                            &mut spare,
                             STREAM_CHUNK,
                             STREAM_CHUNK,
                         );

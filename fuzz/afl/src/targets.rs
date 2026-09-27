@@ -9,8 +9,8 @@
 #[cfg(feature = "experimental")]
 use crate::c_parse_shared_dictionary;
 use crate::{
-    Context, IMPLEMENTED_QUALITIES, assert_round_trip, c_compress_with, c_decompress_large_window,
-    cap, decode_case,
+    Context, IMPLEMENTED_QUALITIES, SENTINEL, assert_round_trip, c_compress_with,
+    c_decompress_large_window, cap, decode_case, read_output, sentinel_output,
 };
 use mbrotli::dictionary::{DictionaryBuilder, DictionaryError, DictionaryLimits};
 #[cfg(feature = "experimental")]
@@ -227,10 +227,24 @@ pub fn streaming_equivalence(ctx: &Context, input: &[u8]) {
         }
     };
 
-    let session = drive_session(&mut encoder, case.data, case.chunk.max(1), case.stream);
+    let session = drive_session(
+        &mut encoder,
+        case.data,
+        case.chunk.max(1),
+        case.stream,
+        false,
+    );
+    let uninit = drive_session(
+        &mut encoder,
+        case.data,
+        case.chunk.max(1),
+        case.stream,
+        true,
+    );
 
     assert_eq!(written, read, "the writer and reader adapters disagree");
     assert_eq!(written, session, "the writer and the session disagree");
+    assert_eq!(written, uninit, "process and process_uninit disagree");
     assert_round_trip(case.data, &written);
 
     // The stream declares the payload's true length, so it has to reach the
@@ -252,17 +266,32 @@ pub fn streaming_equivalence(ctx: &Context, input: &[u8]) {
         .expect("exact slice failed");
     assert_eq!(size, written.len());
     assert_eq!(exact, written);
+    // One spare byte, which the uninitialized path must leave alone.
+    let mut uninit = sentinel_output(written.len() + 1);
+    let size = encoder
+        .compress_to_uninit(case.data, &mut uninit)
+        .expect("uninitialized slice failed");
+    assert_eq!(size, written.len());
+    let uninit = read_output(&uninit);
+    assert_eq!(uninit[..size], written);
+    assert_eq!(
+        uninit[size], SENTINEL,
+        "compress_to_uninit wrote past the stream"
+    );
 }
 
-/// Drives `data` through a session in `chunk` sized steps.
+/// Drives `data` through a session in `chunk` sized steps, through
+/// `process_uninit` when `uninit` is set.
 fn drive_session(
     encoder: &mut Compressor,
     data: &[u8],
     chunk: usize,
     stream: StreamConfig,
+    uninit: bool,
 ) -> Vec<u8> {
     let mut output = Vec::new();
     let mut buffer = vec![0u8; chunk];
+    let mut spare = sentinel_output(chunk);
     let mut session = encoder.start(stream).expect("a legal stream");
     let mut offset = 0usize;
     loop {
@@ -272,9 +301,26 @@ fn drive_session(
         } else {
             Operation::Process
         };
-        let progress = session
-            .process(&data[offset..offset + take], &mut buffer, operation)
-            .expect("the session failed");
+        let input = &data[offset..offset + take];
+        let progress = if uninit {
+            let progress = session
+                .process_uninit(input, &mut spare, operation)
+                .expect("the session failed");
+            let bytes = read_output(&spare);
+            assert!(
+                bytes[progress.produced..]
+                    .iter()
+                    .all(|&byte| byte == SENTINEL),
+                "process_uninit wrote past `produced`"
+            );
+            buffer[..progress.produced].copy_from_slice(&bytes[..progress.produced]);
+            spare.fill(std::mem::MaybeUninit::new(SENTINEL));
+            progress
+        } else {
+            session
+                .process(input, &mut buffer, operation)
+                .expect("the session failed")
+        };
         // A call that moved nothing has to say why, or a caller would spin.
         assert!(
             progress.consumed > 0
@@ -335,6 +381,13 @@ pub fn output_capacity(ctx: &Context, input: &[u8]) {
     assert!(
         matches!(outcome, Err(EncodeError::OutputTooSmall { .. })),
         "a short buffer must be reported, not truncated"
+    );
+    assert!(
+        matches!(
+            encoder.compress_to_uninit(case.data, &mut sentinel_output(expected.len() - 1)),
+            Err(EncodeError::OutputTooSmall { .. })
+        ),
+        "a short uninitialized buffer must be reported, not truncated"
     );
     // And the compressor is still usable afterwards.
     assert_eq!(

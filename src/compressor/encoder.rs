@@ -5,12 +5,14 @@ use alloc::vec::Vec;
 use super::config::{ConfigError, EncoderConfig, SizeOverflow};
 use super::core::bound::{append_reserve, bound};
 use super::core::driver::{
-    EncoderCache, compress_to_slice_attached, compress_to_vec_attached, quality_reads_a_prefix,
+    EncoderCache, compress_to_slice_attached, compress_to_uninit_attached,
+    compress_to_vec_attached, quality_reads_a_prefix,
 };
 use super::dictionary::PreparedDictionary;
 use super::error::EncodeError;
 use super::internal::{CompressParams, QualityLevel, WindowBits};
 use super::session::{EncoderSession, EncoderSessionOwned, StreamConfig};
+use ::core::mem::MaybeUninit;
 use ::core::ops::Range;
 use fearless_simd::Level;
 
@@ -357,6 +359,56 @@ impl Compressor {
     #[inline]
     pub fn compress_to_slice(&mut self, src: &[u8], dst: &mut [u8]) -> Result<usize, EncodeError> {
         self.compress_attached_to_slice(None, src, dst)
+    }
+
+    /// Compresses `src` into uninitialized `dst` and returns the number of
+    /// bytes written.
+    ///
+    /// Produces exactly the bytes [`Compressor::compress_to_slice`] does, so
+    /// the same [`Compressor::max_compressed_size`] bound applies. Use it to
+    /// compress straight into spare capacity or a foreign buffer without
+    /// zeroing it first. On success exactly `dst[..written]` is initialized
+    /// and no byte after it is written.
+    ///
+    /// Safe code cannot read back memory it has not initialized, so qualities
+    /// 0 and 1 cannot run their in-place bit writer here and encode through
+    /// retained scratch instead, copying each block once, as qualities 2–11
+    /// always do.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EncodeError::OutputTooSmall`] when `dst` cannot hold the whole
+    /// stream; treat none of `dst` as initialized then. The compressor is left
+    /// ready for the next operation.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mbrotli::{Compressor, EncoderConfig, Quality};
+    ///
+    /// let mut encoder = Compressor::new(EncoderConfig::default().with_quality(Quality::Q1))?;
+    /// let payload = b"compressed into spare capacity";
+    /// let mut compressed = Vec::with_capacity(Compressor::max_compressed_size(payload.len())?);
+    ///
+    /// let written = encoder.compress_to_uninit(payload, compressed.spare_capacity_mut())?;
+    /// // SAFETY: `compress_to_uninit` initialized the first `written` spare bytes.
+    /// unsafe { compressed.set_len(written) };
+    ///
+    /// assert_eq!(compressed, encoder.compress(payload)?);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn compress_to_uninit(
+        &mut self,
+        src: &[u8],
+        dst: &mut [MaybeUninit<u8>],
+    ) -> Result<usize, EncodeError> {
+        self.ensure_available()?;
+        let params = self.config.lower(Some(src.len()));
+        let provided = dst.len();
+        let outcome =
+            compress_to_uninit_attached(&mut self.workspace, self.level, &params, None, src, dst);
+        self.finish_operation();
+        outcome.map_err(|error| EncodeError::from_core(error, provided))
     }
 
     /// Compresses `src` against `dictionary` into a freshly allocated stream.
