@@ -44,7 +44,9 @@ loop remain shared scalar code. `fork_empty` copies policy/backend into an indep
 manage reuse without exposing core storage.
 
 `DecoderConfig` combines `WindowLimit`, `MemberMode`, and `DecodeLimits`.
-Default is `Single`, extended windows up to 62 bits, and no numeric budgets.
+Default is `Single`, extended windows up to 62 bits, and no numeric budgets;
+`DecoderConfig::new()` is the same value as a `const fn`, and `Default`
+delegates to it.
 `DecodeStreamConfig` optionally specifies `OutputSize::Exact(u64)`, which is a
 validation contract, never an allocation hint. Limits count accepted compressed
 bytes, regenerated output, and live decoder-owned requested heap bytes. Input

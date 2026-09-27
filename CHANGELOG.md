@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+- `EncoderConfig::new()`, `DecoderConfig::new()`, and, behind `experimental`,
+  `FramedEncodeConfig::new()` and `FramedDecodeConfig::new()` return the
+  default configuration as a `const fn`, so configurations can be built in
+  `const` and `static` items. `Default` for each delegates to them.
 - The literal-cost estimator used by qualities 10 and 11 reads the logarithms
   of its sliding-window counts from a precomputed table instead of a
   one-entry cache in front of the library `log2`. Counts below 256 use the

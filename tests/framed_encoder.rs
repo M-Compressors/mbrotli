@@ -1070,3 +1070,11 @@ fn large_resources_preserve_bytes_under_deterministic_random_backpressure() {
         }
     }
 }
+
+#[test]
+fn the_const_framed_encoder_configuration_equals_the_default() {
+    const CONFIG: FramedEncodeConfig = FramedEncodeConfig::new();
+    assert_eq!(CONFIG, FramedEncodeConfig::default());
+    assert_eq!(*CONFIG.encoder_config(), EncoderConfig::default());
+    assert_eq!(*CONFIG.framing_config(), FramingConfig::default());
+}

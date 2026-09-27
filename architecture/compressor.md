@@ -19,6 +19,9 @@ graph TD
     Dict[PreparedDictionary] --> Encoders
 ```
 
+`EncoderConfig::new()` is a `const fn` returning the reference defaults;
+`Default` delegates to it, so both always agree.
+
 Validated configuration types enforce quality 0–11, standard windows 10–24,
 large declarations 10–62, block bits 16–24 and legal distance parameters.
 `Compressor::new` and `reconfigure` validate combinations. Large Window requires

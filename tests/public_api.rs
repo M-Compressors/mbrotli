@@ -49,6 +49,12 @@ fn the_default_configuration_is_the_reference_encoders() {
 }
 
 #[test]
+fn the_const_encoder_configuration_equals_the_default() {
+    const CONFIG: EncoderConfig = EncoderConfig::new();
+    assert_eq!(CONFIG, EncoderConfig::default());
+}
+
+#[test]
 fn every_configuration_setter_survives_a_round_trip() {
     let codes = DistanceParams::explicit(2, 8).expect("a legal layout");
     let config = EncoderConfig::default()

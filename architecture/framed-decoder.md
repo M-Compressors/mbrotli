@@ -71,6 +71,10 @@ quadratic in their number; the 2026-09-26 AFL campaign saved two such inputs
 
 ## Public ownership and lifecycle
 
+`FramedDecodeConfig::new()` returns the default policy as a `const fn`
+(framed input only, the `DecoderConfig::new()` window limit, default
+`FramedDecodeLimits`, `Retain`); `Default` delegates to it.
+
 `FramedDecompressor` owns configuration, the selected `Backend`, retention policy,
 raw `Stream` workspace and framing bookkeeping. `start` and
 `start_with_dictionaries` create an exclusive `FramedDecoderSession`;

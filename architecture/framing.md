@@ -51,6 +51,8 @@ wire serialization and the borrowed-input cursor. `core` does not import I/O.
 full container plus directory, no repeats, 65,536 bytes per chunk, 1 MiB metadata,
 8 MiB framing storage, 10,000 resources and 1,000,000 chunks. Profiles and chunk
 size (1..=16 MiB with conservative staging allowance) are validated before use.
+`FramedEncodeConfig::new()` is the same default as a `const fn`, built from
+`EncoderConfig::new()`; `Default` delegates to it.
 
 `FramedInput` borrows an ordered slice of `FramedItem`: complete resources,
 metadata or padding. `FramedResource` carries payload, visibility/checksum,

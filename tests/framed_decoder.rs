@@ -1069,3 +1069,19 @@ fn checksum_fields_are_recorded_and_footer_sizes_are_checked_without_authenticat
         .unwrap();
     assert_eq!(out.resources[0].checksum, Some(DictionaryId([0x77; 32])));
 }
+
+#[test]
+fn the_const_framed_decoder_configuration_equals_the_default() {
+    const CONFIG: FramedDecodeConfig = FramedDecodeConfig::new();
+    assert_eq!(CONFIG, FramedDecodeConfig::default());
+    assert_eq!(CONFIG.input_mode(), InputMode::FramedOnly);
+    assert_eq!(
+        CONFIG.window_limit(),
+        mbrotli::DecoderConfig::default().window_limit()
+    );
+    assert_eq!(CONFIG.limits(), FramedDecodeLimits::default());
+    assert_eq!(
+        CONFIG.internal_dictionaries(),
+        InternalDictionaryPolicy::Retain
+    );
+}

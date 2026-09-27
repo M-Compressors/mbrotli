@@ -130,6 +130,7 @@ classDiagram
     class EncoderConfig {
         -Quality quality
         -Window window
+        +new() EncoderConfig
         +with_window(Window) EncoderConfig
         +window() Window
     }

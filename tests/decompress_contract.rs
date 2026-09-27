@@ -3,6 +3,15 @@ mod support;
 use mbrotli::*;
 
 #[test]
+fn the_const_decoder_configuration_equals_the_default() {
+    const CONFIG: DecoderConfig = DecoderConfig::new();
+    assert_eq!(CONFIG, DecoderConfig::default());
+    assert_eq!(CONFIG.window_limit(), WindowLimit::large(62).unwrap());
+    assert_eq!(CONFIG.member_mode(), MemberMode::Single);
+    assert_eq!(CONFIG.limits(), DecodeLimits::default());
+}
+
+#[test]
 fn validated_configuration_and_exact_size_contracts_have_typed_errors() {
     for bits in [0, 9, 25, 255] {
         assert!(WindowLimit::standard(bits).is_err());
