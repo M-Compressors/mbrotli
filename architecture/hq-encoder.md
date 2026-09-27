@@ -332,10 +332,36 @@ arithmetic is part of the output, not an implementation detail:
   buffer, which is every block of a one-shot stream, and a copy in the
   `LiteralCostArena` otherwise. Every read lies inside `pos..pos + len`, so
   the mask is applied in one place and the sliding-window loops index a
-  plain slice. The in-window count and the histogram count each go through
-  a one-entry `Log2Memo`: the count changes rarely and the library `log2`
-  past the table's end costs more than the rest of a position, and a cached
-  value is the same function's result, so nothing rounds differently.
+  plain slice.
+- Both estimator models take two logarithms per byte, of the in-window count
+  and of one symbol's count. A window holds at most `2 * 2000` bytes, so every
+  such count is below `LOG2_WINDOW_END` (4001). Counts below 256 read the
+  shared `LOG2_TABLE`; counts from 256 read a `Box<[f64; 3745]>` tail that
+  `LiteralCostArena` builds the first time it prices a block of at least 256
+  bytes, since a shorter block cannot hold a larger count. The tail is
+  collected from `shared::fast_log::log2`, the library logarithm `fast_log2`
+  itself falls back to past its table, so no entry goes through the table
+  check. Both lengths are in the types, so the bound checks compare against
+  constants. A missing tail, or a count past it, computes `log2` instead.
+  Every path returns the same `f64` the library call would, so nothing
+  rounds differently; tests compare the tail bit for bit with `fast_log2` and
+  the priced blocks with and without it. The arena keeps the tail across
+  blocks and streams and counts it in its retained bytes.
+
+```mermaid
+flowchart TD
+    Block["estimate_bit_costs_for_literals(len)"] --> Long{"len >= 256?"}
+    Long -- yes --> Build["build the tail once<br/>(3745 log2 calls, collected)"]
+    Long -- no --> Keep["keep whatever tail exists"]
+    Build --> Loop["per-byte loop: log2(in_window) - log2(histo)"]
+    Keep --> Loop
+    Loop --> Small{"count < 256?"}
+    Small -- yes --> Table["LOG2_TABLE[count]"]
+    Small -- no --> Tail{"tail built and<br/>count < 4001?"}
+    Tail -- yes --> TailRead["tail[count - 256]"]
+    Tail -- no --> Compute["log2(count)"]
+```
+
   `is_mostly_utf8` scans a contiguous run in place, counting eight ASCII
   bytes at a time when a word has no high bit and no NUL — each parses as a
   one-byte sequence — and falls back to the per-byte masked decoder only for

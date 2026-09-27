@@ -76,6 +76,21 @@ explicitly an upstream-vendor update.
   corpora. Record both speed and compression ratio; a speedup that changes the
   output size or semantics is not an equivalent comparison.
 - Mark functions as const where it's possible.
+- Prefer fixed-size storage over `Vec` when a buffer never grows after it is
+  built: `[T; N]` or `Box<[T; N]>` when the length is a constant, `Box<[T]>`
+  when it is known only at runtime. A length in the type turns bound checks
+  into comparisons against a constant, and a boxed slice cannot silently
+  reallocate. Keep `Vec` for storage that is extended, truncated or reused
+  across different lengths.
+- Build fixed tables by collecting an iterator, for example
+  `(start..end).map(f).collect::<Box<[T]>>()`, then
+  `.try_into().ok()` for a `Box<[T; N]>`. Collecting writes each element
+  once; `Box::new([0; N])` followed by a fill loop zeroes the allocation
+  first. A `for` loop, `for_each` and `fold` over the same iterator compile
+  to identical code, so choose among them for readability, not speed.
+  (Measured on the 3745-entry `log2` tail: 6.29 us collected vs 6.52-6.60 us
+  for zero-then-fill in any loop form; `core::array::from_fn` in a `Box` was
+  slowest at 6.65 us.)
 
 ## Errors
 

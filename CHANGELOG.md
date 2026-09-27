@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+- The literal-cost estimator used by qualities 10 and 11 reads the logarithms
+  of its sliding-window counts from a precomputed table instead of a
+  one-entry cache in front of the library `log2`. Counts below 256 use the
+  existing table; the 3745 counts from 256 to the window's 4000-byte limit
+  are computed once per encoder, the first time it prices a block of at least
+  256 bytes, by the library `log2` that `fast_log2` falls back to (now a
+  shared `log2` helper). The values are the ones `log2` returns, so output is
+  unchanged. Building the table takes about 6 us; a new q10/q11 compression
+  of a 256 B-1 KiB input is 2-5% slower for it, and 16 B inputs are
+  unaffected.
+  The estimator is 9-16% faster (hotpath, release, Apple M5 Pro, 10 runs of
+  q10 and q11 on `alice29.txt` 662 -> 555 us, `mapsdatazrh` 661 -> 562 us,
+  `plrabn12.txt` 901 -> 818 us per call). It is about 1% of a q10/q11
+  compression, so end-to-end time changes by less than the noise. Each
+  q10/q11 encoder that prices a block of at least 256 bytes retains 29 KiB
+  more.
+
 ## [v0.5.2](https://github.com/Mnwa/mbrotli/releases/tag/v0.5.2) - 2026-09-26
 
 - Add a manually dispatched `release.yml` workflow that publishes `mbrotli`
