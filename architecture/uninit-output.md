@@ -175,9 +175,10 @@ fallbacks write through `MaybeUninit::write`. See [C ABI](c-abi.md).
   sessions, and `decompress_to_uninit` against `decompress_to_slice` for
   success, `OutputTooSmall`, trailing and truncated input.
 - AFL: `streaming_equivalence` and `output_capacity` compare the uninitialized
-  session and one-shot against the initialized ones; `decompress` compares
+  borrowed and owned sessions and one-shot against the initialized ones; `decompress` compares
   `decompress_to_uninit` with ring delivery; `decode_streaming` alternates
-  `process` and `process_uninit` when the first input byte has its top bit set.
+  `process` and `process_uninit` when the first input byte has its top bit set,
+  and runs an owned session through `process_uninit` alone.
 - Unit tests in `shared::uninit` and the `mbrotli-ffi` core tests, which now
   run on uninitialized destinations.
 

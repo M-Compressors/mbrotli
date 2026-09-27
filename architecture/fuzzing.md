@@ -157,7 +157,7 @@ target that can reach the validating conversions and the large-window refusal.
 | `params_roundtrip` | header | bound, round-trip, and that a reused compressor, a second call on it and a fresh one all agree, over every legal setting |
 | `simd_equivalence` | header | every distinct host backend emits identical bytes |
 | `differential_c` | header | byte identity with Google Brotli v1.2.0 streaming FINISH configured with the same quality, window, mode, block size, size hint, distance layout and context setting, including empty input |
-| `streaming_equivalence` | header | vector, append, exact slice, uninitialized slice, writer, reader and low-level session (`process` and `process_uninit`, the latter writing nothing past `produced`) emit identical bytes with declared size at arbitrary chunk sizes, including empty and incompressible inputs; every `process` call that moved nothing reports why; the stream round-trips |
+| `streaming_equivalence` | header | vector, append, exact slice, uninitialized slice, writer, reader and low-level session (`process` and `process_uninit` on a borrowed session, `process_uninit` on an owned one, the uninitialized calls writing nothing past `produced`, and the owned session's returned compressor still compressing identically) emit identical bytes with declared size at arbitrary chunk sizes, including empty and incompressible inputs; every `process` call that moved nothing reports why; the stream round-trips |
 | `output_capacity` | header | exactly sized `dst` accepted, one byte short reported as `OutputTooSmall` by `compress_to_slice` and `compress_to_uninit`, appending preserves the destination's prefix and returns the range it added, and a failed call does not change the next one |
 | `parameter_parsing` | numeric | `TryFrom` and `Window` contracts hold; every legal quality compresses and round-trips; `Compressor::new` refuses a large window at qualities 0 to 2 and accepts it above |
 | `large_window` | large window | `Window::large` contract holds; qualities 0, 1 and 2 refuse when the compressor is built rather than dropping the request; bound, determinism, backend identity; C decoder round-trip up to 30 declared bits, and above it the stream differs from the 30-bit stream only in the six header bits |
@@ -363,7 +363,9 @@ absolute offsets and length checks under the same decode/determinism oracle.
 `decode_serialized` gated at binary, body and registry levels by `experimental`.
 The first target compares independent C results and exact member consumption;
 streaming checks one-shot equivalence and cumulative progress, alternating
-`process` and `process_uninit` when the first byte's top bit is set; `decompress`
+`process` and `process_uninit` when the first byte's top bit is set, and
+drives an owned session through `process_uninit` alone to the same outcome,
+with its returned decoder decoding identically; `decompress`
 also compares `decompress_to_uninit` with ring delivery. A successful
 bounded arbitrary-input decode is replayed with default limits to exercise
 complete stored-member recognition; the first decode proves that this replay

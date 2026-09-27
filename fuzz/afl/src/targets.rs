@@ -245,6 +245,16 @@ pub fn streaming_equivalence(ctx: &Context, input: &[u8]) {
     assert_eq!(written, read, "the writer and reader adapters disagree");
     assert_eq!(written, session, "the writer and the session disagree");
     assert_eq!(written, uninit, "process and process_uninit disagree");
+    let owned = drive_owned_uninit(
+        ctx.encoder(case.config),
+        case.data,
+        case.chunk.max(1),
+        case.stream,
+    );
+    assert_eq!(
+        written, owned,
+        "the owned session's process_uninit disagrees"
+    );
     assert_round_trip(case.data, &written);
 
     // The stream declares the payload's true length, so it has to reach the
@@ -340,6 +350,52 @@ fn drive_session(
             return output;
         }
     }
+}
+
+/// Drives `data` through an owned session's `process_uninit` in `chunk`
+/// sized steps, then checks the compressor it hands back still works.
+fn drive_owned_uninit(
+    compressor: Compressor,
+    data: &[u8],
+    chunk: usize,
+    stream: StreamConfig,
+) -> Vec<u8> {
+    let mut session = compressor.into_session(stream).expect("a legal stream");
+    let mut spare = sentinel_output(chunk);
+    let mut output = Vec::new();
+    let mut offset = 0usize;
+    loop {
+        let take = (data.len() - offset).min(chunk);
+        let operation = if offset + take == data.len() {
+            Operation::Finish
+        } else {
+            Operation::Process
+        };
+        let progress = session
+            .process_uninit(&data[offset..offset + take], &mut spare, operation)
+            .expect("the owned session failed");
+        let bytes = read_output(&spare);
+        assert!(
+            bytes[progress.produced..]
+                .iter()
+                .all(|&byte| byte == SENTINEL),
+            "the owned process_uninit wrote past `produced`"
+        );
+        output.extend_from_slice(&bytes[..progress.produced]);
+        spare.fill(std::mem::MaybeUninit::new(SENTINEL));
+        offset += progress.consumed;
+        if progress.status == EncoderStatus::Finished {
+            assert!(session.is_finished());
+            break;
+        }
+    }
+    let mut compressor = session.into_compressor();
+    assert_eq!(
+        compressor.compress(data).expect("compression failed"),
+        output,
+        "the returned compressor disagrees with its own session"
+    );
+    output
 }
 
 /// The slice entry point must respect an exact and a one-byte-short buffer.
