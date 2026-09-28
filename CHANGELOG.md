@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [v0.5.3](https://github.com/Mnwa/mbrotli/releases/tag/v0.5.3) - 2026-09-28
 
 - Add output into uninitialized memory: `EncoderSession::process_uninit`,
   `EncoderSessionOwned::process_uninit`, `Compressor::compress_to_uninit`,
