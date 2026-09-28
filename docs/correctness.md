@@ -64,6 +64,46 @@ C-to-native round trip; `decoder-campaign.sh` covers decoder boundaries. Both
 stable and experimental builds are needed. See the [AFL guide](../fuzz/afl/README.md)
 and [target mechanics](../architecture/fuzzing.md).
 
+## Eight-hour AFL campaign and follow-up — 2026-09-27/28
+
+After uninitialized output landed (`17b3d315`), every fuzz target of both
+feature builds ran for **8 hours on 12 threads** of the i7-13700KF/WSL2 host:
+66 target/build pairs (30 stable, 36 experimental, compression and
+decompression) scheduled through twelve slots. The 14 pairs whose oracles
+reach uninitialized output (`encoder_session`, `decoder_session`,
+`streaming_equivalence`, `output_capacity`, `decompress`, `decode_streaming`,
+`c_abi`) ran 2 hours each and the others 75 minutes, with the fixed timeouts of
+`campaign.sh` (30 s) and `decoder-campaign.sh` (5 s).
+
+| Build | Pairs | Executions |
+| --- | ---: | ---: |
+| Stable | 30 | 103,259,280 |
+| Experimental | 36 | 170,088,423 |
+| **Total** | **66** | **273,347,703** |
+
+No crashes or correctness-oracle failures were recorded; stability stayed at or
+above 99.38%. `encoder_session` saved one hang per build. Both inputs finish
+in about 120 s standalone under instrumentation, and the time scales linearly
+with payload length (14, 31, 60 and 119 s for an eighth, a quarter, a half and
+all of it): quality 10 with one-byte chunks and a flush every three blocks,
+over roughly ten compressions of a 125 KiB payload. That is search cost, not a
+loop. AFL++ 4.40 ended four workers at start-up with an expired `-V` limit
+(reporting "total runtime infty days"); each was rerun for its full slot.
+
+Performance fixes to the decoder and the C ABI followed, and the twelve
+decoder and C ABI target/build pairs they touch ran for **30 minutes** more on
+12 threads (36,517,398 executions). `decompress` saved nine crashes, all one
+bug that predates uninitialized output: a session growing its history ring for
+the whole of a long literal insert failed a workspace limit that
+`decompress_to_slice` into the same buffer never meets. The minimized input is
+`fuzz/afl/regressions/decompress/crash-long-insert-ring-growth.bin` and the
+`a_long_insert_grows_the_ring_only_for_output_the_call_can_hold` test; both
+failed before the fix, and all nine crashes pass after it. On the final tree,
+`decompress`, `decoder_session`, `decode_streaming` and `c_abi` in both builds,
+`decode_io_limits` and `decode_lifecycle` in the stable build, and
+`framed_decode` and `decode_serialized` in the experimental one ran
+**15 minutes** more (25,065,107 executions) with no crashes or hangs.
+
 ## Six-hour AFL campaign — 2026-09-26
 
 After the decoder changes of 2026-09-26 (unmasked refill, literal tail runs,

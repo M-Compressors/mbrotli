@@ -3,7 +3,7 @@
 pub(in crate::decompressor::framing) mod seek;
 mod wire;
 use super::*;
-use crate::decompressor::core::{Input, Output, Sink, Stop, Stream};
+use crate::decompressor::core::{Input, Output, Stop, Stream};
 use crate::dictionary::{DecodeDictionary, DecodeDictionaryLimits, DictionaryAttachment};
 use crate::framing::{DictionaryReference, MetadataKind};
 use crate::{Backend, DecodeOperation, DecoderConfig, OutputSize, WindowLimit};
@@ -874,7 +874,7 @@ impl Engine {
                 limits.max_input_bytes,
             );
             let mut target = Output {
-                bytes: Sink::Init(destination),
+                bytes: &mut *destination,
                 collect: None,
                 linear: false,
                 produced: 0,

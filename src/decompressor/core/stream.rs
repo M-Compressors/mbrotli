@@ -117,65 +117,106 @@ enum Pause {
     Output,
 }
 
-/// The caller's destination for one call.
+/// The caller's destination for one call: an initialized or an
+/// uninitialized slice.
+///
+/// The decoder is generic over it rather than matching on a variant, so the
+/// initialized instantiation compiles to plain slice writes. A variant
+/// match inlined into the command loop cost 4-9% of decoded instructions:
+/// the loop shares one function with every stage, and the extra arms changed
+/// its register allocation.
 ///
 /// An uninitialized slice is write-only: safe code cannot read it back, so it
 /// never serves as linear history, and delivery copies out of the ring.
-pub(crate) enum Sink<'a> {
-    Init(&'a mut [u8]),
-    Uninit(&'a mut [MaybeUninit<u8>]),
-}
+pub(crate) trait Sink<'a> {
+    /// Capacity in bytes.
+    fn len(&self) -> usize;
 
-impl<'a> Sink<'a> {
-    const fn len(&self) -> usize {
-        match self {
-            Self::Init(bytes) => bytes.len(),
-            Self::Uninit(bytes) => bytes.len(),
-        }
-    }
+    /// Writes one byte; `index` is below [`Sink::len`].
+    fn put(&mut self, index: usize, byte: u8);
 
-    /// Writes one byte; `index` is below [`Self::len`].
-    #[inline]
-    fn put(&mut self, index: usize, byte: u8) {
-        match self {
-            Self::Init(bytes) => bytes[index] = byte,
-            Self::Uninit(bytes) => {
-                bytes[index].write(byte);
-            }
-        }
-    }
-
-    /// Writes `source` at `start`; the range lies within [`Self::len`].
-    #[inline]
-    fn copy(&mut self, start: usize, source: &[u8]) {
-        match self {
-            Self::Init(bytes) => bytes[start..start + source.len()].copy_from_slice(source),
-            Self::Uninit(bytes) => copy_to_uninit(&mut bytes[start..start + source.len()], source),
-        }
-    }
+    /// Writes `source` at `start`; the range lies within [`Sink::len`].
+    fn copy(&mut self, start: usize, source: &[u8]);
 
     /// The initialized slice a linear member decodes into and reads back.
-    /// Linear delivery is only ever chosen with [`Self::Init`]; an
-    /// uninitialized sink yields no history.
-    const fn history(&self) -> &[u8] {
-        match self {
-            Self::Init(bytes) => bytes,
-            Self::Uninit(_) => &[],
-        }
-    }
+    /// Linear delivery is only ever chosen for an initialized sink; an
+    /// uninitialized one yields no history.
+    fn history(&self) -> &[u8];
 
     /// Takes the linear slice out for bulk work, leaving an empty one behind
-    /// until the caller puts it back as `Sink::Init`.
+    /// until [`Sink::restore_history`] puts it back.
+    fn take_history(&mut self) -> &'a mut [u8];
+
+    /// Puts back the slice [`Sink::take_history`] took.
+    fn restore_history(&mut self, bytes: &'a mut [u8]);
+}
+
+impl<'a> Sink<'a> for &'a mut [u8] {
+    #[inline]
+    fn len(&self) -> usize {
+        <[u8]>::len(self)
+    }
+
+    #[inline]
+    fn put(&mut self, index: usize, byte: u8) {
+        self[index] = byte;
+    }
+
+    #[inline]
+    fn copy(&mut self, start: usize, source: &[u8]) {
+        self[start..start + source.len()].copy_from_slice(source);
+    }
+
+    #[inline]
+    fn history(&self) -> &[u8] {
+        self
+    }
+
+    #[inline]
     fn take_history(&mut self) -> &'a mut [u8] {
-        match self {
-            Self::Init(bytes) => core::mem::take(bytes),
-            Self::Uninit(_) => &mut [],
-        }
+        core::mem::take(self)
+    }
+
+    #[inline]
+    fn restore_history(&mut self, bytes: &'a mut [u8]) {
+        *self = bytes;
     }
 }
 
-pub(crate) struct Output<'a> {
-    pub(crate) bytes: Sink<'a>,
+impl<'a> Sink<'a> for &'a mut [MaybeUninit<u8>] {
+    #[inline]
+    fn len(&self) -> usize {
+        <[MaybeUninit<u8>]>::len(self)
+    }
+
+    #[inline]
+    fn put(&mut self, index: usize, byte: u8) {
+        self[index].write(byte);
+    }
+
+    #[inline]
+    fn copy(&mut self, start: usize, source: &[u8]) {
+        copy_to_uninit(&mut self[start..start + source.len()], source);
+    }
+
+    #[inline]
+    fn history(&self) -> &[u8] {
+        &[]
+    }
+
+    #[inline]
+    fn take_history(&mut self) -> &'a mut [u8] {
+        &mut []
+    }
+
+    #[inline]
+    fn restore_history(&mut self, bytes: &'a mut [u8]) {
+        debug_assert!(bytes.is_empty(), "an uninitialized sink lent no history");
+    }
+}
+
+pub(crate) struct Output<O> {
+    pub(crate) bytes: O,
     /// Collect a member in history, stopping before any ring byte is overwritten.
     pub(crate) collect: Option<usize>,
     /// The member began at `bytes[0]` in this call and `bytes` is its
@@ -188,7 +229,7 @@ pub(crate) struct Output<'a> {
     pub(crate) exact: OutputSize,
 }
 
-impl Output<'_> {
+impl<'a, O: Sink<'a>> Output<O> {
     /// Whether delivery copies history bytes into `bytes`.
     const fn delivers(&self) -> bool {
         self.collect.is_none() && !self.linear
@@ -312,7 +353,12 @@ const fn history_mask(len: usize) -> u64 {
 
 /// Delivers ring bytes decoded since `flushed`. The pending region never
 /// crosses the ring end: writers flush whenever a write reaches it.
-fn flush_ring(ring: &[u8], position: u64, flushed: &mut u64, output: &mut Output<'_>) {
+fn flush_ring<'a, O: Sink<'a>>(
+    ring: &[u8],
+    position: u64,
+    flushed: &mut u64,
+    output: &mut Output<O>,
+) {
     let pending = (position - *flushed) as usize;
     if pending != 0 {
         if output.delivers() {
@@ -384,14 +430,14 @@ fn copy32<S: Simd>(simd: S, ring: &mut [u8], src: usize, dst: usize) -> bool {
 /// Copies `length` bytes from `distance` back, in ring pieces that neither
 /// wrap nor need per-byte handling. The ring already holds `position + length`.
 #[inline(always)]
-fn copy_ring<S: Simd>(
+fn copy_ring<'a, S: Simd, O: Sink<'a>>(
     simd: S,
     ring: &mut [u8],
     position: &mut u64,
     distance: u64,
     mut length: usize,
     flushed: &mut u64,
-    output: &mut Output<'_>,
+    output: &mut Output<O>,
 ) {
     let size = ring.len();
     let mask = history_mask(size);
@@ -416,11 +462,11 @@ fn copy_ring<S: Simd>(
 /// which is why the emptiness check comes first: a transformed dictionary word
 /// can decode to no bytes at all, and as a member's first command it reaches
 /// this with nothing written and the ring still unallocated.
-fn write_ring(
+fn write_ring<'a, O: Sink<'a>>(
     ring: &mut [u8],
     position: &mut u64,
     mut bytes: &[u8],
-    mut flushed: Option<(&mut u64, &mut Output<'_>)>,
+    mut flushed: Option<(&mut u64, &mut Output<O>)>,
 ) {
     if bytes.is_empty() {
         return;
@@ -507,7 +553,7 @@ fn previous_bytes(ring: &[u8], position: u64) -> (u8, u8) {
 
 /// The bytes history positions index this call: the caller's slice for a
 /// linear member, the ring otherwise.
-fn history<'b>(ring: &'b [u8], output: &'b Output<'_>) -> &'b [u8] {
+fn history<'b, 'a, O: Sink<'a>>(ring: &'b [u8], output: &'b Output<O>) -> &'b [u8] {
     if output.linear {
         output.bytes.history()
     } else {
@@ -668,7 +714,7 @@ impl Stream {
             self.position = end;
         } else {
             self.ensure_ring(end)?;
-            write_ring(&mut self.ring, &mut self.position, bytes, None);
+            write_ring::<&mut [u8]>(&mut self.ring, &mut self.position, bytes, None);
         }
         Ok(())
     }
@@ -696,7 +742,11 @@ impl Stream {
         self.ring.len() as u64 - 1
     }
 
-    fn emit(&mut self, byte: u8, output: &mut Output<'_>) -> Result<(), DecodeError> {
+    fn emit<'a, O: Sink<'a>>(
+        &mut self,
+        byte: u8,
+        output: &mut Output<O>,
+    ) -> Result<(), DecodeError> {
         let next = self
             .position
             .checked_add(1)
@@ -728,11 +778,11 @@ impl Stream {
     }
 
     #[cfg_attr(all(feature = "hotpath", not(feature = "no_std")), hotpath::measure)]
-    pub(crate) fn run(
+    pub(crate) fn run<'a, O: Sink<'a>>(
         &mut self,
         backend: crate::Backend,
         input: &mut Input<'_>,
-        output: &mut Output<'_>,
+        output: &mut Output<O>,
         config: DecoderConfig,
         dictionary: Option<DictionaryRef<'_>>,
     ) -> Result<Stop, DecodeError> {
@@ -767,11 +817,11 @@ impl Stream {
     /// the command loop never detects features or dispatches a copy.
     #[cfg_attr(all(feature = "hotpath", not(feature = "no_std")), hotpath::measure)]
     #[inline(always)]
-    fn fast<S: Simd>(
+    fn fast<'a, S: Simd, O: Sink<'a>>(
         &mut self,
         simd: S,
         input: &mut Input<'_>,
-        output: &mut Output<'_>,
+        output: &mut Output<O>,
         out_end: usize,
         dictionary: Option<DictionaryRef<'_>>,
     ) -> Result<(), DecodeError> {
@@ -879,7 +929,7 @@ impl Stream {
             () => {{
                 flush_ring(ring, position, &mut flushed, output);
                 if linear {
-                    output.bytes = Sink::Init(linear_bytes);
+                    output.bytes.restore_history(linear_bytes);
                 }
                 input.consumed = consumed;
                 *saved_bits = bits;
@@ -911,17 +961,20 @@ impl Stream {
                 }
             };
         }
-        // Grows the ring for output up to `end`, and while at it for every
-        // byte this call could still produce, so growth happens once per call
-        // rather than once per doubling. The pending bytes keep their indices
+        // Grows the ring for every byte this call could still produce, so
+        // growth happens once per call rather than once per doubling. That
+        // covers `end` whenever the write fits in `space`: copies and
+        // dictionary words larger than `space` pause before reaching here, and
+        // an insert longer than `space` writes only what fits. Growing to the
+        // whole of such an insert would reserve history for output this call
+        // cannot hold, and fail a workspace limit that linear delivery into
+        // the same slice never meets. The pending bytes keep their indices
         // because a ring only grows before it has wrapped.
         macro_rules! reach {
             ($end:expr) => {{
                 let end: u64 = $end;
                 if end > ring_limit {
-                    let bound = position
-                        .saturating_add(remaining.min(space as u64))
-                        .max(end);
+                    let bound = position.saturating_add(remaining.min(space as u64));
                     // A failed growth leaves the storage, and so the pending
                     // bytes, untouched; the slice is re-borrowed either way.
                     let grown = grow_ring(memory, storage, window_size, bound);
@@ -1240,11 +1293,11 @@ impl Stream {
         }
     }
 
-    fn run_stages(
+    fn run_stages<'a, O: Sink<'a>>(
         &mut self,
         backend: crate::Backend,
         input: &mut Input<'_>,
-        output: &mut Output<'_>,
+        output: &mut Output<O>,
         config: DecoderConfig,
         dictionary: Option<DictionaryRef<'_>>,
     ) -> Result<Stop, DecodeError> {
@@ -1767,7 +1820,7 @@ impl Stream {
                             &mut flushed,
                             output,
                         ));
-                        output.bytes = Sink::Init(bytes);
+                        output.bytes.restore_history(bytes);
                     } else if !self.repeat_growing(end)? {
                         self.ensure_ring(end)?;
                         dispatch!(backend.0, simd => copy_ring(
@@ -1895,6 +1948,41 @@ mod tests {
     use crate::dictionary::{DecodeDictionary, DecodeDictionaryLimits, DictionaryAttachment};
 
     #[test]
+    fn an_initialized_sink_writes_lends_and_takes_back_its_history() {
+        let mut bytes = [0u8; 6];
+        let mut sink: &mut [u8] = &mut bytes;
+        assert_eq!(Sink::len(&sink), 6);
+        sink.put(0, b'a');
+        sink.copy(1, b"bcd");
+        assert_eq!(sink.history(), b"abcd\0\0");
+
+        let lent = sink.take_history();
+        assert!(Sink::history(&sink).is_empty());
+        lent[5] = b'z';
+        sink.restore_history(lent);
+        assert_eq!(sink.history(), b"abcd\0z");
+    }
+
+    #[test]
+    fn an_uninitialized_sink_writes_but_never_lends_history() {
+        let mut bytes = [MaybeUninit::new(0xAA); 6];
+        let mut sink: &mut [MaybeUninit<u8>] = &mut bytes;
+        assert_eq!(Sink::len(&sink), 6);
+        sink.put(0, b'a');
+        sink.copy(1, b"bcd");
+        assert!(sink.history().is_empty());
+
+        let lent = sink.take_history();
+        assert!(lent.is_empty());
+        sink.restore_history(lent);
+        assert_eq!(Sink::len(&sink), 6);
+
+        // SAFETY: every element was initialized by the array literal and the writes.
+        let written = bytes.map(|slot| unsafe { slot.assume_init() });
+        assert_eq!(&written, b"abcd\xAA\xAA");
+    }
+
+    #[test]
     fn raw_growth_initializes_only_padding_and_preserves_wrapped_history() {
         let mut stream = Stream {
             window_size: 128,
@@ -1983,7 +2071,7 @@ mod tests {
                 let mut output = Output {
                     collect: None,
                     linear: false,
-                    bytes: Sink::Init(&mut bytes),
+                    bytes: &mut bytes[..],
                     produced: 0,
                     total_before: decoded.len() as u64,
                     limit: None,
@@ -1998,7 +2086,7 @@ mod tests {
                         Some((&dictionary).into()),
                     )
                     .unwrap();
-                decoded.extend_from_slice(&output.bytes.history()[..output.produced]);
+                decoded.extend_from_slice(&output.bytes[..output.produced]);
                 if result == Stop::Member {
                     break;
                 }
@@ -2043,7 +2131,7 @@ mod tests {
                     let mut output = Output {
                         collect: None,
                         linear: false,
-                        bytes: Sink::Init(&mut sink),
+                        bytes: &mut sink[..],
                         produced: 0,
                         total_before: 0,
                         limit: None,

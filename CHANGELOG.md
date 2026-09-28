@@ -14,12 +14,38 @@
   each block once instead of writing it in place, and one-shot decoding
   delivers through the history ring instead of using the destination as
   history. `process`, `compress_to_slice` and `decompress_to_slice` keep their
-  in-place paths.
-  BENCHMARKS_PLACEHOLDER
-- `mbrotli-ffi` passes the caller's output to `compress_to_uninit` and
-  `decompress_to_uninit` as `MaybeUninit<u8>`, so an uninitialized C buffer is
-  no longer viewed as `&mut [u8]`. The ABI and its results are unchanged.
-  FFI_PLACEHOLDER
+  in-place paths. The decoder is generic over its destination rather than
+  matching on it, so initialized decoding runs the code it ran before:
+  against the commit before this change, `decompress` and
+  `decompress_to_slice` execute within 0.4% of the instructions on Alice
+  (callgrind) and the cold decoder comparison's median time ratio is 0.98 with
+  Google C as control; a first version that matched on the destination inside
+  the decode loop had made text and binary decoding 4-7% slower. Compression
+  paths execute within 0.01%. `decompress_to_uninit` copies a complete stored
+  member that fits straight from the input, as `decompress` does.
+- `mbrotli-ffi` views the caller's output as `MaybeUninit<u8>` and passes it
+  to `compress_to_uninit` and `decompress_to_uninit`, so an uninitialized C
+  buffer is no longer viewed as `&mut [u8]` before it is initialized. Results
+  are unchanged. Where zeroing the buffer costs little next to the work, the
+  functions zero it and keep the in-place paths: `mbrotli_compress` at
+  qualities 0 and 1, and `mbrotli_decompress` when the capacity exceeds the
+  input or is at most 1 KiB, each only up to 64 KiB or four times the input.
+  Bytes of `output` past the result may therefore be overwritten, as the
+  header now documents. On the `one_shot` benchmark against the commit before
+  this change, decompression of Alice and `mapsdatazrh` is level, a 10 KiB
+  stored stream decodes in 81 ns instead of 93 ns, and q1 compression of
+  Alice is level; without these paths they had been 2-7% slower, 2.3 times as
+  slow and 3-5% slower.
+- Fix a decoder session that failed `MemoryLimitExceeded` where
+  `decompress_to_slice` into the same buffer reached the real outcome: before
+  decoding a long run of literals, the fast command loop grew its history
+  ring for the whole run rather than for the output the call can hold, so a
+  truncated large-window stream declaring a 12 MiB insert reserved 16 MiB for
+  a 768-byte destination. Found by the `decompress` AFL target; the minimized
+  input is a regression test and a committed regression input.
+- Refresh the published encoder and decoder comparisons (2026-09-28), which
+  ran as parallel corpus shards, and document sharded runs in the benchmark
+  guide. The September 26 records and size manifests are replaced.
 - Add the `encoder_session` and `decoder_session` AFL targets, which own
   session coverage for both codecs: borrowed and owned sessions with `process`
   and `process_uninit` mixed call by call, the `flush` and `finish`

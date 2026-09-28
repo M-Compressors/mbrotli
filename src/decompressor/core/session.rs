@@ -94,14 +94,7 @@ impl OperationState {
         operation: DecodeOperation,
         delivery: Delivery,
     ) -> Result<DecodeProgress, DecodeFailure> {
-        self.run(
-            decoder,
-            dictionary,
-            input,
-            Sink::Init(output),
-            operation,
-            delivery,
-        )
+        self.run(decoder, dictionary, input, output, operation, delivery)
     }
 
     /// Runs one call of the streaming contract into uninitialized memory.
@@ -120,18 +113,18 @@ impl OperationState {
             decoder,
             dictionary,
             input,
-            Sink::Uninit(output),
+            output,
             operation,
             Delivery::Slice,
         )
     }
 
-    fn run(
+    fn run<'a, O: Sink<'a>>(
         &mut self,
         decoder: &mut Decompressor,
         dictionary: Option<DictionaryRef<'_>>,
         input: &[u8],
-        output: Sink<'_>,
+        output: O,
         operation: DecodeOperation,
         delivery: Delivery,
     ) -> Result<DecodeProgress, DecodeFailure> {

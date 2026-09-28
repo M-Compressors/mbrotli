@@ -70,6 +70,65 @@ fn finish_latches_the_final_suffix_before_needs_output() {
     }
 }
 
+/// A truncated large-window member whose first command inserts about 12 MiB
+/// of literals; the input ends after a few dozen of them. Minimised from an
+/// AFL `decompress` finding.
+const TRUNCATED_LONG_INSERT: [u8; 67] = [
+    0x11, 0x30, 0x4c, 0x00, 0x02, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30,
+    0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30,
+    0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x49, 0x30, 0x30, 0x8c,
+    0x7f, 0x5a, 0x30, 0x30, 0x49, 0x49, 0x49, 0xa0, 0x5f, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30,
+    0x30, 0x30, 0x30,
+];
+
+#[test]
+fn a_long_insert_grows_the_ring_only_for_output_the_call_can_hold() {
+    // Ring delivery used to grow history for the whole insert before decoding
+    // it, so a workspace limit failed a call whose slice holds a few hundred
+    // bytes, while linear delivery into the same slice reached the truncation.
+    let config = DecoderConfig::default()
+        .with_limits(DecodeLimits::default().with_max_workspace_bytes(Some(8 << 20)));
+    for size in [768, 64 << 10] {
+        let mut linear = vec![0; size];
+        let direct = Decompressor::new(config)
+            .unwrap()
+            .decompress_to_slice(&TRUNCATED_LONG_INSERT, &mut linear);
+        assert!(
+            matches!(direct, Err(DecodeError::UnexpectedEndOfInput)),
+            "{direct:?}"
+        );
+
+        let mut delivered = vec![0; size];
+        let mut decoder = Decompressor::new(config).unwrap();
+        let mut session = decoder.start(DecodeStreamConfig::default()).unwrap();
+        let ring = session.process(
+            &TRUNCATED_LONG_INSERT,
+            &mut delivered,
+            DecodeOperation::Finish,
+        );
+        assert!(
+            matches!(
+                ring,
+                Err(DecodeFailure {
+                    error: DecodeError::UnexpectedEndOfInput,
+                    ..
+                })
+            ),
+            "{ring:?}"
+        );
+        drop(session);
+
+        let mut uninit = vec![std::mem::MaybeUninit::uninit(); size];
+        let written = Decompressor::new(config)
+            .unwrap()
+            .decompress_to_uninit(&TRUNCATED_LONG_INSERT, &mut uninit);
+        assert!(
+            matches!(written, Err(DecodeError::UnexpectedEndOfInput)),
+            "{written:?}"
+        );
+    }
+}
+
 #[test]
 fn aggregate_input_and_workspace_limits_check_exact_boundaries() {
     let source = support::c_compress_native_one_shot(0, 22, b"abc");

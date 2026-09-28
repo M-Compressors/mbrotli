@@ -5,6 +5,7 @@ use super::{
 use crate::Backend;
 use crate::RetentionPolicy;
 use crate::dictionary::{DecodeDictionary, DictionaryRef};
+use crate::shared::uninit::copy_to_uninit;
 use ::core::mem::MaybeUninit;
 use ::core::ops::Range;
 use alloc::vec::Vec;
@@ -269,13 +270,7 @@ impl Decompressor {
     /// # Errors
     /// Returns codec, resource, lifecycle, or trailing-data errors.
     pub fn decompress(&mut self, src: &[u8]) -> Result<Vec<u8>, DecodeError> {
-        // A complete stored member needs neither a session nor history. Keep
-        // resource-policy and abandoned-session error ordering in the driver.
-        if !self.active
-            && self.config.member_mode() == super::MemberMode::Single
-            && self.config.limits() == super::DecodeLimits::default()
-            && let Some(payload) = super::core::stored_payload(src, self.config.window_limit())
-        {
+        if let Some(payload) = self.stored_one_shot(src) {
             let mut dst = Vec::new();
             dst.try_reserve_exact(payload.len())
                 .map_err(|_| DecodeError::AllocationFailed)?;
@@ -476,6 +471,8 @@ impl Decompressor {
     /// cannot serve as the first member's history the way it does for
     /// [`Decompressor::decompress_to_slice`]: output passes through the
     /// decoder's window and is copied into `dst`, as a streaming session does.
+    /// A complete stored member that fits is copied straight from `src`, as
+    /// [`Decompressor::decompress`] does.
     ///
     /// # Errors
     /// As [`Decompressor::decompress_to_slice`]. After
@@ -500,11 +497,35 @@ impl Decompressor {
         src: &[u8],
         dst: &mut [MaybeUninit<u8>],
     ) -> Result<usize, DecodeError> {
+        // A stored member that does not fit takes the session path, which
+        // reports how much of it did.
+        if let Some(payload) = self.stored_one_shot(src)
+            && let Some(prefix) = dst.get_mut(..payload.len())
+        {
+            copy_to_uninit(prefix, payload);
+            self.trim(self.retention);
+            return Ok(payload.len());
+        }
         let mut session = DecoderSession::start(self, DecodeStreamConfig::default(), None)?;
         let progress = session
             .process_uninit(src, dst, DecodeOperation::Finish)
             .map_err(super::DecodeFailure::into_error)?;
         Self::one_shot_outcome(progress, src.len())
+    }
+
+    /// The payload of `src` when it is one complete stored member that a
+    /// one-shot call may copy out directly: it needs neither a session nor
+    /// history. Anything else, including configurations whose resource
+    /// policies or abandoned-session errors the driver must report in order,
+    /// returns `None`.
+    fn stored_one_shot<'s>(&self, src: &'s [u8]) -> Option<&'s [u8]> {
+        if self.active
+            || self.config.member_mode() != super::MemberMode::Single
+            || self.config.limits() != super::DecodeLimits::default()
+        {
+            return None;
+        }
+        super::core::stored_payload(src, self.config.window_limit())
     }
 
     /// Turns the single `Finish` call of a fixed-slice decode into its result.

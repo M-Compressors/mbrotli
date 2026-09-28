@@ -98,32 +98,47 @@ scratch bytes past `produced`, which initialized callers never relied on.
 
 ```mermaid
 classDiagram
-    class Sink {
-        <<private enum, core::stream>>
-        Init(&mut [u8])
-        Uninit(&mut [MaybeUninit u8])
+    class Sink~'a~ {
+        <<private trait, core::stream>>
         +len() usize
         +put(index, byte)
         +copy(start, bytes)
         +history() initialized slice or empty
         +take_history() initialized slice or empty
+        +restore_history(slice)
     }
-    class Output {
-        +Sink bytes
+    class InitSlice["&'a mut [u8]"]
+    class UninitSlice["&'a mut [MaybeUninit u8]"]
+    class Output~O: Sink~ {
+        +O bytes
         +bool linear
         +Option collect
         +usize produced
     }
+    Sink <|.. InitSlice
+    Sink <|.. UninitSlice
     Output --> Sink
 ```
 
 Every write of decoded bytes into the destination goes through `Sink::put`
 (per-byte literal tails, `emit`) or `Sink::copy` (ring flushes, stored
-meta-blocks, prefix runs). The `match` sits in those helpers, outside the bulk
-command loop, which works on the ring or on the linear slice it took out with
-`take_history`. Only `Sink::Init` can be linear history: `history` and
-`take_history` return an empty slice for `Uninit`, and `Uninit` is only ever
-built with `Delivery::Slice`, where `linear` is false.
+meta-blocks, prefix runs). The bulk command loop works on the ring or on the
+linear slice it took out with `take_history` and hands back with
+`restore_history`. Only the initialized slice can be linear history:
+`history` and `take_history` return an empty slice for the uninitialized one,
+`restore_history` accepts only that empty slice back, and an uninitialized
+sink is only ever run with `Delivery::Slice`, where `linear` is false.
+
+`OperationState::run`, `Stream::run`, `run_stages`, `fast`, `emit`,
+`flush_ring`, `copy_ring` and `write_ring` are generic over the sink, so each
+destination type gets its own instantiation and no call chooses a variant at
+run time. The first version matched on a `Sink` enum inside those helpers;
+the match itself was cheap, but `run_stages` inlines every stage and the
+SIMD command loop into one function, and the extra arms changed that
+function's register allocation. Decoding alice29 then executed 9% more
+instructions (callgrind, q0 and q5) and the cold decoder comparison was 4-7%
+slower on text and binary corpora. The initialized instantiation now compiles
+to the same slice writes as before uninitialized output existed.
 
 ```mermaid
 sequenceDiagram
@@ -131,9 +146,9 @@ sequenceDiagram
     participant Op as OperationState
     participant Stream as core::Stream
     participant Ring as history ring
-    participant Sink as Sink::Uninit
+    participant Sink as uninitialized Sink
     API->>Op: process_uninit(input, output, operation)
-    Op->>Op: run(Sink::Uninit(output), Delivery::Slice)
+    Op->>Op: run::<&mut [MaybeUninit u8]>(output, Delivery::Slice)
     Op->>Stream: run(input, Output)
     Stream->>Ring: decode commands into the ring
     Stream->>Sink: flush_ring → copy(produced, ring bytes)
@@ -142,26 +157,37 @@ sequenceDiagram
     Op-->>API: DecodeProgress or DecodeFailure
 ```
 
-`decompress_to_uninit` runs one `process_uninit(.., Finish)` on a fresh session
-and shares `one_shot_outcome` with `decompress_to_slice`, so `OutputTooSmall`
-and `TrailingData` are reported identically.
+`decompress_to_uninit` first asks `stored_one_shot`, the check
+`Decompressor::decompress` also uses, whether `src` is one complete stored
+member under a configuration without limits or other members; if its payload
+fits in `dst`, it is copied with `copy_to_uninit` and no session or ring is
+created. Otherwise, including a stored payload that does not fit, it runs one
+`process_uninit(.., Finish)` on a fresh session and shares `one_shot_outcome`
+with `decompress_to_slice`, so `OutputTooSmall` and `TrailingData` are
+reported identically.
 
 ## C ABI
 
-`mbrotli-ffi` views the caller's output as `&mut [MaybeUninit<u8>]` and calls
-`compress_to_uninit` and `decompress_to_uninit`, so an uninitialized C buffer
-is never turned into a `&mut [u8]`. Its empty-stream and stored-stream
-fallbacks write through `MaybeUninit::write`. See [C ABI](c-abi.md).
+`mbrotli-ffi` views the caller's output as `&mut [MaybeUninit<u8>]`. Where
+zeroing it is cheap next to the work, it zeroes the buffer and calls the
+initialized method instead: `compress_to_slice` at q0/q1, which writes
+fragments in place, and `decompress_to_slice` when the capacity exceeds the
+input or is at most 1 KiB, which uses the destination as history. Otherwise it calls
+`compress_to_uninit` and `decompress_to_uninit`. An uninitialized C buffer is
+never viewed as `&mut [u8]` before it has been zeroed. See [C ABI](c-abi.md).
 
 ## Invariants
 
-- An uninitialized destination is never read, and no byte past the reported
-  count is written.
+- An uninitialized destination is never read, and the uninitialized methods
+  write no byte past the reported count. The C ABI may zero a whole
+  destination first, as its header documents.
 - Uninitialized and initialized methods produce identical streams: the fast
   encoder's in-place and scratch paths are already byte-identical, and ring and
   linear decoder delivery write the same bytes.
-- Choosing between `Sink` or `Destination` variants happens once per call or
-  per helper invocation, never inside the SIMD copy kernels.
+- The encoder chooses between `Destination` variants once per call or per
+  helper invocation, never inside the SIMD copy kernels. The decoder does not
+  choose at run time at all: it is monomorphized per `Sink` type, so the
+  initialized decode loop carries no uninitialized-output code.
 
 ## Verification
 
@@ -188,7 +214,13 @@ fallbacks write through `MaybeUninit::write`. See [C ABI](c-abi.md).
 - q0/q1 `process_uninit` and `compress_to_uninit` copy each block once from
   scratch; the initialized methods write it in place when the destination has
   room for a whole fragment.
-- `decompress_to_uninit` decodes through the ring and copies out, where
-  `decompress_to_slice` uses the destination as history; `mbrotli_decompress`
-  inherits that cost.
+- `decompress_to_uninit` decodes compressed members through the ring and
+  copies out, where `decompress_to_slice` uses the destination as history; a
+  complete stored member that fits is copied straight from the input.
+  `mbrotli_compress` and `mbrotli_decompress` avoid these costs only for
+  capacities they can afford to zero (see [C ABI](c-abi.md)).
 - No uninitialized variants for dictionary one-shots or framed sessions.
+- A program that calls an uninitialized decoder method links a second
+  instantiation of the decode loop: about 106 KiB more `.text` on x86_64 for
+  a binary using both `decompress` and `decompress_to_uninit`. Programs that
+  use only initialized output do not pay it.

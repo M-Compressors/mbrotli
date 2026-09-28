@@ -315,7 +315,11 @@ pub(crate) fn compress(
         return empty_stream(dst);
     }
     let mut encoder = Compressor::new(config)?;
-    let outcome = encoder.compress_to_uninit(src, dst);
+    let outcome = if compresses_in_place(quality_value, src.len(), dst.len()) {
+        encoder.compress_to_slice(src, zeroed(dst))
+    } else {
+        encoder.compress_to_uninit(src, dst)
+    };
     let Some(bound) = bound(src.len()) else {
         return Ok(outcome?);
     };
@@ -410,7 +414,71 @@ const fn stored_header(len: usize) -> u32 {
 /// `dst` too small to hold the result.
 pub(crate) fn decompress(src: &[u8], dst: &mut [MaybeUninit<u8>]) -> Result<usize, FfiError> {
     let mut decoder = Decompressor::new(DecoderConfig::default())?;
+    if decodes_linearly(src.len(), dst.len()) {
+        return Ok(decoder.decompress_to_slice(src, zeroed(dst))?);
+    }
     Ok(decoder.decompress_to_uninit(src, dst)?)
+}
+
+/// Destinations up to this many bytes can always be zeroed.
+const ZEROING_MIN: usize = 1 << 16;
+
+/// Destinations up to this multiple of the input can be zeroed: a typical
+/// Brotli text compresses three to four times, so a destination sized to the
+/// output fits, while one far larger than the output keeps the paths that
+/// write only what they produce instead of paying to zero it.
+const ZEROING_RATIO: usize = 4;
+
+/// Whether zeroing a `dst_len`-byte destination, so that the codec may treat
+/// it as initialized, costs little next to coding `src_len` input bytes.
+/// Zeroing costs in proportion to the destination rather than the output, so
+/// it is bounded relative to the input.
+const fn affordable_zeroing(src_len: usize, dst_len: usize) -> bool {
+    let limit = src_len.saturating_mul(ZEROING_RATIO);
+    dst_len
+        <= if limit > ZEROING_MIN {
+            limit
+        } else {
+            ZEROING_MIN
+        }
+}
+
+/// Whether `decompress` zeroes the destination and decodes with it as
+/// history.
+///
+/// An initialized destination serves as the first member's history, which
+/// avoids the ring allocation and the copy out of it that uninitialized
+/// output needs: on text and binary corpora the ring path took 2-7% longer.
+/// A destination no larger than the input holds data that did not compress,
+/// usually a stored stream, which `decompress_to_uninit` copies straight from
+/// the input without zeroing anything. Below [`LINEAR_SMALL`] bytes zeroing
+/// costs less than the ring allocation it avoids, which covers the compressed
+/// streams of tiny inputs that come out larger than their output.
+const fn decodes_linearly(src_len: usize, dst_len: usize) -> bool {
+    (dst_len > src_len || dst_len <= LINEAR_SMALL) && affordable_zeroing(src_len, dst_len)
+}
+
+/// Destinations this small decode linearly even when the input is larger.
+const LINEAR_SMALL: usize = 1 << 10;
+
+/// Whether `compress` zeroes the destination for `quality`.
+///
+/// Qualities 0 and 1 write each fragment in place into an initialized
+/// destination that has room for it, but encode through scratch and copy
+/// every block into an uninitialized one: 3-5% slower on text. Other
+/// qualities always copy from scratch, so zeroing would only add work.
+const fn compresses_in_place(quality: c_int, src_len: usize, dst_len: usize) -> bool {
+    quality <= 1 && affordable_zeroing(src_len, dst_len)
+}
+
+/// Zeroes `dst` and views it as initialized bytes.
+fn zeroed(dst: &mut [MaybeUninit<u8>]) -> &mut [u8] {
+    dst.fill(MaybeUninit::new(0));
+    // SAFETY: every element was just initialized, and `MaybeUninit<u8>` has
+    // the size, alignment and valid values of an initialized `u8`, so the
+    // same memory is a valid `[u8]` of the same length, borrowed exclusively
+    // for as long as `dst` was.
+    unsafe { &mut *(std::ptr::from_mut::<[MaybeUninit<u8>]>(dst) as *mut [u8]) }
 }
 
 /// Google's `BrotliEncoderMaxCompressedSize`: a stored stream's size for
@@ -574,6 +642,100 @@ mod tests {
         let mut restored = uninit(payload.len());
         let len = decompress(&compressed, &mut restored).expect("decompresses");
         assert_eq!(read(&restored[..len]), payload);
+    }
+
+    #[test]
+    fn zeroing_is_affordable_only_for_destinations_bounded_by_the_input() {
+        assert!(affordable_zeroing(0, ZEROING_MIN));
+        assert!(!affordable_zeroing(0, ZEROING_MIN + 1));
+        assert!(affordable_zeroing(ZEROING_MIN, ZEROING_MIN * ZEROING_RATIO));
+        assert!(!affordable_zeroing(
+            ZEROING_MIN,
+            ZEROING_MIN * ZEROING_RATIO + 1
+        ));
+        assert!(affordable_zeroing(usize::MAX, usize::MAX));
+    }
+
+    #[test]
+    fn output_larger_than_the_input_or_small_decodes_linearly() {
+        assert!(decodes_linearly(100, 101));
+        assert!(decodes_linearly(100, 100));
+        assert!(decodes_linearly(2 * LINEAR_SMALL, LINEAR_SMALL));
+        assert!(!decodes_linearly(4 * LINEAR_SMALL, LINEAR_SMALL + 1));
+        assert!(!decodes_linearly(100, ZEROING_MIN + 1));
+    }
+
+    #[test]
+    fn only_the_fast_qualities_compress_in_place() {
+        assert!(compresses_in_place(0, 100, 200));
+        assert!(compresses_in_place(1, 100, 200));
+        assert!(!compresses_in_place(2, 100, 200));
+        assert!(!compresses_in_place(11, 100, 200));
+        assert!(!compresses_in_place(1, 100, ZEROING_MIN + 1));
+    }
+
+    #[test]
+    fn in_place_and_uninitialized_compression_write_the_same_stream() {
+        let payload = b"slice to slice, slice to slice, slice to slice".repeat(20);
+        for quality in [0, 1] {
+            let mut exact = uninit(compress_bound(payload.len()));
+            assert!(compresses_in_place(quality, payload.len(), exact.len()));
+            let in_place = compress(&payload, &mut exact, quality, 22).expect("compresses");
+
+            let mut large = uninit(ZEROING_MIN + 1);
+            assert!(!compresses_in_place(quality, payload.len(), large.len()));
+            let copied = compress(&payload, &mut large, quality, 22).expect("compresses");
+
+            assert_eq!(read(&exact[..in_place]), read(&large[..copied]));
+        }
+    }
+
+    #[test]
+    fn zeroed_initializes_every_byte() {
+        let mut bytes = uninit(5);
+        assert_eq!(zeroed(&mut bytes), &[0; 5]);
+        assert_eq!(read(&bytes), [0; 5]);
+    }
+
+    #[test]
+    fn linear_and_ring_decompression_restore_the_same_bytes() {
+        // Varied text stays below the zeroing limit; long runs compress far
+        // past it, so an exact destination takes the ring; incompressible
+        // bytes become a stored stream no smaller than its output.
+        let varied: Vec<u8> = (0..20_000u32)
+            .flat_map(|index| (index * 7919 % 1000).to_string().into_bytes())
+            .collect();
+        let runs = b"a run of text repeated many times over; ".repeat(10_000);
+        let mut state = 0x2545_f491_4f6c_dd1d_u64;
+        let noise: Vec<u8> = (0..10_000)
+            .map(|_| {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                state as u8
+            })
+            .collect();
+        for (payload, linear) in [(&varied, true), (&runs, false), (&noise, false)] {
+            let mut compressed = uninit(compress_bound(payload.len()));
+            let written = compress(payload, &mut compressed, 5, 22).expect("compresses");
+            let compressed = read(&compressed[..written]);
+            assert_eq!(decodes_linearly(compressed.len(), payload.len()), linear);
+
+            let mut restored = uninit(payload.len());
+            assert_eq!(
+                decompress(&compressed, &mut restored).ok(),
+                Some(payload.len())
+            );
+            assert_eq!(read(&restored), *payload);
+
+            let mut short = uninit(payload.len() - 1);
+            assert!(matches!(
+                decompress(&compressed, &mut short),
+                Err(FfiError::Decode(DecodeError::OutputTooSmall { written }))
+                    if written == payload.len() - 1
+            ));
+            assert_eq!(read(&short), payload[..payload.len() - 1]);
+        }
     }
 
     #[test]

@@ -1,7 +1,7 @@
 {
- "date": "2026-09-26",
- "baseline": "dec-2026-09-26",
- "source_state": "Working tree based on baseline_commit with the uncommitted decoder changes: unmasked whole-word refill, byte-exact literal tail run, inline code-length table and linear slice history for decompress_to_slice. Encoder sources unchanged from baseline_commit. Burli refreshed to 0.3.3.",
+ "date": "2026-09-28",
+ "baseline": "dec-2026-09-28",
+ "source_state": "Working tree based on baseline_commit with uncommitted decoder and C ABI changes: the decoder is generic over its output sink (initialized or uninitialized slice) instead of matching an enum, decompress_to_uninit copies a complete stored member straight from the input, and mbrotli-ffi zeroes affordable destinations to use the initialized paths. The ring-growth bound fix in the fast command loop (reach!) was made after this sweep; callgrind shows it changes executed instructions by at most 0.03% on the decoder harness. Encoder sources unchanged from baseline_commit.",
  "c_revision": "4508218e7fef90fa4273286f7a415065946f2c43",
  "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)\nbinary: rustc\ncommit-hash: 48a229ceaefd4985c50990b14116b6d856af0985\ncommit-date: 2026-09-01\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.1\nLLVM version: 22.1.8",
  "cargo": "cargo 1.98.1 (797e8a9bc 2026-08-05)",
@@ -9,7 +9,7 @@
  "kernel": "6.18.33.2-microsoft-standard-WSL2",
  "target": "x86_64-unknown-linux-gnu",
  "cpu": "13th Gen Intel(R) Core(TM) i7-13700KF",
- "affinity": "logical CPU 2",
+ "affinity": "Eight parallel single-threaded lanes pinned to logical CPUs 0,2,4,6,8,10,12,14 (distinct cores in the WSL2 topology), one Criterion process per lane; the comparison sweeps were sharded by corpus over four lanes each while the root API A/B benchmarks ran on the other four.",
  "rustflags": "unset; release defaults, runtime SIMD dispatch",
  "build_environment": {
   "RUSTFLAGS": null,
@@ -52,37 +52,44 @@
  },
  "corpus_generation": "Original eight inputs unchanged: empty, tiny-text, alice29, text-1m, binary-64k, random-64k, random-1m, repeated-1m. Same generator and parameters as decoder-refresh-2026-09-10-080955.",
  "sha256": {
-  "Cargo.toml": "6afa7fc5f5d40d7a8f5b3dee05c75c3c9bda604eb110f7dc574ba3a348c8044f",
-  "Cargo.lock": "478675850fbaa922c5edde8ee79c8ba403f9feb16de59158877c842d5f156ea4",
+  "Cargo.toml": "4be9826a4848422cd7dee002f0e4c1be742cd8b8fa9730fd66ffc15c95b90776",
+  "Cargo.lock": "442c87370a77d529bfe09f1d3d53fa2dae65e2cb32d472a3775b8486dcf7c35e",
   "benchmarks/comparison/Cargo.toml": "71fdca7f059fb42e55b553ac414b98e2ab5fd20ff77e20a47b70d2f1cb97bb5f",
-  "benchmarks/comparison/Cargo.lock": "845cc7811c7aa677ea4bc23527c1e86857732bce668035a5c786e4eefe143467",
+  "benchmarks/comparison/Cargo.lock": "c1a515a3bfb989513b1ff2c4a01d718477034e0675651418332d2d27be928f35",
   "benchmarks/comparison/src/core.rs": "4165ffb8a939cb60a150f7f50117f6d0d2303979aeeb782fa220f1e6ebcef7b8",
   "benchmarks/comparison/src/core/decoder.rs": "588da59f1ccf48afc460085bde988b0b3eeabab73266ab9d286b0366521543d7",
   "benchmarks/comparison/src/lib.rs": "fa7ea60a5102ea7708ef45ea31075afb3278ca2cb0967c3bffaf2f7a0862cb08",
   "benchmarks/comparison/benches/decoders.rs": "1eaaa648a7b1f56cd2c2dede47944def165cf14034c833d8b9f46c5e503427e9",
   "benchmarks/comparison/report.py": "b6d32822384481eec23c27fb46c511b2b2162ad66ab9cab0536c441831eba224",
   "benchmarks/comparison/decoder_docs.py": "abbced417cc4a57b4ca5b9f22ccbd131f965f447c9555a79104d0f7da3c4cfc8",
-  "docs/benchmarks/decoder-comparison.csv": "1e8749b217d252335a1d31a96bcd832edf2f30f620fa9c3f0d85e756452aea49"
+  "docs/benchmarks/decoder-comparison.csv": "0bde7110bd7b3bb41b0cbf24ff7bf8bc4621eecac8f261af8b5f82d9e2e2c48d"
  },
  "limitations": [
   "One WSL2 host; frequency, thermals and host scheduling uncontrolled.",
   "Fixed decoder order; confidence intervals capture sampling variation, not all environmental bias.",
   "C receives known output capacity; Rust Vec APIs grow output during decode; Rust brotli includes 4 KiB I/O adaptation.",
-  "Only cold APIs and C-generated standard-window streams; no streaming, reuse or dictionaries. Historical timings are not paired before/after measurements."
+  "Only cold APIs and C-generated standard-window streams; no streaming, reuse or dictionaries. Historical timings are not paired before/after measurements.",
+  "Eight benchmark processes ran at once on separate cores and shared the last-level cache, memory bandwidth and the package's turbo budget. Every implementation, Google C included, measured 3-10% slower in absolute terms than the single-core 2026-09-26 sweep; ratios to C moved far less. Latency cases of tens of nanoseconds (empty input) are the most affected.",
+  "Builds of fuzz targets and profiling harnesses ran on logical CPUs 16-23 during part of the sweep."
  ],
- "binary": "benchmarks/comparison/target/release/deps/decoders-4b138dd4458333bf",
- "binary_sha256": "6b9f8e558ac8cf0dcae066e5e3b5c36a3f82f4516172b38d54c4108ed84f6f64",
+ "binary": "benchmarks/comparison/target/release/deps/decoders-782b23d7dcfcb394",
+ "binary_sha256": "e009e351f00540bdc1f25f3e6f27527115cb767f9ecdb9becc101257342b7081",
  "validation": {
   "decoder_preflight_cases": 384,
   "exporter": "report.py --decoding rejected no rows",
-  "compressed_sizes_vs_2026_09_25": "identical"
+  "compressed_sizes_vs_2026_09_26": "identical"
  },
  "plotting": "Matplotlib 3.10.8",
- "command": "taskset -c 2 cargo bench --manifest-path benchmarks/comparison/Cargo.toml --bench decoders --locked -- --save-baseline dec-2026-09-26",
- "started_at_utc": "2026-09-26T00:28:24+00:00",
- "finished_at_utc": "2026-09-26T01:10:18+00:00",
+ "command": [
+  "cd benchmarks/comparison && taskset -c 4 target/release/deps/decoders-782b23d7dcfcb394 --bench --save-baseline dec-2026-09-28 '^decoders/cold/(empty|tiny-text)/'",
+  "cd benchmarks/comparison && taskset -c 4 target/release/deps/decoders-782b23d7dcfcb394 --bench --save-baseline dec-2026-09-28 '^decoders/cold/(alice29|text-1m)/'",
+  "cd benchmarks/comparison && taskset -c 6 target/release/deps/decoders-782b23d7dcfcb394 --bench --save-baseline dec-2026-09-28 '^decoders/cold/(binary-64k|random-64k)/'",
+  "cd benchmarks/comparison && taskset -c 6 target/release/deps/decoders-782b23d7dcfcb394 --bench --save-baseline dec-2026-09-28 '^decoders/cold/(random-1m|repeated-1m)/'"
+ ],
+ "started_at_utc": "2026-09-28T08:25:22+00:00",
+ "finished_at_utc": "2026-09-28T08:46:36+00:00",
  "timed_sweep_exit_code": 0,
  "measured_cases": 384,
- "baseline_commit": "e078a49259639c7b3c8f3c56ad9349970d4573f5",
- "size_manifest": "decoder-comparison-2026-09-26/sizes.csv"
+ "baseline_commit": "17b3d315a125c23161c3ea16fd8e7c962e992410",
+ "size_manifest": "decoder-comparison-2026-09-28/sizes.csv"
 }

@@ -96,16 +96,19 @@ python3 benchmarks/comparison/quality_docs.py \
 python3 benchmarks/comparison/plot.py \
   --csv docs/benchmarks/encoder-comparison.csv \
   --output docs/benchmarks/encoders/charts \
-  --subtitle 'i7-13700KF; working tree; 20 samples; 2026-09-26'
+  --subtitle 'i7-13700KF; working tree; 20 samples; 8 parallel lanes; 2026-09-28'
 ```
 
 `quality_docs.py` writes the index, twelve quality pages and their detailed
 charts. `plot.py` writes `overview.svg`, `throughput.svg` and `size.svg` into
 the same charts directory. All eight corpora contribute to the medians.
-The current encoder CSV is the second September 26 sweep (`enc-2026-09-26b`), with its
-[size manifest](benchmarks/encoder-comparison-2026-09-26/sizes.csv) archived.
-Its environment record identifies the measured source and binary; regenerating
-charts reuses those measurements and does not rerun the benchmark.
+The current encoder CSV is the September 28 sweep (`enc-2026-09-28`), with its
+[size manifest](benchmarks/encoder-comparison-2026-09-28/sizes.csv) archived.
+The decoder CSV is `dec-2026-09-28`, with its
+[size manifest](benchmarks/decoder-comparison-2026-09-28/sizes.csv). Both ran as
+[sharded runs](#sharded-runs). Each environment record identifies the measured
+source and binary; regenerating charts reuses those measurements and does not
+rerun the benchmark.
 
 ## Decoder comparison
 
@@ -164,6 +167,45 @@ in the median and use latency panels. Per-quality panels retain
 all individual mean confidence bounds. Shared compressed sizes are listed
 alongside restored lengths instead of ranking decoders by size. See the
 [run report](benchmarks/decoder-comparison.md) for environment and limitations.
+
+## Sharded runs
+
+A complete sweep on one core takes about 50 minutes for the encoders and 40 for
+the decoders. On a host with idle cores, split the matrix by corpus and run the
+shards at once, one process per physical core. Every implementation of a case
+still runs in the same process, so ratios between implementations stay
+comparable; absolute timings drop by a few percent because the shards share
+the last-level cache, memory bandwidth and turbo budget. Record the lanes in the
+environment file, and keep builds and other work off those cores.
+
+Build the harness once, then run its executable directly so that concurrent
+`cargo bench` invocations do not wait on the build directory lock. The
+harness writes to fixed directories under `benchmarks/comparison/target/`,
+separate benchmark IDs land in separate directories, and every shard writes
+the same deterministic `sizes.csv` during its preflight:
+
+```sh
+cargo bench --manifest-path benchmarks/comparison/Cargo.toml --bench implementations --bench decoders --locked --no-run
+cd benchmarks/comparison
+enc=$(ls -t target/release/deps/implementations-* | grep -v '\.d$' | head -1)
+dec=$(ls -t target/release/deps/decoders-* | grep -v '\.d$' | head -1)
+lane() { taskset -c "$1" "$2" --bench --save-baseline "$3" "$4"; }
+{ lane 0 "$enc" my-enc '^implementations/cold/(empty|tiny-text)/'; lane 0 "$enc" my-enc '^implementations/cold/(alice29|text-1m)/'; } &
+{ lane 2 "$enc" my-enc '^implementations/cold/(binary-64k|random-64k)/'; lane 2 "$enc" my-enc '^implementations/cold/(random-1m|repeated-1m)/'; } &
+{ lane 4 "$dec" my-dec '^decoders/cold/(empty|tiny-text)/'; lane 4 "$dec" my-dec '^decoders/cold/(alice29|text-1m)/'; } &
+{ lane 6 "$dec" my-dec '^decoders/cold/(binary-64k|random-64k)/'; lane 6 "$dec" my-dec '^decoders/cold/(random-1m|repeated-1m)/'; } &
+wait
+cd ../..
+python3 benchmarks/comparison/report.py --baseline my-enc --csv /tmp/my-enc.csv
+python3 benchmarks/comparison/report.py --decoding --baseline my-dec --csv /tmp/my-dec.csv
+```
+
+Choose one logical CPU per physical core (`lscpu -e=CPU,CORE`). With the four
+lanes above both sweeps take about 25 minutes. The exporter accepts the result
+because all shards save the same baseline name and together cover the matrix.
+The root API benchmarks can share the host the same way: run each side of an
+A/B comparison on its own lane at the same time, so both see the same load,
+with `CRITERION_HOME` pointing at that tree's `target/criterion`.
 
 ## API benchmarks
 

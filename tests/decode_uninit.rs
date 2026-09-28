@@ -193,6 +193,30 @@ fn decompress_to_uninit_matches_decompress_to_slice() {
 }
 
 #[test]
+fn decompress_to_uninit_copies_a_stored_member_that_fits() {
+    let mut rng = Rng::new(0x5eed);
+    let data = rng.bytes(10_000, 256);
+    let compressed = c_compress(9, 22, &data);
+    let mut decoder = Decompressor::new(Default::default()).expect("a decoder");
+
+    let mut room = vec![MaybeUninit::new(SENTINEL); data.len() + 16];
+    assert_eq!(
+        decoder.decompress_to_uninit(&compressed, &mut room).ok(),
+        Some(data.len())
+    );
+    assert_eq!(read(&room[..data.len()]), data);
+    assert!(untouched(&room[data.len()..]));
+
+    // One byte short, the session path reports how much fitted.
+    let mut short = vec![MaybeUninit::new(SENTINEL); data.len() - 1];
+    assert!(matches!(
+        decoder.decompress_to_uninit(&compressed, &mut short),
+        Err(DecodeError::OutputTooSmall { written }) if written == data.len() - 1
+    ));
+    assert_eq!(read(&short), &data[..data.len() - 1]);
+}
+
+#[test]
 fn decompress_to_uninit_reports_the_same_errors_as_decompress_to_slice() {
     let data = payload(10_000);
     let compressed = c_compress(5, 22, &data);
