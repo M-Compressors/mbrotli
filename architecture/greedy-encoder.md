@@ -713,17 +713,6 @@ Two details separate the qualities:
   length already found, which lets the finder reject most candidates without
   measuring them. Quality five gives that shortcut up and searches everything
   again — this is a compression-semantics difference, not a tuning flag.
-  Because the quality also picks the finder, the finder type fixes it:
-  `Matcher::EXTENSIVE` and `MatchRun::EXTENSIVE` are false for the quick
-  finders (qualities two to four) and true for the chain and bucket finders.
-  The delayed search tests `R::EXTENSIVE || block.extensive`, which the chain
-  and bucket loops fold to a constant zero. The quick loops keep the run-time
-  field: with the constant there too, LLVM reshaped their search and quality
-  four executed up to 5% more instructions (3% more time). A unit test checks
-  that every finder a quality chooses agrees with
-  `GreedyQuality::extensive_reference_search`, and a debug assertion that an
-  extensive finder never runs with a non-extensive quality, the only pairing
-  whose result the constant could change.
 - **Sparse search.** After sixty-four literals without a match the scan strides
   forward two bytes at a time and stores every second position; after four
   times that, four bytes at a time. The exact thresholds and stores come from

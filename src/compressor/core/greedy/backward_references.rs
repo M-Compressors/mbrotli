@@ -251,11 +251,6 @@ pub(crate) fn create_backward_references<
     state: &mut ReferenceState,
     commands: &mut Vec<Command>,
 ) {
-    // The delayed search takes an extensive finder's `EXTENSIVE` over the
-    // quality's flag. The quality chose the finder, so an extensive finder
-    // always comes with an extensive quality; the reverse pairing still reads
-    // the run-time flag.
-    debug_assert!(!M::EXTENSIVE || params.quality.extensive_reference_search());
     let num_bytes = span.bytes as usize;
     let position = span.position as usize;
     let pos_end = position + num_bytes;
@@ -489,11 +484,7 @@ fn commit_match<S: Simd, R: MatchRun, const ENABLE_PREFIX: bool, const INDEPENDE
                     // length it already has, which lets the matcher reject
                     // most candidates without measuring them. Quality five
                     // gives that shortcut up and searches everything again.
-                    // The chain and bucket finders fold this to a constant
-                    // zero. The quick finders keep the run-time test: with
-                    // a constant, LLVM reshaped their search and quality
-                    // four executed up to 5% more instructions.
-                    len: if R::EXTENSIVE || block.extensive {
+                    len: if block.extensive {
                         0
                     } else {
                         (sr.len - 1).min(max_length)
@@ -755,7 +746,6 @@ mod tests {
     impl<M: Matcher> Matcher for Yielding<M> {
         const HASH_TYPE_LENGTH: usize = M::HASH_TYPE_LENGTH;
         const STORE_LOOKAHEAD: usize = M::STORE_LOOKAHEAD;
-        const EXTENSIVE: bool = M::EXTENSIVE;
 
         fn visit_run<V: RunVisitor>(&mut self, visitor: V) -> V::Output {
             self.inner.visit_run(visitor)
@@ -900,40 +890,6 @@ mod tests {
         let level = Level::try_detect().unwrap_or_else(Level::baseline);
         dispatch!(level, simd => yielding.find_longest_match(simd, &mut stats, query, &mut out));
         assert_eq!((out.distance, out.len), (9, 9));
-    }
-
-    #[test]
-    fn every_finder_a_quality_chooses_agrees_on_the_extensive_search() {
-        use crate::compressor::core::greedy::hashers::{MatchFinder, with_matcher};
-        use crate::compressor::core::greedy::params::choose_hasher;
-        fn extensive<M: Matcher>(_: &M) -> bool {
-            M::EXTENSIVE
-        }
-        let qualities = [
-            QualityLevel::Q2,
-            QualityLevel::Q3,
-            QualityLevel::Q4,
-            QualityLevel::Q5,
-            QualityLevel::Q6,
-            QualityLevel::Q7,
-            QualityLevel::Q8,
-            QualityLevel::Q9,
-        ];
-        for quality in qualities {
-            let quality = GreedyQuality::try_from(quality).unwrap();
-            for lgwin in [10, 16, 18, 22, 24] {
-                for size_hint in [0, 1000, 1 << 20] {
-                    let plan = choose_hasher(quality, lgwin, size_hint);
-                    let mut finder = MatchFinder::for_input(plan, size_hint);
-                    let found = with_matcher!(&mut finder, |matcher| extensive(matcher));
-                    assert_eq!(
-                        found,
-                        quality.extensive_reference_search(),
-                        "{quality:?} lgwin {lgwin} size {size_hint}"
-                    );
-                }
-            }
-        }
     }
 
     #[test]
