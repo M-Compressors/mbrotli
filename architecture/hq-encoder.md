@@ -486,7 +486,8 @@ in the Zopfli cost loop.
 The retained `Selected<S, G, INDEPENDENT>` kernel handles stitching, block
 assignment, and Zopfli reference search
 through feature-enabled `S::vectorize` calls. Each inner search is monomorphized
-on that concrete token; no block reselects the backend. `update_nodes` and
+on that concrete token and on whether a prefix is attached (§11); no block
+reselects the backend. `update_nodes` and
 `BinaryTreeMatcher::find_all_matches` also enter their specialized feature
 contexts through always-inlined closures, allowing comparisons to inline within
 these separately compiled functions. The tree traversal is always inlined into
@@ -659,6 +660,26 @@ flowchart TD
 
 The match itself stops at the end of the attachment it was found in, which is
 the reference's `limit`; only `extend_last_command` runs on across seams.
+
+Whether a prefix is attached is a type-level choice, as on the greedy path.
+`Kernels::hq` matches on the quality and on `attached.is_some()`, and calls
+`create_zopfli_backward_references` or `create_hq_zopfli_backward_references`
+with `const ENABLE_PREFIX: bool`. The parameter reaches
+`zopfli_compute_shortest_path`, `zopfli_iterate` and `update_nodes`. With it
+false, the entry points replace `attached` with a constant `None`, so `gap` is
+a constant zero and every prefix test folds away, and the probe loop in
+`update_nodes` loses its `prefix_copy_length` arm. On inputs without a prefix
+this cut executed instructions by 0.1-2.6% at quality ten and 0.2-2.9% at
+quality eleven, with identical output.
+
+```mermaid
+flowchart LR
+    hq["Kernels::hq"] --> q{"quality, attached?"}
+    q -->|"Q10, none"| a["create_zopfli_backward_references::&lt;S, false, I&gt;"]
+    q -->|"Q10, some"| b["create_zopfli_backward_references::&lt;S, true, I&gt;"]
+    q -->|"Q11, none"| c["create_hq_zopfli_backward_references::&lt;S, false, I&gt;"]
+    q -->|"Q11, some"| d["create_hq_zopfli_backward_references::&lt;S, true, I&gt;"]
+```
 
 ## Known gaps
 

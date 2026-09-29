@@ -355,7 +355,7 @@ fn prefix_copy_length(
 /// positions in turn, then the matches the tree found — but only from the two
 /// cheapest starts, because a further start with the same distances rarely
 /// pays.
-fn update_nodes<S: Simd, const INDEPENDENT: bool>(
+fn update_nodes<S: Simd, const ENABLE_PREFIX: bool, const INDEPENDENT: bool>(
     simd: S,
     ctx: &UpdateContext<'_>,
     pos: usize,
@@ -370,7 +370,8 @@ fn update_nodes<S: Simd, const INDEPENDENT: bool>(
             let cur_ix = ctx.block_start + pos;
             let cur_ix_masked = cur_ix & ctx.ringbuffer_mask;
             let max_distance = cur_ix.min(ctx.max_backward_limit);
-            let gap = ctx.gap;
+            // Without an attached prefix the gap is a compile-time zero.
+            let gap = if ENABLE_PREFIX { ctx.gap } else { 0 };
             let dictionary_start = ctx
                 .params
                 .logical_position(cur_ix)
@@ -447,7 +448,7 @@ fn update_nodes<S: Simd, const INDEPENDENT: bool>(
                         (window.get(prev_ix + best_len) == Some(&continuation)).then(|| {
                             find_match_length(simd, ctx.ringbuffer, prev_ix, cur_ix_masked, max_len)
                         })
-                    } else {
+                    } else if ENABLE_PREFIX {
                         prefix_copy_length(
                             ctx,
                             backward,
@@ -457,6 +458,8 @@ fn update_nodes<S: Simd, const INDEPENDENT: bool>(
                             cur_ix_masked,
                             max_len,
                         )
+                    } else {
+                        None
                     };
                     let Some(len) = found else {
                         continue;
@@ -646,7 +649,7 @@ fn create_commands(
     reason = "mirrors ZopfliIterate, whose parameters are all needed"
 )]
 #[cfg_attr(all(feature = "hotpath", not(feature = "no_std")), hotpath::measure)]
-fn zopfli_iterate<S: Simd, const INDEPENDENT: bool>(
+fn zopfli_iterate<S: Simd, const ENABLE_PREFIX: bool, const INDEPENDENT: bool>(
     simd: S,
     num_bytes: usize,
     position: usize,
@@ -684,7 +687,9 @@ fn zopfli_iterate<S: Simd, const INDEPENDENT: bool>(
     while i + 3 < num_bytes {
         let count = num_matches[i] as usize;
         let matches = &arena[cur_match_pos..cur_match_pos + count];
-        let mut skip = update_nodes::<_, INDEPENDENT>(simd, &ctx, i, matches, model, queue, nodes);
+        let mut skip = update_nodes::<_, ENABLE_PREFIX, INDEPENDENT>(
+            simd, &ctx, i, matches, model, queue, nodes,
+        );
         if skip < LONG_COPY_QUICK_STEP {
             skip = 0;
         }
@@ -803,7 +808,7 @@ fn merge_prefix_matches(prefix: &[(usize, usize)], tree: &mut Vec<BackwardMatch>
     reason = "mirrors BrotliZopfliComputeShortestPath, whose parameters are all needed"
 )]
 #[cfg_attr(all(feature = "hotpath", not(feature = "no_std")), hotpath::measure)]
-fn zopfli_compute_shortest_path<S: Simd, const INDEPENDENT: bool>(
+fn zopfli_compute_shortest_path<S: Simd, const ENABLE_PREFIX: bool, const INDEPENDENT: bool>(
     simd: S,
     num_bytes: usize,
     position: usize,
@@ -818,6 +823,9 @@ fn zopfli_compute_shortest_path<S: Simd, const INDEPENDENT: bool>(
     let max_backward_limit = params.max_backward_limit();
     let max_zopfli_len = params.max_zopfli_len();
     let short_scan = params.short_scan();
+    // Without `ENABLE_PREFIX` the attachment is a compile-time `None`, so
+    // every prefix test below folds away and `gap` is a constant zero.
+    let attached = if ENABLE_PREFIX { attached } else { None };
     let gap = attached.map_or(0, SharedContextInner::total_size);
     let store_end = if num_bytes >= STORE_LOOKAHEAD {
         position + num_bytes - STORE_LOOKAHEAD + 1
@@ -931,7 +939,9 @@ fn zopfli_compute_shortest_path<S: Simd, const INDEPENDENT: bool>(
             scratch.push(longest);
         }
 
-        let mut skip = update_nodes::<_, INDEPENDENT>(simd, &ctx, i, scratch, model, queue, nodes);
+        let mut skip = update_nodes::<_, ENABLE_PREFIX, INDEPENDENT>(
+            simd, &ctx, i, scratch, model, queue, nodes,
+        );
         if skip < LONG_COPY_QUICK_STEP {
             skip = 0;
         }
@@ -979,7 +989,11 @@ fn zopfli_compute_shortest_path<S: Simd, const INDEPENDENT: bool>(
     clippy::too_many_arguments,
     reason = "mirrors BrotliCreateZopfliBackwardReferences, whose parameters are all needed"
 )]
-pub(crate) fn create_zopfli_backward_references<S: Simd, const INDEPENDENT: bool>(
+pub(crate) fn create_zopfli_backward_references<
+    S: Simd,
+    const ENABLE_PREFIX: bool,
+    const INDEPENDENT: bool,
+>(
     simd: S,
     num_bytes: usize,
     position: usize,
@@ -994,8 +1008,11 @@ pub(crate) fn create_zopfli_backward_references<S: Simd, const INDEPENDENT: bool
 ) {
     workspace.prepare(num_bytes, params.dist.alphabet_size_limit as usize);
     let starting_dist_cache = state.dist_cache;
+    // Without `ENABLE_PREFIX` the attachment is a compile-time `None`, so
+    // every prefix test below folds away and `gap` is a constant zero.
+    let attached = if ENABLE_PREFIX { attached } else { None };
     let gap = attached.map_or(0, SharedContextInner::total_size);
-    zopfli_compute_shortest_path::<_, INDEPENDENT>(
+    zopfli_compute_shortest_path::<_, ENABLE_PREFIX, INDEPENDENT>(
         simd,
         num_bytes,
         position,
@@ -1030,7 +1047,11 @@ pub(crate) fn create_zopfli_backward_references<S: Simd, const INDEPENDENT: bool
     reason = "mirrors BrotliCreateHqZopfliBackwardReferences, whose parameters are all needed"
 )]
 #[cfg_attr(all(feature = "hotpath", not(feature = "no_std")), hotpath::measure)]
-pub(crate) fn create_hq_zopfli_backward_references<S: Simd, const INDEPENDENT: bool>(
+pub(crate) fn create_hq_zopfli_backward_references<
+    S: Simd,
+    const ENABLE_PREFIX: bool,
+    const INDEPENDENT: bool,
+>(
     simd: S,
     num_bytes: usize,
     position: usize,
@@ -1048,6 +1069,9 @@ pub(crate) fn create_hq_zopfli_backward_references<S: Simd, const INDEPENDENT: b
     let max_backward_limit = params.max_backward_limit();
     let max_zopfli_len = params.max_zopfli_len();
     let short_scan = params.short_scan();
+    // Without `ENABLE_PREFIX` the attachment is a compile-time `None`, so
+    // every prefix test below folds away and `gap` is a constant zero.
+    let attached = if ENABLE_PREFIX { attached } else { None };
     let gap = attached.map_or(0, SharedContextInner::total_size);
     let store_end = if num_bytes >= STORE_LOOKAHEAD {
         position + num_bytes - STORE_LOOKAHEAD + 1
@@ -1211,7 +1235,7 @@ pub(crate) fn create_hq_zopfli_backward_references<S: Simd, const INDEPENDENT: b
             model,
             ..
         } = workspace;
-        zopfli_iterate::<_, INDEPENDENT>(
+        zopfli_iterate::<_, ENABLE_PREFIX, INDEPENDENT>(
             simd,
             num_bytes,
             position,
@@ -1307,13 +1331,13 @@ mod tests {
             simd, data.len(), 0, buffer.buffer(), buffer.mask()));
         match params.quality {
             HqQuality::Q10 => {
-                dispatch!(level, simd => create_zopfli_backward_references::<_, false>(
+                dispatch!(level, simd => create_zopfli_backward_references::<_, false, false>(
                     simd, data.len(), 0, buffer.buffer(), buffer.mask(), &params,
                     None, &mut matcher, &mut workspace, &mut state, &mut commands,
                 ))
             }
             HqQuality::Q11 => {
-                dispatch!(level, simd => create_hq_zopfli_backward_references::<_, false>(
+                dispatch!(level, simd => create_hq_zopfli_backward_references::<_, false, false>(
                     simd, data.len(), 0, buffer.buffer(), buffer.mask(), &params,
                     None, &mut matcher, &mut workspace, &mut state, &mut commands,
                 ))

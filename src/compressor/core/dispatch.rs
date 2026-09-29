@@ -219,35 +219,32 @@ impl<S: Simd, G: Simd, const INDEPENDENT: bool> Kernels for Selected<S, G, INDEP
             workspace,
             commands,
         } = input;
+        // As for the greedy loops, an attached prefix is a type-level choice:
+        // without one, every `gap` offset and prefix probe folds away.
+        macro_rules! search {
+            ($search:ident, $prefix:literal) => {
+                $search::<_, $prefix, INDEPENDENT>(
+                    self.simd,
+                    span.bytes as usize,
+                    span.position as usize,
+                    window.data,
+                    window.mask,
+                    params,
+                    attached,
+                    matcher,
+                    workspace,
+                    references,
+                    commands,
+                )
+            };
+        }
         self.simd.vectorize(
             #[inline(always)]
-            || match params.quality {
-                HqQuality::Q10 => create_zopfli_backward_references::<_, INDEPENDENT>(
-                    self.simd,
-                    span.bytes as usize,
-                    span.position as usize,
-                    window.data,
-                    window.mask,
-                    params,
-                    attached,
-                    matcher,
-                    workspace,
-                    references,
-                    commands,
-                ),
-                HqQuality::Q11 => create_hq_zopfli_backward_references::<_, INDEPENDENT>(
-                    self.simd,
-                    span.bytes as usize,
-                    span.position as usize,
-                    window.data,
-                    window.mask,
-                    params,
-                    attached,
-                    matcher,
-                    workspace,
-                    references,
-                    commands,
-                ),
+            || match (params.quality, attached.is_some()) {
+                (HqQuality::Q10, false) => search!(create_zopfli_backward_references, false),
+                (HqQuality::Q10, true) => search!(create_zopfli_backward_references, true),
+                (HqQuality::Q11, false) => search!(create_hq_zopfli_backward_references, false),
+                (HqQuality::Q11, true) => search!(create_hq_zopfli_backward_references, true),
             },
         );
     }

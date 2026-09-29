@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Compile quality 10 and 11 compression without an attached prefix
+  dictionary separately from compression with one, as qualities 5 to 9
+  already were. Without a prefix, every prefix offset and prefix probe
+  disappears from the Zopfli search. Against the previous commit, callgrind
+  counts 0.1-2.6% fewer instructions at quality 10 and 0.2-2.9% fewer at
+  quality 11 on alice29, mapsdatazrh, random_org_10k.bin and generated text
+  and incompressible data. Single-core time is level to 1% faster, and the
+  output is byte-identical.
+- Take the qualities 5-9 delayed-search choice from the match finder's type
+  instead of reading it per match. Instructions drop by up to 2.6% (0.04-2.6%
+  on most cases, +0.35% and +1.7% on two), and single-core time by 0.1-1.6%
+  per quality. Qualities 2-4 keep the run-time test: as a constant it made
+  quality 4 run 3% slower. Output is byte-identical.
 - Compile `decompress_to_slice`'s linear decoding as its own instantiation of
   the decoder state machine instead of testing a flag inside it. The linear
   command loop no longer carries ring growth, wrapping copies or a history

@@ -234,6 +234,10 @@ pub(crate) trait MatchRun {
     /// Bytes a store needs available (`StoreLookahead`).
     const STORE_LOOKAHEAD: usize;
 
+    /// Whether a delayed search re-examines every candidate, as qualities
+    /// five and up do; see [`Matcher::EXTENSIVE`].
+    const EXTENSIVE: bool;
+
     /// Records the position `ix` in the table (`Store`).
     fn store(&mut self, data: &[u8], mask: usize, ix: usize);
 
@@ -260,6 +264,7 @@ pub(crate) trait MatchRun {
 impl<M: Matcher> MatchRun for &mut M {
     const HASH_TYPE_LENGTH: usize = M::HASH_TYPE_LENGTH;
     const STORE_LOOKAHEAD: usize = M::STORE_LOOKAHEAD;
+    const EXTENSIVE: bool = M::EXTENSIVE;
 
     #[inline(always)]
     fn store(&mut self, data: &[u8], mask: usize, ix: usize) {
@@ -304,6 +309,12 @@ pub(crate) trait Matcher {
 
     /// Bytes a store needs available (`StoreLookahead`).
     const STORE_LOOKAHEAD: usize;
+
+    /// Whether a delayed search re-examines every candidate
+    /// (`GreedyQuality::extensive_reference_search`). The quality picks the
+    /// finder, so the finder type fixes it: the quick finders serve
+    /// qualities two to four, the chain and bucket finders five to nine.
+    const EXTENSIVE: bool;
 
     /// Borrows the tables for a block of searches and stores, as the view
     /// the current layout uses; see [`RunVisitor`].
@@ -659,6 +670,7 @@ impl<
 {
     const HASH_TYPE_LENGTH: usize = 8;
     const STORE_LOOKAHEAD: usize = 8;
+    const EXTENSIVE: bool = false;
 
     #[inline(always)]
     fn store(&mut self, data: &[u8], mask: usize, ix: usize) {
@@ -798,6 +810,7 @@ impl<
 {
     const HASH_TYPE_LENGTH: usize = 8;
     const STORE_LOOKAHEAD: usize = 8;
+    const EXTENSIVE: bool = false;
 
     fn visit_run<V: RunVisitor>(&mut self, visitor: V) -> V::Output {
         match &mut self.buckets {
@@ -2313,6 +2326,7 @@ impl<const HASH64: bool, const BUCKETS: usize, const BLOCK: usize> MatchRun
 {
     const HASH_TYPE_LENGTH: usize = if HASH64 { 8 } else { 4 };
     const STORE_LOOKAHEAD: usize = Self::HASH_TYPE_LENGTH;
+    const EXTENSIVE: bool = true;
 
     #[inline(always)]
     fn store(&mut self, data: &[u8], mask: usize, ix: usize) {
@@ -2345,6 +2359,7 @@ impl<const HASH64: bool, const BUCKETS: usize, const BLOCK: usize> MatchRun
 {
     const HASH_TYPE_LENGTH: usize = if HASH64 { 8 } else { 4 };
     const STORE_LOOKAHEAD: usize = Self::HASH_TYPE_LENGTH;
+    const EXTENSIVE: bool = true;
 
     #[inline(always)]
     fn store(&mut self, data: &[u8], mask: usize, ix: usize) {
@@ -2386,6 +2401,7 @@ impl<const HASH64: bool, const BUCKETS: usize, const BLOCK: usize> MatchRun
 {
     const HASH_TYPE_LENGTH: usize = if HASH64 { 8 } else { 4 };
     const STORE_LOOKAHEAD: usize = Self::HASH_TYPE_LENGTH;
+    const EXTENSIVE: bool = true;
 
     #[inline(always)]
     fn store(&mut self, data: &[u8], mask: usize, ix: usize) {
@@ -2442,6 +2458,7 @@ impl<const HASH64: bool, const BUCKETS: usize, const BLOCK: usize, const SLOTS: 
 {
     const HASH_TYPE_LENGTH: usize = if HASH64 { 8 } else { 4 };
     const STORE_LOOKAHEAD: usize = Self::HASH_TYPE_LENGTH;
+    const EXTENSIVE: bool = true;
 
     fn visit_run<V: RunVisitor>(&mut self, visitor: V) -> V::Output {
         match &mut self.layout {
@@ -2662,6 +2679,7 @@ impl<const NUM_BANKS: usize, const BANK_BITS: u32> ChainMatcher<NUM_BANKS, BANK_
 impl<const NUM_BANKS: usize, const BANK_BITS: u32> Matcher for ChainMatcher<NUM_BANKS, BANK_BITS> {
     const HASH_TYPE_LENGTH: usize = 4;
     const STORE_LOOKAHEAD: usize = 4;
+    const EXTENSIVE: bool = true;
 
     fn visit_run<V: RunVisitor>(&mut self, visitor: V) -> V::Output {
         visitor.visit(self)
