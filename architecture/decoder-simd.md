@@ -5,8 +5,16 @@ dispatches before command loops and bulk copy stages, passing a concrete
 `fearless_simd::Simd` token into generic helpers. Headers, raw blocks and
 resumable parsing stages share scalar control flow.
 
+The SIMD choice is the innermost of three compile-time selections.
+`Stream::run` first fixes the sink type and whether the member decodes into
+linear slice history (`run_stages::<O, LINEAR>`). Each of those state machines
+then dispatches the backend at its command loop and copy stages, so every
+backend is compiled once per instantiation.
+
 ```mermaid
 flowchart LR
+    Run[Stream::run] --> Machine[run_stages per sink type and LINEAR]
+    Machine --> Backend[validated Backend]
     Backend[validated Backend] --> Dispatch[dispatch outside command or copy loop]
     Dispatch --> Control[serial Huffman and command dependencies]
     Dispatch --> Copy[16/32-byte SIMD snapshots]

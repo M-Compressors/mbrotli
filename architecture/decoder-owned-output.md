@@ -77,6 +77,26 @@ begins at `dst[0]` and every history position equals its slice index. The
 member boundary clears the flag; later members in concatenated mode use the
 ring as before.
 
+`Output::linear` is read once per call, by `Stream::run`, and nowhere below it.
+`run` picks one of two instantiations of the state machine:
+`run_stages::<O, true>` when the sink can be history (`Sink::LINEAR`, true
+only for `&mut [u8]`) and the flag is set, `run_stages::<O, false>` otherwise.
+The `const LINEAR: bool` parameter reaches `fast`, `emit`, `history`,
+`flush_ring`, `copy_ring` and `write_ring`, so every "linear or ring?" test is
+a compile-time constant. An uninitialized sink never instantiates the linear
+machine: its `Sink::LINEAR` is false, so the linear arm is unreachable for it
+and is not generated.
+
+The linear command loop therefore carries none of the ring machinery. Ring
+growth (`reach!`, `grow_ring`), the unit-distance growth fill
+(`repeat_grow`), the wrapping `copy_ring` fallback, the growth limit and the
+ring allocation are all absent, and `mask` is the constant `u64::MAX`, so a
+position is used directly as a slice index. The command loop is
+register-bound, and the dead ring code had shared its registers. Removing it
+cut decoded instructions for `decompress_to_slice` by 6.6% on average and
+by up to 12.8% on text (see [Known gaps](#known-gaps) for the one corpus
+where time did not follow).
+
 With `linear` set the caller's slice is the member's history. The ring is
 neither written nor grown. `emit`, raw copies and the byte-exact literal run
 write only the slice. Context bytes, prefix-crossing history and every copy read
@@ -97,8 +117,16 @@ that written bytes are not rolled back.
 `history_mask` indexes both buffers: a power-of-two length gives `len - 1`
 (the ring wraps; a power-of-two slice is never indexed at or past its length,
 so the mask is the identity), any other length gives `u64::MAX`. The copy
-kernels, `previous_bytes` and the command loop share it, so the SIMD and
-baseline copies are the same code in both modes.
+kernels and `previous_bytes` share it, so the SIMD and baseline copies are the
+same code in both modes. The linear command loop skips it and uses `u64::MAX`,
+the identity on every position it holds.
+
+A copy in the linear command loop always fits unsplit. `space` bounds it by
+`out_end - position` (`produced` equals `position` for a linear member), and
+`remaining` bounds it by the meta-block, so `position + copy <= history_end`,
+which is the slice length the loop sees. If this invariant ever broke, the
+branch that the ring machine spends on `copy_ring` returns
+`DecodeError::InternalInvariant` instead of panicking.
 
 ```mermaid
 sequenceDiagram
@@ -109,6 +137,7 @@ sequenceDiagram
     API->>Op: finish_linear(src, dst)
     Op->>Op: linear = fresh operation
     Op->>Stream: Output { bytes: dst, linear }
+    Stream->>Stream: O::LINEAR && linear → run_stages::<O, true>
     Stream->>Fast: take dst, bound to history_end
     Fast->>Fast: decode and copy inside dst
     Fast-->>Stream: restore dst; produced += delivered
@@ -119,9 +148,11 @@ sequenceDiagram
 
 ```mermaid
 flowchart TD
-    Write[history write] --> Linear{Output.linear?}
-    Linear -->|yes| Slice[write dst at position; ring untouched]
-    Linear -->|no| Ring[ensure ring; write position & mask]
+    Call[Stream::run] --> Pick{Sink::LINEAR and Output.linear?}
+    Pick -->|yes| LinearMachine[run_stages::&lt;O, true&gt;]
+    Pick -->|no| RingMachine[run_stages::&lt;O, false&gt;]
+    LinearMachine --> Slice[write dst at position; no ring code compiled]
+    RingMachine --> Ring[ensure ring; write position & mask]
     Ring --> Deliver{delivers?}
     Deliver -->|slice delivery| CopyOut[flush copies ring bytes to dst]
     Deliver -->|collect| Count[flush advances produced]
@@ -158,4 +189,12 @@ stored recognition, transfer, history wrap, concatenation, limits and read-ahead
 - Appended and reused Vec output initializes newly exposed destination slices.
 - Linear slice history covers only the first member of a one-call slice
   operation; sessions and later concatenated members deliver from the ring.
+- The linear and ring command loops are separate instantiations, which adds
+  about 60 KiB of `.text` to a program that uses both `decompress_to_slice`
+  and a ring path. Removing the ring code from the linear loop left its
+  register allocation worse in one place: the second-level Huffman lookup of
+  the three-symbol trivial-context literal batch. `mapsdatazrh` at q1, q5 and
+  q9, whose literals often take that path, decodes about 2% slower through
+  `decompress_to_slice` even though it executes 7% fewer instructions. Text
+  decodes 4-12% faster.
 - Small compressed streams still build entropy tables and session state.

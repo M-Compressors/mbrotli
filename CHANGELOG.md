@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+- Compile `decompress_to_slice`'s linear decoding as its own instantiation of
+  the decoder state machine instead of testing a flag inside it. The linear
+  command loop no longer carries ring growth, wrapping copies or a history
+  mask, which freed registers in the loop. Across 8 corpora at q1/q5/q9/q11
+  (Google's `alice29`, `lcet10`, `plrabn12`, `mapsdatazrh`,
+  `random_org_10k.bin`, `quickfox_repeated`, plus generated 1 MiB text and
+  256 KiB incompressible data) and compared with the previous commit on
+  x86-64 AVX2:
+  - `decompress_to_slice`: 6.6% fewer instructions on average (callgrind),
+    12.8% fewer on text. Single-core time is 1.8% lower on average and
+    4-12% lower on text, but `mapsdatazrh` at q1/q5/q9 is about 2% slower.
+  - `decompress_to_uninit`: 1.3% fewer instructions.
+  - `decompress` and streaming: level (+0.1% instructions).
+
+  Output is unchanged. A program that uses both the linear and the ring paths
+  carries about 60 KiB more decoder code.
+
 ## [v0.5.3](https://github.com/Mnwa/mbrotli/releases/tag/v0.5.3) - 2026-09-28
 
 - Add output into uninitialized memory: `EncoderSession::process_uninit`,

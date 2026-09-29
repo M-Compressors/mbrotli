@@ -100,6 +100,7 @@ scratch bytes past `produced`, which initialized callers never relied on.
 classDiagram
     class Sink~'a~ {
         <<private trait, core::stream>>
+        +LINEAR bool
         +len() usize
         +put(index, byte)
         +copy(start, bytes)
@@ -127,12 +128,17 @@ linear slice it took out with `take_history` and hands back with
 `restore_history`. Only the initialized slice can be linear history:
 `history` and `take_history` return an empty slice for the uninitialized one,
 `restore_history` accepts only that empty slice back, and an uninitialized
-sink is only ever run with `Delivery::Slice`, where `linear` is false.
+sink is only ever run with `Delivery::Slice`, where `linear` is false. Its
+`Sink::LINEAR` constant is false as well, so `Stream::run` never selects the
+linear state machine for it and that instantiation is never generated (see
+[Owned decoder output](decoder-owned-output.md#linear-slice-history)).
 
 `OperationState::run`, `Stream::run`, `run_stages`, `fast`, `emit`,
 `flush_ring`, `copy_ring` and `write_ring` are generic over the sink, so each
 destination type gets its own instantiation and no call chooses a variant at
-run time. The first version matched on a `Sink` enum inside those helpers;
+run time. Below `Stream::run` they are also generic over `const LINEAR: bool`,
+giving three instantiations: initialized linear, initialized ring and
+uninitialized ring. The first version matched on a `Sink` enum inside those helpers;
 the match itself was cheap, but `run_stages` inlines every stage and the
 SIMD command loop into one function, and the extra arms changed that
 function's register allocation. Decoding alice29 then executed 9% more
