@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Document mbrotli's first independent results in lzbench 2.4 on the Silesia
+  corpus in the README and the benchmark results index.
 - Compile quality 10 and 11 compression without an attached prefix
   dictionary separately from compression with one, as qualities 5 to 9
   already were. Without a prefix, every prefix offset and prefix probe

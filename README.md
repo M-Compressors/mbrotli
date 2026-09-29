@@ -29,6 +29,32 @@ parallel compression when a workload benefits from it.
 
 ## Performance
 
+### lzbench (independent)
+
+[lzbench](https://github.com/inikep/lzbench) is a long-running open-source
+in-memory benchmark: every codec is built from source into one binary with the
+same compiler and flags and runs on the same data and machine. Its maintainer ran
+these results, not us: lzbench 2.4 (gcc 15.2), the 211 MB
+[Silesia corpus](http://sun.aei.polsl.pl/~sdeor/index.php?page=silesia), one
+thread of an AMD EPYC 9555P with turbo disabled. [Full table][lzbench-results].
+
+mbrotli 0.5.2 against Google Brotli 1.2.0; bold marks the faster result. Ratio is
+the compressed size as a percentage of the input and matches for both.
+
+| Level | Compress mbrotli | Compress brotli | Decompress mbrotli | Decompress brotli | Ratio, % |
+| ----: | ---------------: | --------------: | -----------------: | ----------------: | -------: |
+| -11   |   **0.67 MB/s**  |       0.56 MB/s |           371 MB/s |      **383 MB/s** | 23.78 |
+| -8    |   **14.4 MB/s**  |       12.6 MB/s |           419 MB/s |      **443 MB/s** | 26.96 |
+| -5    |       50.0 MB/s  |   **53.3 MB/s** |           388 MB/s |      **419 MB/s** | 28.10 |
+| -2    |        127 MB/s  |    **139 MB/s** |           349 MB/s |      **378 MB/s** | 32.12 |
+| -0    |        341 MB/s  |        341 MB/s |           291 MB/s |      **322 MB/s** | 37.01 |
+
+**Summary:** the same compressed size as Google Brotli (+0.005% at -11),
+**14–20% faster** compression at -8 and -11, within 9% at lower levels, and
+decompression 3–10% behind C.
+
+### Our benchmarks
+
 Compression performance is generally close to or faster than Google C Brotli,
 depending on the workload and quality setting.
 
@@ -466,3 +492,4 @@ The [development guide][development] covers local checks, coverage, and fuzzing.
 [decoder-bench-csv]: ./docs/benchmarks/decoder-comparison.csv
 [decoder-bench-chart]: ./docs/benchmarks/decoders/charts/overview.svg
 [decoder-bench-report]: ./docs/benchmarks/decoder-comparison.md
+[lzbench-results]: https://github.com/inikep/lzbench/blob/2706ba16721e947a9240c70d080b8efa3f752da0/doc/lzbench24_sorted.md
