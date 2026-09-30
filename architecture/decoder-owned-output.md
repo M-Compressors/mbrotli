@@ -101,7 +101,8 @@ With `linear` set the caller's slice is the member's history. The ring is
 neither written nor grown. `emit`, raw copies and the byte-exact literal run
 write only the slice. Context bytes, prefix-crossing history and every copy read
 it. Delivery (`flush_ring`) advances `produced` without copying, as in
-collection. The command loop and the resumable copy and prefix stages take the
+collection, so the linear command loop skips the ring-end test after each
+literal run and copy and delivers once, when it leaves. The command loop and the resumable copy and prefix stages take the
 slice out of `Output` (`core::mem::take`) for their bulk work and put it back
 on every exit. The loop's `leave!` does this on pauses and errors.
 

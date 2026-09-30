@@ -170,9 +170,12 @@ which a later byte load ORs in again unchanged, so no mask sits on the decoding
 chain. `Stream::run` clears those bits (`settle`) before every return that keeps
 the reservoir, and `unread` clears them at output pauses and member ends, so
 between calls the reservoir holds only accepted bits. The
-`Input` computes its acceptable prefix (`fast_end`) once at construction, and the
-command loop refills through `refill_from` over that prefix with the cursor in a
-local, so the hot loop keeps it in a register. Input pauses retain the reservoir for incomplete fields. Output pauses and
+`Input` computes its acceptable prefix (`fast_end`) once at construction. The
+command loop holds the unread part of that prefix as a shrinking slice and
+refills through `refill_rest`, so each refill tests one length (at least eight
+bytes left) instead of an index and a length; the loop writes the cursor back
+from the slice's length when it leaves. The byte-exact stages refill through
+`refill_from` with an index cursor. Input pauses retain the reservoir for incomplete fields. Output pauses and
 member boundaries return whole buffered bytes accepted during that call.
 Older bytes belonging to a partial field remain buffered. Returning read-ahead
 at output pauses prevents a long pending copy from stranding the next member
@@ -273,10 +276,13 @@ recent-distance cache and the command fields the resumable stages read. Ring
 bytes are delivered to the caller when a write reaches the ring end, when the
 loop pauses and when an error returns, and the output space still free is
 tracked as a running count that includes pending ring bytes, so no per-command
-delivery is needed. State that depends only on a block type (the literal
-context lookup, the block's 64-entry context map slice, whether that slice is
-trivial, its single tree when it is, and the command, distance and distance
-context map tables) is refreshed at block switches rather than per command.
+delivery is needed. A linear member makes no per-write ring-end test at all: its
+history is the caller's slice, delivered once when the loop leaves. State that
+depends only on a block type (the literal context lookup, the block's 64-entry
+context map slice, whether that slice is trivial, its single tree when it is,
+the command table, and the distance table of each of the four distance
+contexts, resolved once so a distance symbol pays no bounds check) is refreshed
+at block switches rather than per command.
 For a trivial literal context map, the loop decodes three symbols per reservoir
 check when at least 45 bits are available. Each symbol consumes at most 15 bits.
 The scalar loop handles short input and the final one or two symbols; batching
@@ -304,21 +310,33 @@ flowchart TD
     Short --> Ref
     Tab --> Ref{distance > available?}
     Ref -->|yes| Dict[prefix: pause Resolve / static word into ring]
-    Ref -->|no| Push[cache.push; grow ring once per call]
-    Push --> Copy{no wrap?}
-    Copy -->|yes, distance >= length| Word[16/32-byte SIMD snapshot or copy_within]
+    Ref -->|no| Limit{length > min remaining, space?}
+    Limit -->|past remaining| Corrupt[error: meta-block]
+    Limit -->|past space| PauseC[cache.push; pause: Stage::Copy]
+    Limit -->|fits| Push[cache.push; grow ring once per call]
+    Push --> Snap{length <= 32, no overlap, snapshot windows fit?}
+    Snap -->|yes| Word[16/32-byte SIMD snapshot]
+    Snap -->|no| Copy{no wrap?}
+    Copy -->|yes, distance >= length| Exact[copy_within]
     Copy -->|yes, overlapping| Overlap[fill, byte loop, or doubling]
     Copy -->|wraps| Ring[copy_ring pieces]
     Word --> Start
+    Exact --> Start
     Overlap --> Start
     Ring --> Start
     Dict --> Start
 ```
 
-The fixed-width copy helpers load the entire source vector before storing it.
-They accept unaligned, initialized ring slices and check both complete windows;
-if either window is short they leave the ring unchanged and the caller uses
-`copy_within` for the exact length. A 16-byte copy serves lengths 1–16; a
+The copy length is tested once against the smaller of the meta-block's
+remaining length and the free output space; only a failing length is then told
+apart as corrupt input or as a full output, which pushes the distance and
+pauses at `Stage::Copy`. A non-overlapping copy of at most 32 bytes goes
+straight to a fixed-width helper: both of its complete windows fitting implies
+that neither side of the copy wraps, so the loop tests the copy's exact extent
+only when the helper declines. The fixed-width copy helpers load the entire
+source vector before storing it. They accept unaligned, initialized ring
+slices and check both complete windows; if either window is short they leave
+the ring unchanged and the caller uses `copy_within` for the exact length. A 16-byte copy serves lengths 1–16; a
 32-byte copy serves lengths 17–32, so at most fifteen bytes ahead of actual
 output are overwritten. The ring's sixteen unreachable history slots make
 those extra writes unobservable. The snapshot is also correct when ring slots

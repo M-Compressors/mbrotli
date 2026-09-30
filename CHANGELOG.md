@@ -1,5 +1,38 @@
 # Changelog
 
+## Unreleased
+
+- Cut the decoder command loop's instructions and branches. lzbench 2.4's
+  decompression gap to Google Brotli came from running 19% more instructions
+  and 33% more conditional branches than C (callgrind on the whole Silesia tar
+  at quality 5 with lzbench's own release binary, whose C side gcc 15 builds
+  10% faster than gcc 11 does); fewer mispredictions kept mbrotli ahead on
+  Intel but not on the AMD EPYC the published run used. The loop now refills
+  its bit reservoir through a slice cursor, testing one length where it tested
+  an index and a length; resolves the four distance-context tables once per
+  distance block type instead of bounds-checking a table per distance; tries
+  the 16- or 32-byte snapshot copy before testing a copy's exact extent, since
+  the snapshot's own window checks already prove the copy does not wrap;
+  tests a copy length once against the smaller of the meta-block's remaining
+  length and the output space; and, for linear slice history, drops the
+  ring-end test after every literal run and copy. On the first 40 MB of
+  `silesia.tar`, `decompress_to_slice` runs 11.2% fewer instructions and
+  12.9% fewer branches at quality 0, 11.0% and 11.5% fewer at quality 5 and
+  9.7% and 10.0% fewer at quality 11, now fewer instructions than C at quality
+  5; `alice29.txt` runs 12% fewer instructions at qualities 1, 5 and 9. Time
+  on an i7-13700KF (WSL2, one pinned core) on the whole Silesia tar rises from
+  553, 653, 734, 788 and 684 MB/s to 590, 692, 771, 829 and 700 MB/s at
+  qualities 0, 2, 5, 8 and 11, and on `alice29.txt` by 8.6-9.0%. Output
+  through the ring (`decompress`, sessions, readers and writers) runs 5% fewer
+  instructions; Criterion's `cold`, `tiny` and `streaming` groups are
+  unchanged within noise except `text-1MiB` cold, 5.5% faster. In lzbench
+  itself on the same host (`-t0,5 -i1,3`, whole Silesia tar, through
+  `mbrotli_decompress`), against the lzbench 2.4 release binary's gcc 15 C
+  decoder at 512, 610, 683, 729 and 615 MB/s, mbrotli 0.5.2 decodes at 541,
+  645, 707, 762 and 640 MB/s and this build at 572, 673, 749, 809 and 666 MB/s
+  (qualities 0, 2, 5, 8 and 11). An AMD EPYC run is still needed to confirm
+  the published gap has closed.
+
 ## [v0.5.4](https://github.com/M-Compressors/mbrotli/releases/tag/v0.5.4) - 2026-09-30
 
 - Enter the encoder's SIMD feature contexts through `#[simd]` from the new

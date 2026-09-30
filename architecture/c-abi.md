@@ -244,3 +244,10 @@ the status code crosses the ABI.
   record its output size. An exact-sized buffer for data compressed more than
   four times beyond 64 KiB decodes through the ring, and a buffer at the limit
   much larger than its result is zeroed in full.
+- Both costs show on large exact-sized buffers, the shape lzbench uses. On the
+  211 MB Silesia tar (i7-13700KF, one core), `mbrotli_decompress` is 3-4%
+  slower than `decompress_to_slice` into an initialized buffer at qualities 0,
+  5 and 8, which zero the buffer first, and 6% slower at quality 11, whose
+  4.2:1 ratio takes the ring. Zeroing only ahead of the decoder, rather than
+  the whole buffer up front, would need `unsafe` in the `mbrotli` crate or a
+  public history-provider interface; neither exists.

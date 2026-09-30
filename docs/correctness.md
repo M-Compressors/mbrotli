@@ -64,6 +64,18 @@ C-to-native round trip; `decoder-campaign.sh` covers decoder boundaries. Both
 stable and experimental builds are needed. See the [AFL guide](../fuzz/afl/README.md)
 and [target mechanics](../architecture/fuzzing.md).
 
+## Decoder command-loop smoke campaign — 2026-09-30
+
+After the command-loop changes of 2026-09-30 (slice-cursor refill,
+per-block-type distance tables, snapshot copies tried before the exact-extent
+test, one combined copy-limit test, no per-write ring-end test for linear
+history), `decoder-campaign.sh` ran every decoder target of both builds for
+**20 minutes** with its fixed 5 s timeout: 15 target/build pairs, 22,352,094
+stable and 29,512,959 experimental executions (51,865,053 in total). No
+crashes or hangs were recorded; stability stayed at or above 99.39%. The
+committed regression corpus replays cleanly through `cargo afl test` in both
+builds.
+
 ## Eight-hour AFL campaign and follow-up — 2026-09-27/28
 
 After uninitialized output landed (`17b3d315`), every fuzz target of both
