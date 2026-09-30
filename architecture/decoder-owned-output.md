@@ -195,6 +195,9 @@ stored recognition, transfer, history wrap, concatenation, limits and read-ahead
   register allocation worse in one place: the second-level Huffman lookup of
   the three-symbol trivial-context literal batch. `mapsdatazrh` at q1, q5 and
   q9, whose literals often take that path, decodes about 2% slower through
-  `decompress_to_slice` even though it executes 7% fewer instructions. Text
-  decodes 4-12% faster.
+  `decompress_to_slice` even though it executes 7% fewer instructions. 1 MiB
+  text decodes 3-6% faster. The ring instantiations execute the same
+  instructions as before (+0.1%) but measured 0.2-1.3% slower, and
+  uninitialized output about 3% slower, which is at the edge of what the
+  benchmark resolves.
 - Small compressed streams still build entropy tables and session state.

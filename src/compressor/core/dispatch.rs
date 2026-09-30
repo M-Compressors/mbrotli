@@ -1,7 +1,8 @@
 //! Host-validated tokens are selected once and retained with the encoder.
 //!
-//! Dynamic calls stop at this boundary. Each selected implementation enters a
-//! feature-enabled function once and passes its concrete token to inner loops.
+//! Dynamic calls stop at this boundary. Each selected implementation calls a
+//! `#[simd]` kernel with its concrete token; the kernel enters the token's
+//! feature-enabled function once and passes the token to inner loops.
 
 use alloc::boxed::Box;
 use alloc::vec::Vec;
@@ -128,17 +129,11 @@ impl<S: Simd, G: Simd, const INDEPENDENT: bool> Kernels for Selected<S, G, INDEP
         table: &mut [i32],
         writer: &mut BitWriter<'_>,
     ) {
-        self.simd.vectorize(
-            #[inline(always)]
-            || encode_fragment::<_, INDEPENDENT>(self.simd, core, input, is_last, table, writer),
-        );
+        encode_fragment::<_, INDEPENDENT>(self.simd, core, input, is_last, table, writer);
     }
 
     fn extend(&self, input: CommandExtension<'_>) {
-        self.simd.vectorize(
-            #[inline(always)]
-            || extend_last_command(self.simd, input),
-        );
+        extend_last_command(self.simd, input);
     }
 
     fn fast_append(
@@ -149,10 +144,7 @@ impl<S: Simd, G: Simd, const INDEPENDENT: bool> Kernels for Selected<S, G, INDEP
         table: &mut [i32],
         writer: &mut BitWriter<'_, Vec<u8>>,
     ) {
-        self.simd.vectorize(
-            #[inline(always)]
-            || encode_fragment::<_, INDEPENDENT>(self.simd, core, input, is_last, table, writer),
-        );
+        encode_fragment::<_, INDEPENDENT>(self.simd, core, input, is_last, table, writer);
     }
 
     fn greedy(&self, input: GreedyInput<'_>) {
@@ -165,13 +157,27 @@ impl<S: Simd, G: Simd, const INDEPENDENT: bool> Kernels for Selected<S, G, INDEP
             references,
             commands,
         } = input;
-        self.greedy.vectorize(
-            #[inline(always)]
-            || match attached {
-                None => with_matcher!(matcher, |finder| create_backward_references::<
+        match attached {
+            None => with_matcher!(matcher, |finder| create_backward_references::<
+                _,
+                _,
+                false,
+                INDEPENDENT,
+            >(
+                self.greedy,
+                finder,
+                params,
+                window,
+                span,
+                None,
+                references,
+                commands
+            )),
+            Some(_) => {
+                with_matcher!(matcher, |finder| create_backward_references::<
                     _,
                     _,
-                    false,
+                    true,
                     INDEPENDENT,
                 >(
                     self.greedy,
@@ -179,29 +185,12 @@ impl<S: Simd, G: Simd, const INDEPENDENT: bool> Kernels for Selected<S, G, INDEP
                     params,
                     window,
                     span,
-                    None,
+                    attached,
                     references,
                     commands
-                )),
-                Some(_) => {
-                    with_matcher!(matcher, |finder| create_backward_references::<
-                        _,
-                        _,
-                        true,
-                        INDEPENDENT,
-                    >(
-                        self.greedy,
-                        finder,
-                        params,
-                        window,
-                        span,
-                        attached,
-                        references,
-                        commands
-                    ))
-                }
-            },
-        );
+                ))
+            }
+        }
     }
 
     fn assign_blocks(&self, input: BlockCosts<'_>) {
@@ -238,15 +227,12 @@ impl<S: Simd, G: Simd, const INDEPENDENT: bool> Kernels for Selected<S, G, INDEP
                 )
             };
         }
-        self.simd.vectorize(
-            #[inline(always)]
-            || match (params.quality, attached.is_some()) {
-                (HqQuality::Q10, false) => search!(create_zopfli_backward_references, false),
-                (HqQuality::Q10, true) => search!(create_zopfli_backward_references, true),
-                (HqQuality::Q11, false) => search!(create_hq_zopfli_backward_references, false),
-                (HqQuality::Q11, true) => search!(create_hq_zopfli_backward_references, true),
-            },
-        );
+        match (params.quality, attached.is_some()) {
+            (HqQuality::Q10, false) => search!(create_zopfli_backward_references, false),
+            (HqQuality::Q10, true) => search!(create_zopfli_backward_references, true),
+            (HqQuality::Q11, false) => search!(create_hq_zopfli_backward_references, false),
+            (HqQuality::Q11, true) => search!(create_hq_zopfli_backward_references, true),
+        }
     }
 
     fn stitch(
@@ -256,17 +242,6 @@ impl<S: Simd, G: Simd, const INDEPENDENT: bool> Kernels for Selected<S, G, INDEP
         position: usize,
         window: Window<'_>,
     ) {
-        self.simd.vectorize(
-            #[inline(always)]
-            || {
-                matcher.stitch_to_previous_block(
-                    self.simd,
-                    input_size,
-                    position,
-                    window.data,
-                    window.mask,
-                )
-            },
-        );
+        matcher.stitch_to_previous_block(self.simd, input_size, position, window.data, window.mask);
     }
 }

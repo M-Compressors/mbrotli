@@ -484,13 +484,33 @@ in the Zopfli cost loop.
 
 `core::dispatch::select` resolves a token once when `HqEncoder` is constructed.
 The retained `Selected<S, G, INDEPENDENT>` kernel handles stitching, block
-assignment, and Zopfli reference search
-through feature-enabled `S::vectorize` calls. Each inner search is monomorphized
-on that concrete token and on whether a prefix is attached (§11); no block
-reselects the backend. `update_nodes` and
-`BinaryTreeMatcher::find_all_matches` also enter their specialized feature
-contexts through always-inlined closures, allowing comparisons to inline within
-these separately compiled functions. The tree traversal is always inlined into
+assignment, and Zopfli reference search by calling `#[simd]` functions
+(`fearless_simd_macros`): `stitch_to_previous_block`, `assign_blocks`,
+`create_zopfli_backward_references` and `create_hq_zopfli_backward_references`.
+Each inner search is monomorphized on that concrete token and on whether a
+prefix is attached (§11); no block reselects the backend. `update_nodes`,
+`BinaryTreeMatcher::find_all_matches` and `BinaryTreeMatcher::store` are
+`#[simd]` as well, allowing comparisons to inline within these separately
+compiled functions.
+
+`#[simd]` makes the body an always-inlined closure and calls it through a
+feature-enabled entry generated for the token's level, with each argument
+passed separately. When LLVM keeps such a function out of line — `store` runs
+once per position and is not inlined into the Zopfli loop — the call crosses
+from a baseline function into the feature-enabled entry at every position.
+`Simd::vectorize` passed the captured arguments there as one struct behind a
+pointer; the macro passes them in registers.
+
+```mermaid
+sequenceDiagram
+    participant Loop as Zopfli loop (S features)
+    participant Store as BinaryTreeMatcher::store (baseline)
+    participant Entry as generated entry (S features)
+    Loop->>Store: store(simd, data, mask, ix)
+    Store->>Entry: token level folds to S; self, data, mask, ix as arguments
+    Entry->>Entry: inlined body: store_and_find_matches
+    Entry-->>Loop: return
+``` The tree traversal is always inlined into
 `find_all_matches` or the feature-enabled `store` body, and `scan_recent_positions`
 takes the same token for its `u8x32` prefilter, which every backend implements
 (the fallback lane by lane). Copy extension uses the shared retained
@@ -697,7 +717,7 @@ flowchart LR
 - **Histogram merging runs at the baseline instruction set.**
   `BlockSplitter::split` and the histogram helpers it calls
   (`Histogram::add_histogram`, block histogram rebuilds) sit outside every
-  `S::vectorize` region, so on x86-64 their autovectorized loops use SSE2
+  `#[simd]` region, so on x86-64 their autovectorized loops use SSE2
   `xmm` registers even on AVX2 hosts (about 1.6% of quality 10 on
   `mapsdatazrh`). Only the block-assignment pass enters the selected backend.
 - **`hotpath` instrumentation.** Encoder block operations, Zopfli search passes,

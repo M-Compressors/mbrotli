@@ -310,9 +310,11 @@ pub(crate) struct CommandExtension<'a> {
     pub(crate) span: &'a mut super::ringbuffer::BlockSpan,
 }
 
-/// Extends a copy with the retained encoder's selected comparison kernel.
+/// Extends a copy with the retained encoder's selected comparison kernel,
+/// inside `simd`'s feature context.
 #[cfg_attr(all(feature = "hotpath", not(feature = "no_std")), hotpath::measure)]
 #[inline(always)]
+#[fearless_simd_macros::simd]
 pub(crate) fn extend_last_command<S: fearless_simd::Simd>(simd: S, input: CommandExtension<'_>) {
     let CommandExtension {
         command,

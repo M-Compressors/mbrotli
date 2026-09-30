@@ -23,6 +23,8 @@ graph TD
     ECore --> Shared[private shared primitives]
     DCore --> Shared
     ECore --> SIMD[fearless_simd: selected backend]
+    ECore --> Macro["fearless_simd_macros: #[simd] feature entries"]
+    Macro --> SIMD
     DCore --> SIMD
     C[google-brotli-ffi] -. tests and benchmarks .-> Root
     CABI[mbrotli-ffi: C ABI crate] --> Root

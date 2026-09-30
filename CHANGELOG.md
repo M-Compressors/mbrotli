@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- Enter the encoder's SIMD feature contexts through `#[simd]` from the new
+  `fearless_simd_macros` dependency (enabled by `compression`) instead of
+  `Simd::vectorize`. The macro passes each argument to the feature-enabled
+  function separately, where `vectorize` passed a closure's captures as one
+  struct behind a pointer; this matters where such a function stays out of
+  line, such as the per-position tree store at qualities 10 and 11. Against
+  the previous commit on x86-64 AVX2, callgrind counts (geometric mean over
+  six corpora per quality: generated 1 KiB and 64 KiB text, 256 KiB binary
+  and incompressible data, `alice29`, `mapsdatazrh`) 1.2% fewer instructions
+  at quality 10, 0.8% fewer at quality 11 and 1.4% fewer at quality 3, but
+  0.9% more at quality 0 and 1.7% more at quality 1, where the scan now keeps
+  one more argument in a register and spills more; qualities 2 and 4-9 are
+  within 0.5%. Time does not resolve a difference: paired runs inside one
+  binary give -2.2% at quality 11 and +1.4% at quality 1, while Criterion
+  `reused` runs of the two builds on one core give +0.8% at qualities 10 and
+  11, +1.0% at qualities 1 and 2, -0.6% at quality 0 and 0.0% at quality 3,
+  with single cases disagreeing in sign by up to 8%. Output is byte-identical
+  at every quality, with and without an attached prefix dictionary.
 - Move the repository to the public
   [M-Compressors](https://github.com/M-Compressors) organization. The crate
   metadata, README, documentation links and changelog now point to
@@ -14,8 +32,9 @@
   disappears from the Zopfli search. Against the previous commit, callgrind
   counts 0.1-2.6% fewer instructions at quality 10 and 0.2-2.9% fewer at
   quality 11 on alice29, mapsdatazrh, random_org_10k.bin and generated text
-  and incompressible data. Single-core time is level to 1% faster, and the
-  output is byte-identical.
+  and incompressible data. Single-core time is 1.4% lower at quality 10 and
+  1.1% lower at quality 11 (0.5-2.8% per case), and the output is
+  byte-identical.
 - Compile `decompress_to_slice`'s linear decoding as its own instantiation of
   the decoder state machine instead of testing a flag inside it. The linear
   command loop no longer carries ring growth, wrapping copies or a history
@@ -25,10 +44,17 @@
   256 KiB incompressible data) and compared with the previous commit on
   x86-64 AVX2:
   - `decompress_to_slice`: 6.6% fewer instructions on average (callgrind),
-    12.8% fewer on text. Single-core time is 1.8% lower on average and
-    4-12% lower on text, but `mapsdatazrh` at q1/q5/q9 is about 2% slower.
-  - `decompress_to_uninit`: 1.3% fewer instructions.
-  - `decompress` and streaming: level (+0.1% instructions).
+    12.8% fewer on text. Single-core time is 0.5% lower on average: 1 MiB
+    text at q5/q9/q11 decodes 3.4-6.1% faster, the vendored text files
+    -2.2% to +0.7%, and `mapsdatazrh` at q1/q5/q9 2.0-2.4% slower.
+  - `decompress_to_uninit`: 1.3% fewer instructions, but about 3% more time
+    at q1 and q5.
+  - `decompress` and streaming: +0.1% instructions, 0.2-1.3% more time.
+
+  The timings are medians of paired runs on one otherwise idle core, and
+  their resolution is about 2%: two copies of identical code built into one
+  benchmark binary differ by that much on average. For that reason,
+  instruction counts are the primary evidence here.
 
   Output is unchanged. A program that uses both the linear and the ring paths
   carries about 60 KiB more decoder code.

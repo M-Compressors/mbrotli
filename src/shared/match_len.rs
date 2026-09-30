@@ -8,6 +8,7 @@
 //! length in every case, so the emitted bitstream never depends on the level.
 
 use fearless_simd::{Simd, SimdBase, SimdMask, u8x16, u8x32, u8x64};
+use fearless_simd_macros::simd;
 
 /// Bytes compared with scalar 64-bit loads before the SIMD loop is entered.
 ///
@@ -111,12 +112,10 @@ pub(crate) fn match_len_at_outlined<S: Simd>(
 }
 
 /// [`match_len_windows`] behind a call, back inside `simd`'s feature context.
+#[simd]
 #[inline(never)]
 fn match_len_tail<S: Simd>(simd: S, left: &[u8], right: &[u8]) -> usize {
-    simd.vectorize(
-        #[inline(always)]
-        move || match_len_windows(simd, left, right),
-    )
+    match_len_windows(simd, left, right)
 }
 
 /// Counts the leading bytes two windows of the same length share.

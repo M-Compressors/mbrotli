@@ -713,6 +713,11 @@ Two details separate the qualities:
   length already found, which lets the finder reject most candidates without
   measuring them. Quality five gives that shortcut up and searches everything
   again — this is a compression-semantics difference, not a tuning flag.
+  The flag is a run-time field of the block, read once per match. Taking it
+  from the finder type instead was tried and reverted: it cut instructions
+  at qualities five to nine by 0.5-1%, but single-core time did not change
+  measurably, and as a constant in the quick finders it made quality four
+  execute up to 5% more instructions.
 - **Sparse search.** After sixty-four literals without a match the scan strides
   forward two bytes at a time and stores every second position; after four
   times that, four bytes at a time. The exact thresholds and stores come from
@@ -878,8 +883,8 @@ graph TD
     B -->|"new encoder"| C["core::dispatch::select(level)"]
     C --> D["retained Selected&lt;S, G&gt; kernel:<br/>S for fragment and high-quality kernels,<br/>G for the greedy loops"]
     D --> E["select concrete matcher and run once per block"]
-    E --> V["SearchLoop::visit&lt;R&gt;<br/>G::vectorize over the specialized loop"]
-    V --> F["find_longest_match(simd, ...)"]
+    E --> V["SearchLoop::visit&lt;R&gt;"]
+    V -->|"#[simd] search_positions: G feature context"| F["find_longest_match(simd, ...)"]
     F --> G1["tag_equality(simd, ...)"]
     F --> G2["match_len_at: first word, then match_len_windows (scalar words)"]
 
@@ -895,22 +900,29 @@ filter; the scalar backend keeps the greedy loops scalar, as the unfiltered
 oracle, and other architectures keep their own level for both. Compiling the
 greedy loops for every x86 level multiplied their code — a quarter of the crate
 — without a faster instruction to show for it. A virtual call at the outer
-`core::dispatch` boundary enters `G::vectorize`; the `MatchFinder` enum and the
-run are matched once per scan, and the concrete token reaches the tag filter
-without inner dispatch.
+`core::dispatch` boundary matches the `MatchFinder` enum once per scan and
+calls `create_backward_references`, a `#[simd]` function that enters `G`'s
+feature context; the concrete token reaches the tag filter without inner
+dispatch.
 
-`SearchLoop::visit` enters `G::vectorize` around its specialized loop. Its
-closure is always inlined into the feature-enabled entry, letting the generic
-`fearless_simd` operations become native instructions. Passing a token to an
-out-of-line function alone does not enable its target features: a baseline
-compilation instead calls feature-enabled helpers for each vector comparison
-and mask operation. Entering the context after matcher and run specialization
-also keeps each search body separate, rather than forcing every matcher into
-one large outer dispatch function.
+`SearchLoop::visit` specializes the matcher and run, then calls
+`search_positions`, the `#[simd]` function that holds the per-position loop;
+`commit_match` is `#[simd]` as well. The `#[simd]` attribute from
+`fearless_simd_macros` turns the function body into an always-inlined closure
+and calls it through a feature-enabled entry generated for the token's level,
+passing every argument separately rather than as one captured struct, so the
+generic `fearless_simd` operations become native instructions. Passing a token
+to an out-of-line function alone does not enable its target features: a
+baseline compilation instead calls feature-enabled helpers for each vector
+comparison and mask operation. Entering the context after matcher and run
+specialization also keeps each search body separate, rather than forcing every
+matcher into one large outer dispatch function.
 
-The nested feature entry uses the existing token; it performs no detection or
-virtual dispatch. Both entries are outside the search loop. `vectorize` owns
-the feature proof; no handwritten `target_feature` or unsafe block is needed.
+The nested feature entries use the existing token; they perform no detection
+or virtual dispatch, and on x86 the greedy loops' SSE2 entry adds nothing to
+the baseline features, so it inlines. All entries are outside the search
+loop. The macro's `fearless_simd` helper owns the feature proof; no
+handwritten `target_feature` or unsafe block is needed.
 Scalar and SIMD paths keep the same matcher state, candidate order, score
 arithmetic, and error propagation.
 

@@ -16,6 +16,7 @@
 use alloc::vec::Vec;
 
 use fearless_simd::{Select, Simd, SimdBase, SimdMask, f64x8};
+use fearless_simd_macros::simd;
 
 use super::cluster::{HistogramPair, combine_batch, move_cost};
 use super::params::HqParams;
@@ -309,91 +310,86 @@ fn assign_blocks_scalar(input: BlockCosts<'_>) {
 
 /// Assigns histogram ids with the already-selected encoder token. Each lane
 /// retains f64 addition/subtraction order; equal minima choose the first id.
+#[simd]
 pub(crate) fn assign_blocks<S: Simd>(simd: S, input: BlockCosts<'_>) {
     if simd.level().is_fallback() {
         assign_blocks_scalar(input);
         return;
     }
-    simd.vectorize(
-        #[inline(always)]
-        || {
-            let BlockCosts {
-                data,
-                block_switch_bitcost,
-                insert_cost,
-                cost,
-                switch_signal,
-                block_id,
-            } = input;
-            let num_histograms = cost.len();
-            let bitmap_len = num_histograms.div_ceil(8);
-            let vector_end = num_histograms / 8 * 8;
-            for (byte_ix, &symbol) in data.iter().enumerate() {
-                let row = &insert_cost[usize::from(symbol) * num_histograms..][..num_histograms];
-                let mut minima = f64x8::splat(simd, 1e99);
-                // Histogram ids are below 256, so f64 lanes hold them exactly
-                // and the tie-break below stays on native `min` instructions;
-                // `u64` lanes have no vector minimum before AVX-512.
-                let mut ids = f64x8::splat(simd, NO_HISTOGRAM);
-                let mut chunk_ids = f64x8::load_array(simd, [0., 1., 2., 3., 4., 5., 6., 7.]);
-                for (values, prices) in cost[..vector_end]
-                    .as_chunks_mut::<8>()
-                    .0
-                    .iter_mut()
-                    .zip(row[..vector_end].as_chunks::<8>().0)
-                {
-                    let updated =
-                        f64x8::load_array_ref(simd, values) + f64x8::load_array_ref(simd, prices);
-                    updated.store_array(values);
-                    let improved = updated.simd_lt(minima);
-                    minima = improved.select(updated, minima);
-                    ids = improved.select(chunk_ids, ids);
-                    chunk_ids += 8.0;
-                }
-                // Each lane kept its first strict minimum; across lanes the
-                // smallest id among the equal minima wins, as in the scalar
-                // scan. Costs are never NaN, so both minima are exact.
-                let mut min_cost = minima.reduce_min();
-                let mut best_id = minima
-                    .simd_eq(f64x8::splat(simd, min_cost))
-                    .select(ids, f64x8::splat(simd, NO_HISTOGRAM))
-                    .reduce_min() as u64;
-                for k in vector_end..num_histograms {
-                    cost[k] += row[k];
-                    if cost[k] < min_cost {
-                        min_cost = cost[k];
-                        best_id = k as u64;
-                    }
-                }
-                block_id[byte_ix] = best_id as u8;
-                let mut switch_cost = block_switch_bitcost;
-                if byte_ix < PROLOGUE_LENGTH {
-                    switch_cost *= PROLOGUE_BASE + PROLOGUE_MULTIPLIER * byte_ix as f64;
-                }
-                let minimum = f64x8::splat(simd, min_cost);
-                let limit = f64x8::splat(simd, switch_cost);
-                let signal = &mut switch_signal[byte_ix * bitmap_len..][..bitmap_len];
-                for (values, signal) in cost[..vector_end]
-                    .as_chunks_mut::<8>()
-                    .0
-                    .iter_mut()
-                    .zip(signal.iter_mut())
-                {
-                    let delta = f64x8::load_array_ref(simd, values) - minimum;
-                    let switches = delta.simd_ge(limit);
-                    switches.select(limit, delta).store_array(values);
-                    *signal |= switches.to_bitmask() as u8;
-                }
-                for k in vector_end..num_histograms {
-                    cost[k] -= min_cost;
-                    if cost[k] >= switch_cost {
-                        cost[k] = switch_cost;
-                        signal[k >> 3] |= 1 << (k & 7);
-                    }
-                }
+    let BlockCosts {
+        data,
+        block_switch_bitcost,
+        insert_cost,
+        cost,
+        switch_signal,
+        block_id,
+    } = input;
+    let num_histograms = cost.len();
+    let bitmap_len = num_histograms.div_ceil(8);
+    let vector_end = num_histograms / 8 * 8;
+    for (byte_ix, &symbol) in data.iter().enumerate() {
+        let row = &insert_cost[usize::from(symbol) * num_histograms..][..num_histograms];
+        let mut minima = f64x8::splat(simd, 1e99);
+        // Histogram ids are below 256, so f64 lanes hold them exactly
+        // and the tie-break below stays on native `min` instructions;
+        // `u64` lanes have no vector minimum before AVX-512.
+        let mut ids = f64x8::splat(simd, NO_HISTOGRAM);
+        let mut chunk_ids = f64x8::load_array(simd, [0., 1., 2., 3., 4., 5., 6., 7.]);
+        for (values, prices) in cost[..vector_end]
+            .as_chunks_mut::<8>()
+            .0
+            .iter_mut()
+            .zip(row[..vector_end].as_chunks::<8>().0)
+        {
+            let updated = f64x8::load_array_ref(simd, values) + f64x8::load_array_ref(simd, prices);
+            updated.store_array(values);
+            let improved = updated.simd_lt(minima);
+            minima = improved.select(updated, minima);
+            ids = improved.select(chunk_ids, ids);
+            chunk_ids += 8.0;
+        }
+        // Each lane kept its first strict minimum; across lanes the
+        // smallest id among the equal minima wins, as in the scalar
+        // scan. Costs are never NaN, so both minima are exact.
+        let mut min_cost = minima.reduce_min();
+        let mut best_id = minima
+            .simd_eq(f64x8::splat(simd, min_cost))
+            .select(ids, f64x8::splat(simd, NO_HISTOGRAM))
+            .reduce_min() as u64;
+        for k in vector_end..num_histograms {
+            cost[k] += row[k];
+            if cost[k] < min_cost {
+                min_cost = cost[k];
+                best_id = k as u64;
             }
-        },
-    );
+        }
+        block_id[byte_ix] = best_id as u8;
+        let mut switch_cost = block_switch_bitcost;
+        if byte_ix < PROLOGUE_LENGTH {
+            switch_cost *= PROLOGUE_BASE + PROLOGUE_MULTIPLIER * byte_ix as f64;
+        }
+        let minimum = f64x8::splat(simd, min_cost);
+        let limit = f64x8::splat(simd, switch_cost);
+        let signal = &mut switch_signal[byte_ix * bitmap_len..][..bitmap_len];
+        for (values, signal) in cost[..vector_end]
+            .as_chunks_mut::<8>()
+            .0
+            .iter_mut()
+            .zip(signal.iter_mut())
+        {
+            let delta = f64x8::load_array_ref(simd, values) - minimum;
+            let switches = delta.simd_ge(limit);
+            switches.select(limit, delta).store_array(values);
+            *signal |= switches.to_bitmask() as u8;
+        }
+        for k in vector_end..num_histograms {
+            cost[k] -= min_cost;
+            if cost[k] >= switch_cost {
+                cost[k] = switch_cost;
+                signal[k >> 3] |= 1 << (k & 7);
+            }
+        }
+    }
 }
 
 /// Assigns each symbol the entropy code that codes it most cheaply.

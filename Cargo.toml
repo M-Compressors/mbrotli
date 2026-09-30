@@ -28,6 +28,12 @@ version = "1"
 optional = true
 default-features = false
 
+# `#[simd]` enters a token's feature context with each argument passed
+# separately, where `Simd::vectorize` moves them into one closure struct.
+[dependencies.fearless_simd_macros]
+version = "0.1"
+optional = true
+
 [dependencies.thiserror]
 version = "2"
 optional = true
@@ -73,7 +79,7 @@ required-features = ["compression", "experimental"]
 [features]
 default = ["std", "compression", "decompression"]
 # Independently selectable public codecs and their private implementations.
-compression = ["dep:fearless_simd", "dep:thiserror"]
+compression = ["dep:fearless_simd", "dep:fearless_simd_macros", "dep:thiserror"]
 decompression = ["dep:fearless_simd", "dep:thiserror"]
 # Dependency runtime detection for ordinary builds.
 std = ["fearless_simd?/std", "thiserror?/std"]

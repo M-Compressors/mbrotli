@@ -150,8 +150,8 @@ Slice contents may be partially written on failure, as documented.
 ## Extending copies across input blocks
 
 Greedy and HQ encoders pass a borrowed `CommandExtension` to their retained
-`Kernels::extend` entry. Its feature-enabled closure calls the shared exact
-match-length scan. Each scan is bounded by both physical wrap points and the
+`Kernels::extend` entry, which calls the `#[simd]` `extend_last_command`; inside
+the token's feature context it runs the shared exact match-length scan. Each scan is bounded by both physical wrap points and the
 remaining input; a fully matching chunk advances the command and repeats after
 wrapping either index. The dictionary-prefix branch retains its existing seam
 handling. No public API or error variant changes.
@@ -324,10 +324,12 @@ enters the selected feature-enabled body and passes the token to generic inner
 loops. There is no per-candidate feature detection or virtual call. Cache reuse
 checks the backend discriminant and resolved parameter shape before reset.
 
-After matcher specialization, greedy reference generation enters `S::vectorize`
-around its search body, keeping tag and match-length operations in the selected
-feature context. This static entry stays outside the loop and uses the existing
-token. An out-of-line baseline compilation would require a feature-enabled helper
+The outer kernels are `#[simd]` functions (`fearless_simd_macros`): each
+enters the token's feature context once, with its arguments passed separately
+to the feature-enabled entry. After matcher specialization, greedy reference
+generation calls the `#[simd]` `search_positions` for its search body, keeping
+tag and match-length operations in the selected feature context. This static
+entry stays outside the loop and uses the existing token. An out-of-line baseline compilation would require a feature-enabled helper
 call per SIMD operation even though the correct token had already been selected.
 
 ```mermaid
@@ -340,9 +342,9 @@ sequenceDiagram
     Cache->>Selected: dispatch once when constructing encoder
     loop blocks and reused streams
         Cache->>Selected: outer kernel call
-        Selected->>Inner: vectorize body, pass S
+        Selected->>Inner: call #[simd] kernel, pass S
         opt greedy reference generation
-            Inner->>Inner: specialize matcher, vectorize search body with S
+            Inner->>Inner: specialize matcher, #[simd] search_positions with S
         end
         Inner-->>Cache: reference-ordered results
     end

@@ -26,6 +26,7 @@ use crate::shared::{bits, huffman, match_len};
 
 use super::dispatch::{self, Kernels};
 use fearless_simd::{Level, Simd};
+use fearless_simd_macros::simd;
 
 use self::bits::{BYTE_PADDING_SLACK, BitWriter, ByteBuffer, inject_byte_padding};
 use self::constants::{OUTPUT_RESERVE_CONST, OUTPUT_SLACK, WINDOW_BITS_FAST};
@@ -156,8 +157,10 @@ impl FastCore {
 /// Compresses one fragment with a resolved SIMD token.
 ///
 /// This is the only place the fast path branches on the instruction set; the
-/// token is passed by value into every leaf that uses it.
+/// token is passed by value into every leaf that uses it, all inside the
+/// token's feature context.
 #[inline(always)]
+#[simd]
 pub(crate) fn encode_fragment<S: Simd, const INDEPENDENT: bool>(
     simd: S,
     core: &mut FastCore,

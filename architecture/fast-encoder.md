@@ -153,7 +153,7 @@ stateDiagram-v2
     Seeded --> Verbatim: FastCore::stores_verbatim (final q0 fragment within the bound)
     Verbatim --> Encoded: raw meta-block and closing bits, no table, no arena
     Seeded --> Tabled: clear the active hash table range
-    Tabled --> Dispatched: retained kernel, S::vectorize
+    Tabled --> Dispatched: retained kernel, #[simd] encode_fragment
     Dispatched --> Encoded: q0 or q1 writes meta-blocks
     Encoded --> Checked: writer overflow?
     Checked --> Failed: yes
@@ -329,7 +329,7 @@ Meta-block layout for a compressed fast-path block:
 graph TD
     select["core::dispatch::select(level), once on construction"] --> kernel["retained Selected&lt;S&gt;"]
     A["FastEncoder::encode_block / encode_block_append"] --> kernel
-    kernel -->|"S::vectorize, no re-selection"| B["encode_fragment&lt;S: Simd&gt;"]
+    kernel -->|"#[simd] entry, no re-selection"| B["encode_fragment&lt;S: Simd&gt;"]
     B --> C["q0::compress_fragment&lt;S&gt;"]
     B --> D["q1::compress_fragment&lt;S&gt;"]
     C --> E0["match_len_at: first word settled scalar"]
@@ -345,10 +345,12 @@ graph TD
     class C,D,J scalar;
 ```
 
-The specialized q0 `compress_fragment_impl` and q1 `create_commands` bodies each
-enter `S::vectorize` through an always-inlined closure. This keeps the native
-comparison loop inside a feature-enabled function even when LLVM keeps the
-large scan separate from the outer dispatcher. It introduces no feature detection
+`encode_fragment`, the specialized q0 `compress_fragment_impl` and the q1
+`create_commands` are `#[simd]` functions: each body becomes an always-inlined
+closure called through a feature-enabled entry, with the arguments passed
+separately. This keeps the native comparison loop inside a feature-enabled
+function even when LLVM keeps the large scan separate from the outer
+dispatcher. It introduces no feature detection
 inside the scan and retains independent table-width specializations.
 
 Only the exact match-length scan is vectorised. Hash lookups, candidate
@@ -408,7 +410,7 @@ inside the hot loop. The table itself is handed to the specialised body as an
 array reference `&mut [i32; 1 << TABLE_BITS]` (`first_chunk_mut` on the
 prepared slice), so every hash index — a `64 - TABLE_BITS` shift — is provably
 inside it and no lookup carries a bounds check. The array type preserves this
-bound inside the backend-specific `vectorize` function.
+bound inside the backend-specific entry `#[simd]` generates.
 
 Inside q1's `create_commands` the pass-one command and literal vectors are
 moved into locals for the duration of the scan and moved back at its end:

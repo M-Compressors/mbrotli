@@ -72,7 +72,10 @@ There is no new runtime branch, dispatch point, state transition, allocation or
 byte-processing behavior. Existing SIMD selection remains at codec construction,
 and streaming state machines and dictionary lifetime rules are unchanged.
 `fearless_simd` and `thiserror` are optional production dependencies activated
-by either codec; environment features forward to them only when enabled. Tests
+by either codec; environment features forward to them only when enabled.
+`fearless_simd_macros`, the proc-macro crate behind the encoder's `#[simd]`
+entries, is activated by `compression` alone: the decoder enters its feature
+context through `fearless_simd::dispatch!`. Tests
 explicitly enable dependency std support for host-only oracle builds.
 
 `scripts/check_codec_features.py` checks independent consumers for all codec,

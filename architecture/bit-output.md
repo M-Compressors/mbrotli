@@ -39,8 +39,9 @@ classDiagram
 non-flush fast blocks, `Delivery::encode` selects `FastEncoder::encode_block_append`
 for append destinations. The encoder seeds its carried bytes after the existing
 prefix and checks conversion of that offset into a bit position. The retained
-`Kernels::fast_append` entry passes its selected token through `S::vectorize` to
-the same q0/q1 algorithms used by the slice path.
+`Kernels::fast_append` entry passes its selected token to the `#[simd]`
+`encode_fragment`, which enters the token's feature context and runs the same
+q0/q1 algorithms used by the slice path.
 
 ```mermaid
 sequenceDiagram
