@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Move the repository to the public
+  [M-Compressors](https://github.com/M-Compressors) organization. The crate
+  metadata, README, documentation links and changelog now point to
+  <https://github.com/M-Compressors/mbrotli>.
 - Document mbrotli's first independent results in lzbench 2.4 on the Silesia
   corpus in the README and the benchmark results index.
 - Compile quality 10 and 11 compression without an attached prefix
@@ -29,7 +33,7 @@
   Output is unchanged. A program that uses both the linear and the ring paths
   carries about 60 KiB more decoder code.
 
-## [v0.5.3](https://github.com/Mnwa/mbrotli/releases/tag/v0.5.3) - 2026-09-28
+## [v0.5.3](https://github.com/M-Compressors/mbrotli/releases/tag/v0.5.3) - 2026-09-28
 
 - Add output into uninitialized memory: `EncoderSession::process_uninit`,
   `EncoderSessionOwned::process_uninit`, `Compressor::compress_to_uninit`,
@@ -148,7 +152,7 @@
   q10/q11 encoder that prices a block of at least 256 bytes retains 29 KiB
   more.
 
-## [v0.5.2](https://github.com/Mnwa/mbrotli/releases/tag/v0.5.2) - 2026-09-26
+## [v0.5.2](https://github.com/M-Compressors/mbrotli/releases/tag/v0.5.2) - 2026-09-26
 
 - Add a manually dispatched `release.yml` workflow that publishes `mbrotli`
   from a `v*` tag through crates.io trusted publishing. It refuses branches
@@ -217,7 +221,7 @@
   4.7 -> 4.5 us (C 4.3). Quality 3 on random 1 MiB is 8% faster; qualities
   5-9 run 0.4-2.5% fewer instructions.
 
-## [v0.5.1](https://github.com/Mnwa/mbrotli/releases/tag/v0.5.1) - 2026-09-26
+## [v0.5.1](https://github.com/M-Compressors/mbrotli/releases/tag/v0.5.1) - 2026-09-26
 
 - Stop the Miri workflow's `compressor::core::stream::tests` step from also
   running the nine `decompressor::core::stream::tests`. libtest filters match
@@ -262,7 +266,7 @@
   campaign over every target in both feature builds (631 million executions,
   no crashes) in `docs/correctness.md`.
 
-## [v0.5.0](https://github.com/Mnwa/mbrotli/releases/tag/v0.5.0) - 2026-09-25
+## [v0.5.0](https://github.com/M-Compressors/mbrotli/releases/tag/v0.5.0) - 2026-09-25
 
 - Add `EncoderSessionOwned` and `DecoderSessionOwned`: incremental sessions
   that take ownership of their `Compressor` or `Decompressor` instead of
@@ -373,13 +377,13 @@
 - Refresh all 111 encoder benchmark charts, quality tables and run provenance
   from the final 432-case September 14 sweep.
 
-## [v0.4.1](https://github.com/Mnwa/mbrotli/releases/tag/v0.4.1) - 2026-09-12
+## [v0.4.1](https://github.com/M-Compressors/mbrotli/releases/tag/v0.4.1) - 2026-09-12
 
 - Add `ParallelCompressor::reconfigure(EncoderConfig)` for subsequent batches.
   Validate before mutation, preserve workers for identical settings, and release
   idle workers when settings change while preserving parallel policy and backend.
 
-## [v0.4.0](https://github.com/Mnwa/mbrotli/releases/tag/v0.4.0) - 2026-09-12
+## [v0.4.0](https://github.com/M-Compressors/mbrotli/releases/tag/v0.4.0) - 2026-09-12
 
 - Add experimental std `FramedSeekReader` over `Read + Seek`, directory-derived
   `ResourceInfo`, lazy resource/footer metadata and streaming `ResourceReader`.
@@ -412,7 +416,7 @@
 - Correct framing documentation to describe the implemented framed decoder,
   its alloc-only support, and container validation alongside the std writer.
 
-## [v0.3.1](https://github.com/Mnwa/mbrotli/releases/tag/v0.3.1) - 2026-09-12
+## [v0.3.1](https://github.com/M-Compressors/mbrotli/releases/tag/v0.3.1) - 2026-09-12
 
 - Add experimental structured framed decoding with strict/Auto detection,
   reusable owners, incremental borrowed events, owned/Vec/slice results, and a
@@ -435,7 +439,7 @@
   reproducible validation. Preserve the README structure and a concise record
   of the eight-hour AFL campaign. Correct stale links and feature-check instructions.
 
-## [v0.3.0](https://github.com/Mnwa/mbrotli/releases/tag/v0.3.0) - 2026-09-11
+## [v0.3.0](https://github.com/M-Compressors/mbrotli/releases/tag/v0.3.0) - 2026-09-11
 
 - Regenerate benchmark charts from the recorded compression and decompression
   CSVs. Refresh the decoder overview, all twelve quality charts and their
@@ -628,45 +632,45 @@
   SIMD selection and portable logarithms. Disable default features for a fully
   std-free dependency tree; ordinary builds retain their existing behavior.
 
-## [v0.2.0](https://github.com/Mnwa/mbrotli/releases/tag/v0.2.0) - 2026-09-08
+## [v0.2.0](https://github.com/M-Compressors/mbrotli/releases/tag/v0.2.0) - 2026-09-08
 
 - Stop forcing the scalar SIMD fallback into production builds. Keep `Backend`
   public, make `Backend::SCALAR` private to unit tests, and retain the portable
   fallback automatically on targets without supported SIMD.
 
-## [v0.1.5](https://github.com/Mnwa/mbrotli/releases/tag/v0.1.5) - 2026-09-08
+## [v0.1.5](https://github.com/M-Compressors/mbrotli/releases/tag/v0.1.5) - 2026-09-08
 
 - Add a runnable parallel compression example to the crate-level documentation.
 
-## [v0.1.4](https://github.com/Mnwa/mbrotli/releases/tag/v0.1.4) - 2026-09-08
+## [v0.1.4](https://github.com/M-Compressors/mbrotli/releases/tag/v0.1.4) - 2026-09-08
 
 - Add parallel compression examples using scoped threads and Rayon, plus a quick-start example in the README.
 - Fix parallel compression documentation examples so they compile and run with default features.
 
-[Full diff](https://github.com/Mnwa/mbrotli/compare/v0.1.3...v0.1.4)
+[Full diff](https://github.com/M-Compressors/mbrotli/compare/v0.1.3...v0.1.4)
 
-## [v0.1.3](https://github.com/Mnwa/mbrotli/releases/tag/v0.1.3) - 2026-09-08
+## [v0.1.3](https://github.com/M-Compressors/mbrotli/releases/tag/v0.1.3) - 2026-09-08
 
 - Add `BatchConfig::auto` to size in-memory staging for parallel compression automatically while respecting configured memory limits.
 - Add a complete staging-memory estimate to help callers choose explicit memory budgets.
 
-[Full diff](https://github.com/Mnwa/mbrotli/compare/v0.1.2...v0.1.3)
+[Full diff](https://github.com/M-Compressors/mbrotli/compare/v0.1.2...v0.1.3)
 
-## [v0.1.2](https://github.com/Mnwa/mbrotli/releases/tag/v0.1.2) - 2026-09-08
+## [v0.1.2](https://github.com/M-Compressors/mbrotli/releases/tag/v0.1.2) - 2026-09-08
 
 - Improve compression performance for small inputs, high-quality encoding, and repeated use of a compressor while preserving output bytes.
 - Add benchmark comparisons with other Brotli encoders and a guide to compatibility, memory-safety, and fuzzing checks.
 
-[Full diff](https://github.com/Mnwa/mbrotli/compare/v0.1.1...v0.1.2)
+[Full diff](https://github.com/M-Compressors/mbrotli/compare/v0.1.1...v0.1.2)
 
-## [v0.1.1](https://github.com/Mnwa/mbrotli/releases/tag/v0.1.1) - 2026-09-07
+## [v0.1.1](https://github.com/M-Compressors/mbrotli/releases/tag/v0.1.1) - 2026-09-07
 
 - Speed up compression through more efficient matching, SIMD processing, and buffer reuse while preserving output bytes.
 - Add automated API compatibility checks and separate fuzzing coverage for stable and experimental features.
 
-[Full diff](https://github.com/Mnwa/mbrotli/compare/v0.1.0...v0.1.1)
+[Full diff](https://github.com/M-Compressors/mbrotli/compare/v0.1.0...v0.1.1)
 
-## [v0.1.0](https://github.com/Mnwa/mbrotli/releases/tag/v0.1.0) - 2026-09-05
+## [v0.1.0](https://github.com/M-Compressors/mbrotli/releases/tag/v0.1.0) - 2026-09-05
 
 - Initial release: Brotli compression in safe Rust at quality levels 0–11, requiring Rust 1.89 or later.
 - Support reusable compressors, streaming readers and writers, and caller-scheduled parallel compression with memory or disk staging.

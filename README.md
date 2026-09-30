@@ -9,7 +9,7 @@ parallel compression when a workload benefits from it.
 
 [![Crates.io](https://img.shields.io/crates/v/mbrotli.svg)][crate]
 [![docs.rs](https://docs.rs/mbrotli/badge.svg)][api]
-[![Tests](https://github.com/Mnwa/mbrotli/actions/workflows/ci.yml/badge.svg?branch=master)][ci]
+[![Tests](https://github.com/M-Compressors/mbrotli/actions/workflows/ci.yml/badge.svg?branch=master)][ci]
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)][license]
 
 [Quick start](#quick-start) · [Benchmarks](#performance) · [`Read` / `Write`](#read-and-write-streaming) · [API guide][guide] · [Compatibility](#compatibility) · [Changelog][changelog]
@@ -470,7 +470,7 @@ The [development guide][development] covers local checks, coverage, and fuzzing.
 
 [crate]: https://crates.io/crates/mbrotli
 [api]: https://docs.rs/mbrotli
-[ci]: https://github.com/Mnwa/mbrotli/actions/workflows/ci.yml
+[ci]: https://github.com/M-Compressors/mbrotli/actions/workflows/ci.yml
 [license]: ./LICENSE
 [changelog]: ./CHANGELOG.md
 [guide]: ./docs/README.md

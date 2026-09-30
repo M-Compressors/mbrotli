@@ -355,10 +355,10 @@
 //! Cargo features are additive: another dependency can re-enable a codec or `std`.
 //! Leave `std` and `hotpath*` disabled throughout the dependency graph for a std-free build.
 //!
-//! [parallel]: https://github.com/Mnwa/mbrotli/blob/master/docs/parallel.md
-//! [decoder]: https://github.com/Mnwa/mbrotli/blob/master/architecture/decompressor.md
-//! [framed-decoder]: https://github.com/Mnwa/mbrotli/blob/master/architecture/framed-decoder.md
-//! [decoder-checks]: https://github.com/Mnwa/mbrotli/blob/master/architecture/decompressor-compatibility.md
+//! [parallel]: https://github.com/M-Compressors/mbrotli/blob/master/docs/parallel.md
+//! [decoder]: https://github.com/M-Compressors/mbrotli/blob/master/architecture/decompressor.md
+//! [framed-decoder]: https://github.com/M-Compressors/mbrotli/blob/master/architecture/framed-decoder.md
+//! [decoder-checks]: https://github.com/M-Compressors/mbrotli/blob/master/architecture/decompressor-compatibility.md
 // Resolve available APIs locally; unavailable APIs link to feature selection.
 #![cfg_attr(
     all(feature = "compression", feature = "experimental"),
