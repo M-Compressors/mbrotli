@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## [v0.5.4](https://github.com/M-Compressors/mbrotli/releases/tag/v0.5.4) - 2026-09-30
 
 - Enter the encoder's SIMD feature contexts through `#[simd]` from the new
   `fearless_simd_macros` dependency (enabled by `compression`) instead of
