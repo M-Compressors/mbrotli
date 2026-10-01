@@ -112,6 +112,33 @@ impl<const N: usize> BlockSplitter<N> {
         }
     }
 
+    /// Counts every byte of `symbols`, closing blocks as they fill.
+    ///
+    /// The same counts and the same block boundaries as one
+    /// [`add_symbol`](Self::add_symbol) per byte: a block is never full
+    /// between symbols, so the run is cut where the current block fills, and
+    /// only there is the histogram looked up again.
+    pub(crate) fn add_bytes(&mut self, mut symbols: &[u8]) {
+        while !symbols.is_empty() {
+            // At least one symbol per pass, should the invariant ever break.
+            let room = self
+                .target_block_size
+                .saturating_sub(self.block_size)
+                .max(1);
+            let (now, rest) = symbols.split_at(room.min(symbols.len()));
+            if let Some(histogram) = self.histograms.get_mut(self.curr_histogram_ix) {
+                for &symbol in now {
+                    histogram.add(usize::from(symbol));
+                }
+            }
+            self.block_size += now.len();
+            if self.block_size == self.target_block_size {
+                self.finish_block(false);
+            }
+            symbols = rest;
+        }
+    }
+
     /// Adds the block being gathered into the histogram at `target`.
     fn merge_current_into(&mut self, target: usize) {
         let current = self.curr_histogram_ix;
@@ -481,6 +508,46 @@ mod tests {
         }
         splitter.finish_block(true);
         splitter
+    }
+
+    #[test]
+    fn adding_runs_of_bytes_matches_adding_them_one_at_a_time() {
+        // Stretches of different character, so blocks open, merge and reuse
+        // types, cut into runs of every length from empty to several blocks.
+        let mut symbols = Vec::new();
+        for round in 0..30u32 {
+            let span = 300 + 97 * (round as usize % 7);
+            symbols.extend((0..span).map(|i| match round % 3 {
+                0 => (i % 5) as u8,
+                1 => (i * 31 % 251) as u8,
+                _ => 200,
+            }));
+        }
+        let expected = split_literals(&symbols);
+        for run in [1usize, 2, 7, 511, 512, 513, 1500, symbols.len()] {
+            let mut splitter =
+                BlockSplitter::<NUM_LITERAL_SYMBOLS>::new(256, 512, 400.0, symbols.len());
+            splitter.add_bytes(&[]);
+            for chunk in symbols.chunks(run) {
+                splitter.add_bytes(chunk);
+            }
+            splitter.finish_block(true);
+            assert_eq!(
+                splitter.split.num_types, expected.split.num_types,
+                "run {run}"
+            );
+            assert_eq!(
+                splitter.split.num_blocks, expected.split.num_blocks,
+                "run {run}"
+            );
+            assert_eq!(splitter.split.types, expected.split.types, "run {run}");
+            assert_eq!(splitter.split.lengths, expected.split.lengths, "run {run}");
+            assert_eq!(splitter.histograms.len(), expected.histograms.len());
+            for (actual, expected) in splitter.histograms.iter().zip(&expected.histograms) {
+                assert_eq!(actual.data, expected.data, "run {run}");
+                assert_eq!(actual.total_count, expected.total_count, "run {run}");
+            }
+        }
     }
 
     #[test]

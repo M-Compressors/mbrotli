@@ -1,19 +1,20 @@
-# Compression comparison — 2026-09-28
+# Compression comparison — 2026-10-01
 
 [Benchmark index](README.md) · [Results by quality](encoders/README.md)
 
 The [432-case CSV](encoder-comparison.csv) and
 [environment record](encoder-comparison-environment.json) describe the working
-tree based on `17b3d315`, recorded as `enc-2026-09-28`. The tree's
-uncommitted changes are in the decoder and the C ABI; encoder sources are
-those of the commit, which adds uninitialized-output methods to the
-compressor. Competitors are unchanged: Rust brotli 9.0.0, simd-brotli 10.0.1
-and Burli 0.3.3. The [size manifest](encoder-comparison-2026-09-28/sizes.csv)
-is archived with the run and is identical to that of the September 26 sweep
+tree based on `a3896d13`, recorded as `enc-2026-10-01`. The tree's
+uncommitted changes are in the greedy encoder (qualities 4 to 9): range stores
+that read one slice for the deep q7–q9 bucket shapes, one flat position and tag
+index for the tagged q5–q6 shapes, and slice-fed literal splitting in the
+meta-block builder. Competitors are unchanged: Rust brotli 9.0.0, simd-brotli
+10.0.1 and Burli 0.3.3. The [size manifest](encoder-comparison-2026-10-01/sizes.csv)
+is archived with the run and is identical to that of the September 28 sweep
 it replaces; the environment records source and executable hashes.
 
 This sweep ran as four corpus shards on separate cores, alongside the decoder
-sweep and the root API benchmarks: eight benchmark processes at once. See
+sweep: eight benchmark processes at once. See
 [interpretation limits](#interpretation-limits) before comparing its absolute
 timings with earlier single-core sweeps.
 
@@ -30,43 +31,45 @@ times. Higher speed and lower output are better.
 | Quality | mbrotli median speed / C ↑ | mbrotli median output / C ↓ |
 | --- | ---: | ---: |
 | 0 | 1.161× | 1.000× |
-| 1 | 1.167× | 1.000× |
-| 2 | 1.151× | 1.000× |
-| 3 | 1.066× | 1.000× |
-| 4 | 1.043× | 1.000× |
-| 5 | 0.975× | 1.000× |
-| 6 | 0.949× | 1.000× |
-| 7 | 0.966× | 1.000× |
-| 8 | 0.898× | 1.000× |
-| 9 | 2.868× | 1.000× |
-| 10 | 1.169× | 1.000× |
-| 11 | 1.231× | 1.000× |
+| 1 | 1.132× | 1.000× |
+| 2 | 1.142× | 1.000× |
+| 3 | 1.142× | 1.000× |
+| 4 | 1.090× | 1.000× |
+| 5 | 0.997× | 1.000× |
+| 6 | 0.950× | 1.000× |
+| 7 | 0.950× | 1.000× |
+| 8 | 0.914× | 1.000× |
+| 9 | 2.778× | 1.000× |
+| 10 | 1.124× | 1.000× |
+| 11 | 1.298× | 1.000× |
 
-mbrotli has a lower mean latency than C in 59 of 96 shared cases and the lowest
-mean among supported implementations in 48 of 96 cases. These counts compare
-point estimates, not statistical significance. In 37 cases, mbrotli's 95% mean
+mbrotli has a lower mean latency than C in 63 of 96 shared cases and the lowest
+mean among supported implementations in 50 of 96 cases. These counts compare
+point estimates, not statistical significance. In 44 cases, mbrotli's 95% mean
 timing interval is wholly below every competitor's interval. The medians also
 retain qualities where mbrotli is slower than C.
 
-For Alice at q4, mbrotli measures 83.65 MiB/s against C's 89.25 MiB/s, both
-producing 55,504 bytes; Burli measures 85.36 MiB/s with 57,813 bytes. At q5,
-mbrotli measures 53.38 MiB/s against C's 57.61 MiB/s, both producing 52,809
-bytes. At q11, mbrotli measures 1.38 MiB/s against C's 1.10 MiB/s, both
-producing 46,487 bytes; SIMD Brotli measures 1.29 MiB/s with 46,493 bytes.
+For Alice at q4, mbrotli measures 86.36 MiB/s against C's 83.22 MiB/s, both
+producing 55,504 bytes; Burli measures 87.01 MiB/s with 57,813 bytes. At q5,
+mbrotli measures 55.72 MiB/s against C's 61.64 MiB/s, both producing 52,809
+bytes. At q11, mbrotli measures 1.42 MiB/s against C's 1.02 MiB/s, both
+producing 46,487 bytes; SIMD Brotli measures 1.23 MiB/s with 46,493 bytes.
 
-Against the September 26 sweep every output size is unchanged, and every
-implementation, C included, is up to 6% slower in absolute terms on most corpora:
-the cost of sharing the cache and turbo budget with seven other benchmark
-processes, not of code changes. Ratios to C moved within this host's
-run-to-run variation (59 cases faster than C, against 58): per-quality
-medians shifted by 1-8% in both directions (q3 1.145× → 1.066×, q4 0.984× →
-1.043×, q9 2.605× → 2.868×). Empty input is the exception: mbrotli's
-geometric-mean speed there fell 16% while C's did not change, because its
-allocation-bound path is the most sensitive to the shared load. A single-core
-A/B of the same encoder against the commit before the uninitialized-output
-change, run the same day, measured mbrotli's empty-input latency at 26.8-28.4
-ns against 26.5-28.6 ns before, and a median mbrotli/C ratio change of +0.2%
-across all 96 cases.
+Against the September 28 sweep every output size is unchanged. Ratios to C
+moved within this host's run-to-run variation for a parallel sweep: 63 cases
+faster than C, against 59, and per-quality medians shifted by up to 7% in both
+directions (q3 1.066× → 1.142×, q4 1.043× → 1.090×, q8 0.898× → 0.914×, q10
+1.169× → 1.124×). Single cases moved by -22% to +40% relative to C, with
+the same spread on qualities 0-3, 10 and 11, which the code change does not
+reach (structured binary at q2 -22%, empty input at q11 +40%), so a single
+case in this sweep is not evidence of a change. The encoder changes target
+large inputs: the 1 MiB corpora here and whole-file benchmarks such as lzbench,
+where callgrind counts 13-15% fewer instructions at q7-q9 on the Silesia
+corpus (see the [changelog](../../CHANGELOG.md)). Cold inputs of 64 KiB to
+150 KiB use the sparse bucket layout and see only the meta-block change:
+callgrind on `alice29.txt` counts 0.9% fewer instructions at q5 and 1.6% more
+at q7, where the range store is now a call; on the 64 KiB random and
+structured inputs it counts 1.9-5.3% fewer at q5, q7 and q8.
 
 The [quality pages](encoders/README.md) retain all datasets, all implementations,
 and exact timings with 95% mean confidence bounds. Burli supports q0–q5 only.
@@ -82,7 +85,7 @@ greedy differential tests check byte identity with Google C separately.
 | Setting | Recorded value |
 | --- | --- |
 | Host | Intel Core i7-13700KF, x86_64, WSL2 |
-| Affinity | Four corpus shards, two per lane, on logical CPUs 0 and 2; four other lanes on CPUs 4-14 ran concurrently |
+| Affinity | Four corpus shards, one per lane, on logical CPUs 0, 2, 4 and 6; the decoder sweep's four lanes on CPUs 8-14 ran concurrently |
 | Rust | rustc 1.98.1; release defaults; runtime SIMD dispatch |
 | C compiler | GCC 11.4.0; vendored release defaults |
 | C Brotli | 1.2.0; commit `4508218e7fef90fa4273286f7a415065946f2c43` |
@@ -112,17 +115,17 @@ run; a single-core sweep is one command:
 
 ```sh
 cargo bench --manifest-path benchmarks/comparison/Cargo.toml --bench implementations --locked -- --test
-taskset -c 2 cargo bench --manifest-path benchmarks/comparison/Cargo.toml --bench implementations --locked -- --save-baseline enc-2026-09-28
-python3 benchmarks/comparison/report.py --baseline enc-2026-09-28 --csv docs/benchmarks/encoder-comparison.csv
+taskset -c 2 cargo bench --manifest-path benchmarks/comparison/Cargo.toml --bench implementations --locked -- --save-baseline enc-2026-10-01
+python3 benchmarks/comparison/report.py --baseline enc-2026-10-01 --csv docs/benchmarks/encoder-comparison.csv
 python3 benchmarks/comparison/quality_docs.py --csv docs/benchmarks/encoder-comparison.csv --environment docs/benchmarks/encoder-comparison-environment.json --report docs/benchmarks/encoder-comparison.md --output docs/benchmarks/encoders
-python3 benchmarks/comparison/plot.py --csv docs/benchmarks/encoder-comparison.csv --output docs/benchmarks/encoders/charts --subtitle 'i7-13700KF; working tree; 20 samples; 8 parallel lanes; 2026-09-28'
+python3 benchmarks/comparison/plot.py --csv docs/benchmarks/encoder-comparison.csv --output docs/benchmarks/encoders/charts --subtitle 'i7-13700KF; working tree; 20 samples; 8 parallel lanes; 2026-10-01'
 ```
 
 Plotting uses Matplotlib 3.10.8. Criterion extends slow cases to collect the
 requested samples. The exporter rejects incomplete matrices and mismatched
 input lengths. Export immediately after timing and archive `sizes.csv` with
 the named baseline: a later preflight replaces that shared manifest. This
-run's [size manifest](encoder-comparison-2026-09-28/sizes.csv) is checked in.
+run's [size manifest](encoder-comparison-2026-10-01/sizes.csv) is checked in.
 Raw samples remain local under `benchmarks/comparison/target/criterion/`.
 Chart regeneration reuses the CSV; it does not rerun timings.
 
@@ -137,8 +140,7 @@ so ratios to C are the comparable quantity. Affinity restricts CPU migration
 but does not control frequency, thermal state, or host scheduling.
 Implementation order is fixed. The lowest mean does not necessarily imply a
 statistically significant lead; confidence bounds do not capture every source
-of host or allocator variation. Builds of fuzz targets and profiling harnesses
-ran on logical CPUs 16-23 during part of the sweep.
+of host or allocator variation. Nothing else ran on the host during the sweep.
 
 The suite measures cold serial compression. Streaming, retained workspace,
 parallel tasks, dictionaries, and experimental formats have separate root API

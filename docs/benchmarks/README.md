@@ -24,11 +24,32 @@ the compressed size as a percentage of the input and matches for both.
 **14–20% faster** compression at -8 and -11, within 9% at lower levels, and
 decompression 3–10% behind C.
 
+### Local lzbench rerun (ours, not independent)
+
+To check compression changes against the published table we rebuilt lzbench
+2.4 from source with mbrotli taken from this repository, built as lzbench
+builds Rust codecs (fat LTO, one codegen unit, `x86-64` target CPU), and ran it
+on an Intel Core i7-13700KF under WSL2, one pinned core, on the same Silesia
+tar at window 22. Google Brotli comes from lzbench's own gcc 15 release binary
+on the same host. Compression speed, MB/s, best of three iterations, two runs
+each (2026-10-01):
+
+| Level | mbrotli `a3896d13` | mbrotli 2026-10-01 tree | Google Brotli (gcc 15) |
+| ----: | -----------------: | ----------------------: | ---------------------: |
+| -8    | 21.6–21.9 | 23.1 | 24.4 |
+| -5    | 87.9–89.2 | 87.7–88.8 | 89.8–91.2 |
+| -2    | 215–216 | 218 | 235–236 |
+| -0    | 561–562 | 559–563 | 572–574 |
+
+Compressed sizes are identical in every column. This host is not the
+maintainer's EPYC, so the gaps differ from the table above: there mbrotli led
+at -8 and trailed at -2 and -5 by more.
+
 ## Our benchmarks
 
 | Compare | Results | Data |
 | --- | --- | --- |
-| Compression speed and size | [Qualities 0–11](encoders/README.md) | [CSV](encoder-comparison.csv), [conditions](encoder-comparison.md), [size manifest](encoder-comparison-2026-09-28/sizes.csv) |
+| Compression speed and size | [Qualities 0–11](encoders/README.md) | [CSV](encoder-comparison.csv), [conditions](encoder-comparison.md), [size manifest](encoder-comparison-2026-10-01/sizes.csv) |
 | Decompression speed on identical streams | [Source qualities 0–11](decoders/README.md) | [CSV](decoder-comparison.csv), [conditions](decoder-comparison.md) |
 
 ### Compression
@@ -47,13 +68,13 @@ output size. [Exact results and confidence bounds](encoders/README.md).
 Four decoders restore the same C-produced streams in 384 cases. Quality is the
 source encoder's setting. Each bar is the median of eight C-time/decoder-time
 ratios; higher is faster. Burli decodes every quality. SIMD Brotli re-exports the
-Rust brotli decoder project and is omitted. [Exact results](decoders/README.md), [size manifest](decoder-comparison-2026-09-28/sizes.csv).
+Rust brotli decoder project and is omitted. [Exact results](decoders/README.md), [size manifest](decoder-comparison-2026-10-01/sizes.csv).
 
 ### How to interpret the results
 
 Published measurements use an Intel Core i7-13700KF under WSL2, generic mode,
 window 22, and cold native APIs including construction, allocation and disposal.
-Compression and decompression are dated 2026-09-28 and ran as parallel corpus
+Compression and decompression are dated 2026-10-01 and ran as parallel corpus
 shards, one benchmark process per core: absolute timings are a few percent
 below a single-core run, while ratios to C are comparable. See each
 report for provenance and limits; these are measurements of recorded builds.

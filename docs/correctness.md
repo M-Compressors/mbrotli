@@ -64,6 +64,35 @@ C-to-native round trip; `decoder-campaign.sh` covers decoder boundaries. Both
 stable and experimental builds are needed. See the [AFL guide](../fuzz/afl/README.md)
 and [target mechanics](../architecture/fuzzing.md).
 
+## Four-hour AFL campaign — 2026-10-01
+
+After the greedy-encoder changes of 2026-10-01 (slice-fed range stores for the
+deep q7–q9 bucket shapes, a flat position and tag index for q5–q6, slice-fed
+literal splitting in the meta-block builder), fresh builds of the working tree
+ran for **4 hours**: `campaign.sh` with `CAMPAIGN_PARALLEL=1` (24 stable and 26
+experimental compression-side targets) and `decoder-campaign.sh` (7 stable and
+8 experimental decoder targets), **65 AFL++ workers** on the
+i7-13700KF/WSL2 host's 24 threads, with the scripts' fixed 30 s and 5 s
+timeouts. Every worker ran its full 14,400 s.
+
+| Group | Workers | Executions |
+| --- | ---: | ---: |
+| Encoder, stable | 24 | 29,978,741 |
+| Encoder, experimental | 26 | 28,474,966 |
+| Decoder, stable | 7 | 148,112,839 |
+| Decoder, experimental | 8 | 179,724,677 |
+| **Total** | **65** | **386,291,223** |
+
+No crashes or correctness-oracle failures were recorded; stability stayed at or
+above 99.39%. `encoder_session` (stable) saved five hangs, none of them a loop
+or touching the changed code. Four are quality 11 over 128 KiB in 4 KiB chunks:
+one finishes in 12.7 s of CPU time standalone under instrumentation, 35.5 s of
+wall time on the oversubscribed host, above the 30 s timeout. The fifth is the
+quality 10, one-byte-chunk case of the 2026-09-27 campaign: 125 s of CPU time
+standalone, again search cost scaling with payload length. Both inputs exit
+cleanly. The committed regression corpus replayed cleanly through
+`cargo afl test` in both builds before the campaign.
+
 ## Decoder command-loop smoke campaign — 2026-09-30
 
 After the command-loop changes of 2026-09-30 (slice-cursor refill,

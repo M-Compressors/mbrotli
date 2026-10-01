@@ -2,6 +2,43 @@
 
 ## Unreleased
 
+- Cut the greedy encoder's per-position and per-literal work at qualities 4
+  to 9, where lzbench 2.4 had mbrotli compressing up to 9% slower than Google
+  Brotli. The deep, untagged bucket matchers (qualities 7 to 9) record the
+  positions a match covered by hashing eight-byte windows of one slice when
+  the range does not wrap the ring, instead of a bounds-checked masked read
+  per position; the shallow tagged ones (qualities 5 and 6) address a bucket's
+  position and tag with one flat index, as the reference does; and the greedy
+  meta-block builder hands a command's literals to the block splitter as one
+  slice, cut only where a block fills, and tracks the previous two bytes only
+  when it models literal contexts. Built the way lzbench builds Rust codecs
+  (fat LTO, one codegen unit), callgrind counts on the first 60 MB of
+  `silesia.tar` 2.8% fewer instructions at quality 4, 2.2% at quality 5, 1.6%
+  at quality 6, 12.9% at quality 7, 15.2% at quality 8 and 14.5% at quality 9
+  (on its first 10 MB, the `dickens` text: +0.4%, -1.0%, -0.6%, -9.6%, -13.4%
+  and -14.6%); qualities 0 to 3 and 10 and 11 are unchanged. Output is
+  byte-identical at every quality. In lzbench 2.4 built from source on an
+  i7-13700KF (WSL2, one pinned core, whole Silesia tar, window 22), quality 8
+  compresses at 23.1 MB/s where the previous commit did 21.6-21.9 MB/s
+  (Google Brotli from lzbench's gcc 15 release binary: 24.4 MB/s); qualities
+  0, 2 and 5 move within run-to-run noise (559-563, 218 and 87.7-88.8 MB/s
+  against 561-562, 215-216 and 87.9-89.2 MB/s; C: 572-574, 235-236 and
+  89.8-91.2 MB/s). The quality 2 gap is in the search's lazy-match path and
+  the bit writer's literal loop, both limited by register pressure; attempts
+  there, including an inline scalar match length that gained 2% without LTO,
+  did not survive lzbench's fat-LTO build.
+- Refresh the published encoder and decoder comparisons (`enc-2026-10-01`,
+  `dec-2026-10-01`; identical output and input sizes) and add a local lzbench
+  rerun to the benchmark index, kept apart from the independent results. The
+  comparison package's lockfile now records mbrotli 0.5.4 and its
+  `fearless_simd_macros` dependency, which `--locked` builds had refused since
+  0.5.4, and the chart test matches quality labels whole, so `Quality 1` no
+  longer finds `Quality 11` first.
+- Record a four-hour AFL campaign of every compression and decompression
+  target in both builds on the changed encoder (386 million executions, 65
+  workers): no crashes; five saved `encoder_session` timeouts are quality 10
+  and 11 search cost on an oversubscribed host and finish cleanly standalone.
+  See `docs/correctness.md`.
 - Cut the decoder command loop's instructions and branches. lzbench 2.4's
   decompression gap to Google Brotli came from running 19% more instructions
   and 33% more conditional branches than C (callgrind on the whole Silesia tar

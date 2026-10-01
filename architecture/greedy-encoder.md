@@ -300,6 +300,38 @@ graph TD
     ChainMatcher --> Slots["Vec of ChainSlot: grows when a bank is activated"]
 ```
 
+### Dense stores
+
+A dense store bumps the bucket's `u16` counter and writes the position into
+the slot below the previous one (`!count & (BLOCK - 1)`), plus the tag on
+tagged shapes. The shallow tagged shapes (q5 and q6, sixteen and thirty-two
+slots) address both tables with one flat index `key * BLOCK + slot`, masked to
+`BUCKETS * BLOCK`, a power of two checked at compile time; the deep untagged
+shapes keep the `[[u32; BLOCK]; BUCKETS]` row view. Measured with callgrind
+under lzbench's fat-LTO profile, the flat index is 1.3% and 1.6% fewer
+instructions at q5 and q6 and 0.9% more at q8, which is why it is limited to
+the tagged shapes.
+
+`DenseRun::store_range`, which records every position a match covered, reads
+its eight-byte hash inputs from one slice when the range does not wrap the
+ring and the slice reaches seven bytes past the range's last position. The
+positions then hash consecutive bytes, so `windows(8)` hands the same words
+`store` would read, without a bounds check per position; `store` itself may
+also read past the mask into the tail copy, so the two agree there too. A
+range that crosses the mask would read the tail where `store` reads the ring's
+start, and takes the per-position loop. Only the deep untagged shapes take
+the slice path: for the tagged q5 and q6 loop it measured 3% and 2% more
+instructions.
+
+```mermaid
+flowchart TD
+    range["store_range(start, end)"] --> deep{"BLOCK > 32<br/>(untagged q7–q9)?"}
+    deep -->|no| each["store each position:<br/>masked eight-byte read, dense_store"]
+    deep -->|yes| wraps{"start & mask + count <= mask + 1<br/>and data holds count + 7 bytes?"}
+    wraps -->|no| each
+    wraps -->|yes| slice["windows(8) over one slice:<br/>hash each word, dense_store"]
+```
+
 ### Compact key-map growth
 
 `KeyMap::reset` clears the existing words, then resizes only up to the larger of
@@ -795,6 +827,26 @@ flowchart TD
 Quality five may run the literal splitter per context instead, keeping one
 histogram per context of every block type and deciding on the total entropy
 change across all of them.
+
+Without contexts, `build_meta_block_greedy` hands each command's literal run
+to `BlockSplitter::add_bytes` as one slice whenever the run does not wrap the
+ring (`ringbuffer::contiguous`, bounded by the mask rather than the buffer
+length, since the tail copy past the mask is not the wrapped bytes). The
+splitter cuts the run where the current block fills, so its counts and block
+boundaries are those of one `add_symbol` per byte, and looks up the current
+histogram once per piece. The previous two bytes are tracked, and re-read
+after each copy, only when a context splitter is running. On the first 60 MB
+of `silesia.tar` this is 2.9% fewer instructions at q4 and 1–2% at q5 and q6.
+
+```mermaid
+flowchart TD
+    cmd["command: insert_len literals"] --> plain{"single literal context?"}
+    plain -->|yes| wrap{"run inside the mask?"}
+    wrap -->|yes| bytes["add_bytes(slice):<br/>pieces up to the block's end"]
+    wrap -->|no| sym["add_symbol per masked byte"]
+    plain -->|no| ctx["per literal: context(prev1, prev2),<br/>ContextBlockSplitter::add_symbol"]
+    ctx --> prev["track prev1, prev2;<br/>re-read them after a copy"]
+```
 
 The combined histograms are not materialised for the decision:
 `bits_entropy_of_sum` accumulates the summed counts in the same order

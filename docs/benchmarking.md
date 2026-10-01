@@ -96,16 +96,16 @@ python3 benchmarks/comparison/quality_docs.py \
 python3 benchmarks/comparison/plot.py \
   --csv docs/benchmarks/encoder-comparison.csv \
   --output docs/benchmarks/encoders/charts \
-  --subtitle 'i7-13700KF; working tree; 20 samples; 8 parallel lanes; 2026-09-28'
+  --subtitle 'i7-13700KF; working tree; 20 samples; 8 parallel lanes; 2026-10-01'
 ```
 
 `quality_docs.py` writes the index, twelve quality pages and their detailed
 charts. `plot.py` writes `overview.svg`, `throughput.svg` and `size.svg` into
 the same charts directory. All eight corpora contribute to the medians.
-The current encoder CSV is the September 28 sweep (`enc-2026-09-28`), with its
-[size manifest](benchmarks/encoder-comparison-2026-09-28/sizes.csv) archived.
-The decoder CSV is `dec-2026-09-28`, with its
-[size manifest](benchmarks/decoder-comparison-2026-09-28/sizes.csv). Both ran as
+The current encoder CSV is the October 1 sweep (`enc-2026-10-01`), with its
+[size manifest](benchmarks/encoder-comparison-2026-10-01/sizes.csv) archived.
+The decoder CSV is `dec-2026-10-01`, with its
+[size manifest](benchmarks/decoder-comparison-2026-10-01/sizes.csv). Both ran as
 [sharded runs](#sharded-runs). Each environment record identifies the measured
 source and binary; regenerating charts reuses those measurements and does not
 rerun the benchmark.

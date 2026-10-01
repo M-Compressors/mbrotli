@@ -1806,9 +1806,24 @@ fn dense_store<const BUCKETS: usize, const BLOCK: usize>(
     let current = *count;
     *count = current.wrapping_add(1);
     let slot = !usize::from(current) & (BLOCK - 1);
-    dense[key][slot] = ix;
-    if let Some(tags) = tags {
-        tags[key][slot] = tag;
+    if BLOCK > 32 {
+        dense[key][slot] = ix;
+        if let Some(tags) = tags {
+            tags[key][slot] = tag;
+        }
+        return;
+    }
+    // The shallow shapes store a tag beside every position: one flat index
+    // then addresses both tables, as the reference's does, where two
+    // bucket rows cost an address computation each. The mask is the table
+    // size, a power of two, so it proves the index in range.
+    const { assert!((BUCKETS * BLOCK).is_power_of_two()) };
+    let index = (key * BLOCK + slot) & (BUCKETS * BLOCK - 1);
+    if let Some(entry) = dense.as_flattened_mut().get_mut(index) {
+        *entry = ix;
+    }
+    if let Some(entry) = tags.and_then(|tags| tags.as_flattened_mut().get_mut(index)) {
+        *entry = tag;
     }
 }
 
@@ -2401,6 +2416,33 @@ impl<const HASH64: bool, const BUCKETS: usize, const BLOCK: usize> MatchRun
     }
 
     fn store_range(&mut self, data: &[u8], mask: usize, start: usize, end: usize) {
+        // A range that does not wrap the ring hashes consecutive bytes, so
+        // one slice covers every eight-byte read and none needs a check of
+        // its own. The reads may run past the mask into the tail copy, as
+        // `store`'s do; a range that wraps would read the tail where `store`
+        // reads the ring's start, and takes the loop below. Only the deep,
+        // untagged shapes take this path: the shallow tagged ones measured
+        // slower with it.
+        let masked = start & mask;
+        let count = end.saturating_sub(start);
+        if BLOCK > 32
+            && masked + count <= mask.saturating_add(1)
+            && let Some(bytes) = data.get(masked..masked + count + 7)
+        {
+            let mut tags = self.tags.as_deref_mut();
+            for (ix, word) in (start..end).zip(bytes.windows(8)) {
+                let hash = hash_with_tag::<HASH64, BUCKETS>(word, 0);
+                dense_store(
+                    self.num,
+                    self.dense,
+                    tags.as_deref_mut(),
+                    hash >> 8,
+                    ix as u32,
+                    hash as u8,
+                );
+            }
+            return;
+        }
         for ix in start..end {
             self.store(data, mask, ix);
         }
@@ -3049,6 +3091,75 @@ impl MatchFinder {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dense_stores_fill_a_bucket_downwards_through_either_index() {
+        // Sixteen slots take the flat index, sixty-four the bucket rows.
+        fn check<const BLOCK: usize>() {
+            let mut num = [0u16; 4];
+            let mut dense = [[0u32; BLOCK]; 4];
+            let mut tags = [[0u8; BLOCK]; 4];
+            let stores = BLOCK + 4;
+            for i in 0..stores {
+                dense_store(
+                    &mut num,
+                    &mut dense,
+                    Some(&mut tags),
+                    6,
+                    100 + i as u32,
+                    i as u8,
+                );
+            }
+            assert_eq!(num, [0, 0, stores as u16, 0]);
+            for i in stores - BLOCK..stores {
+                let slot = BLOCK - 1 - i % BLOCK;
+                assert_eq!(dense[2][slot], 100 + i as u32, "block {BLOCK} store {i}");
+                assert_eq!(tags[2][slot], i as u8, "block {BLOCK} store {i}");
+            }
+            for bucket in [0, 1, 3] {
+                assert!(dense[bucket].iter().all(|&position| position == 0));
+                assert!(tags[bucket].iter().all(|&tag| tag == 0));
+            }
+        }
+        check::<16>();
+        check::<64>();
+    }
+
+    #[test]
+    fn a_dense_store_range_records_what_single_stores_record() {
+        fn check<const HASH64: bool, const BLOCK: usize, const SLOTS: usize>() {
+            // A 1 KiB ring with a tail, so ranges end inside it, run up to
+            // the mask, wrap past it and start on a later lap.
+            let data: Vec<u8> = (0..1024 + 64)
+                .map(|i: usize| (i * 131 % 251) as u8 ^ (i >> 3) as u8)
+                .collect();
+            let mask = 1023;
+            for (start, end) in [
+                (0, 0),
+                (5, 200),
+                (1000, 1024),
+                (1000, 1100),
+                (3082, 3372),
+                (7, 3),
+            ] {
+                let mut ranged = DenseLayout::<256, BLOCK, SLOTS>::default();
+                let mut single = DenseLayout::<256, BLOCK, SLOTS>::default();
+                ranged
+                    .dense_run::<HASH64>()
+                    .store_range(&data, mask, start, end);
+                let mut run = single.dense_run::<HASH64>();
+                for ix in start..end {
+                    run.store(&data, mask, ix);
+                }
+                assert_eq!(ranged.num, single.num, "{start}..{end}");
+                assert_eq!(ranged.dense, single.dense, "{start}..{end}");
+                assert_eq!(ranged.dense_tags, single.dense_tags, "{start}..{end}");
+            }
+        }
+        check::<true, 64, { 256 * 64 }>();
+        check::<false, 64, { 256 * 64 }>();
+        check::<true, 16, { 256 * 16 }>();
+    }
 
     #[test]
     fn dense_runs_borrow_the_first_and_last_slots_of_the_owned_tables() {

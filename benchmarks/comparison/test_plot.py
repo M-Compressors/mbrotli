@@ -1,3 +1,4 @@
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -56,7 +57,9 @@ class PlotTests(unittest.TestCase):
             plt.close(fig)
             render(rows, output, "Test run")
             text = " ".join(ET.parse(output / "throughput.svg").getroot().itertext())
-            positions = [text.index(f"Quality {q}") for q in quality_order(rows)]
+            # "Quality 1" is a prefix of "Quality 10" and "Quality 11", so match
+            # the whole number.
+            positions = [re.search(rf"Quality {q}(?!\d)", text).start() for q in quality_order(rows)]
             self.assertEqual(positions, sorted(positions))
             paired = output / "paired.csv"
             paired.write_text("corpus,quality,before_ns,after_ns\n" + "".join(

@@ -31,6 +31,24 @@ pub(crate) struct Window<'a> {
     pub(crate) mask: usize,
 }
 
+/// Returns the `len` bytes at `position` as one slice when they do not wrap
+/// the ring, and `None` when the caller has to read them one masked index at
+/// a time.
+///
+/// The buffer extends past the mask with a tail copy and a margin, so a run
+/// crossing the mask could often be sliced, but it would read those rather
+/// than the wrapped bytes: the bound is the mask, not the buffer's length. An
+/// all-ones mask marks a flat buffer, which cannot wrap.
+#[inline(always)]
+pub(crate) fn contiguous(data: &[u8], position: usize, mask: usize, len: usize) -> Option<&[u8]> {
+    let start = position & mask;
+    let end = start.checked_add(len)?;
+    if end > mask.saturating_add(1) {
+        return None;
+    }
+    data.get(start..end)
+}
+
 /// The stretch of input one call processes.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) struct BlockSpan {
@@ -319,6 +337,21 @@ pub(crate) const fn wrap_position(position: u64) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_run_is_one_slice_only_while_it_stays_inside_the_mask() {
+        let data: Vec<u8> = (0..24u8).collect();
+        assert_eq!(contiguous(&data, 3, 15, 4), Some(&data[3..7]));
+        // Up to the mask exactly, from a later lap.
+        assert_eq!(contiguous(&data, 16 + 12, 15, 4), Some(&data[12..16]));
+        assert_eq!(contiguous(&data, 12, 15, 0), Some(&data[12..12]));
+        // Crossing the mask would read the tail, not the wrapped bytes.
+        assert_eq!(contiguous(&data, 13, 15, 4), None);
+        // A flat buffer cannot wrap, but it still ends.
+        assert_eq!(contiguous(&data, 20, usize::MAX, 4), Some(&data[20..24]));
+        assert_eq!(contiguous(&data, 21, usize::MAX, 4), None);
+        assert_eq!(contiguous(&data, usize::MAX, usize::MAX, 2), None);
+    }
 
     /// Builds a window the way `ComputeRbBits` would for `lgwin` and `lgblock`.
     fn ring(lgwin: usize, lgblock: usize) -> RingBuffer {
