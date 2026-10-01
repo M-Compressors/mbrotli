@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Bump hotpath to 0.28
 - Cut the greedy encoder's per-position and per-literal work at qualities 4
   to 9, where lzbench 2.4 had mbrotli compressing up to 9% slower than Google
   Brotli. The deep, untagged bucket matchers (qualities 7 to 9) record the

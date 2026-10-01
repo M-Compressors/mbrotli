@@ -47,7 +47,7 @@ optional = true
 # the proc-macro crate into its tree; every `#[hotpath::measure]` anchor in
 # `src/` is written as `#[cfg_attr(feature = "hotpath", hotpath::measure)]`.
 [dependencies.hotpath]
-version = "0.27"
+version = "0.28"
 optional = true
 
 [dev-dependencies]
