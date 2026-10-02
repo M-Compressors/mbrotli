@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## [v0.5.5](https://github.com/M-Compressors/mbrotli/releases/tag/v0.5.5) - 2026-10-02
 
 - Fix redundant crate-documentation type links rejected by Rust 1.99's strict
   rustdoc checks, preserving feature-dependent destinations. CI also checks

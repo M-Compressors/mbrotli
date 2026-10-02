@@ -71,7 +71,7 @@ checksum = "3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2"
 
 [[package]]
 name = "mbrotli"
-version = "0.5.4"
+version = "0.5.5"
 dependencies = [
  "fearless_simd",
  "fearless_simd_macros",
@@ -90,7 +90,7 @@ dependencies = [
 
 [[package]]
 name = "mbrotli-ffi"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "mbrotli",
  "thiserror",
