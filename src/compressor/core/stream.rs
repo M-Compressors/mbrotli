@@ -158,6 +158,12 @@ impl StreamState {
         }
     }
 
+    /// Returns the input one block holds: the most a stream gathers before
+    /// it has to encode, which is when C's `UpdateSizeHint` runs.
+    pub(super) const fn block_limit(&self) -> usize {
+        if self.flint { 2 } else { self.limit }
+    }
+
     /// Drains output first, then borrows complete blocks or stages an undecided tail.
     /// A full final block is held on Process until a following byte or Finish is known.
     pub(super) fn process(
@@ -183,7 +189,7 @@ impl StreamState {
             {
                 break EncoderStatus::NeedsInput;
             }
-            let limit = if self.flint { 2 } else { self.limit };
+            let limit = self.block_limit();
             let take = (limit - buffers.staging.len()).min(input.len() - consumed);
             let at_end = consumed + take == input.len();
             let restart = self.flint

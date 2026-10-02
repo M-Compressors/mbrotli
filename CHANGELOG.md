@@ -2,6 +2,52 @@
 
 ## Unreleased
 
+- Infer the size hint of a stream of unknown length the way C's
+  `BrotliEncoderCompressStream` does. `UpdateSizeHint` runs right before C first
+  encodes — when an input block fills or a flush or finish is requested — and
+  takes the buffered bytes plus the caller's remaining input; mbrotli kept the
+  hint at zero for the whole stream instead. Qualities 4 to 9 choose their match
+  finder (H4/H54, H5/H6) and the complex static context map from that hint, so a
+  body of a mebibyte or more handed to a session in one call (what async
+  adapters such as async-compression and tower-http's `CompressionLayer` do)
+  compressed worse than C: on a 1 MiB JSON body, 233096 bytes instead of C's
+  216281 at quality 4 (+7.8%) and +2.7-3.4% at qualities 5-9. Sessions,
+  `EncoderWriter`/`EncoderReader` and framed resources of unknown length now
+  emit C's bytes for every call sequence covered by `tests/size_hint.rs`,
+  including an empty first flush. Storage (match-finder layout, quick-table
+  variant, window capacity) is sized for the inferred total only when the first
+  encode is a finish of at most 4 KiB: a flushed or block-filled stream goes on,
+  and above 4 KiB storage sized for the total measured up to 24% slower on JSON
+  and HTML than storage sized for an unknown total. Codec-level, a fresh
+  `Compressor` per body (`Process` then `Finish`, 4 KiB output slices, one
+  pinned core, best of three): 1 KiB JSON at quality 2 7.0 -> 5.3 us, quality 4
+  19.6 -> 16.0 us, quality 5 34.3 -> 21.5 us, quality 6 63.3 -> 21.1 us
+  (C: 4.4, 15.2, 17.6, 17.9 us); 2-50 KiB JSON and HTML at qualities 2-6 within
+  3% of before except quality 3 JSON near 10 KiB (+4-5%). `InputSize::Exact`
+  streams and one-shot calls are unchanged.
+- Choose the quality 5 and 6 match-finder table layout from what the first
+  block holds when the input size is known (one-shot calls, `InputSize::Exact`
+  sessions). The dense table costs a 1-2 MiB clear and pays off with the number
+  of stores, which depends on the data: text, markup, JSON and binary formats
+  store at almost every position, repetitive input almost never. 256 sampled
+  eight-byte windows now classify the block: ordinary data takes the dense table
+  from 8 KiB at quality 5 and 16 KiB at quality 6 (was 32 and 128 KiB),
+  repetitive data keeps the on-demand layout when the block covers at least
+  half the input, and incompressible data keeps the old limits. Cold one-shot
+  `Compressor::compress`, one core, best of five, against the previous commit:
+  JSON, HTML, English text, map tiles and a binary AST at quality 5 8-16 KiB
+  0.79-0.97 of the previous time, at quality 6 16-64 KiB 0.77-0.97; runs of one
+  byte, `backward65536` and `quickfox_repeated` at quality 5 32-128 KiB
+  0.24-0.56 and at quality 6 128 KiB 0.24-0.32 (`backward65536` cycled to
+  128 KiB at quality 6: 69.4 -> 21.2 us, C 23.7 us). The sample costs 0.3-1 us
+  per stream from 8 or 16 KiB, measurable only on repetitive input whose layout
+  it leaves unchanged (+4-8% on 5-15 us compressions). Output is unchanged.
+- Allocate the full quick (H2/H3/H4/H54) match-finder table only once the
+  encoder knows its size — in the constructor for a declared size, at size
+  inference for a session of unknown length — instead of in the matcher's
+  constructor, so a session that swaps in the small-input matcher for a short
+  body does not allocate and free a zeroed table of up to 4 MiB. The table is
+  still allocated before the window, where it gets fresh zero pages.
 - Bump hotpath to 0.28
 - Cut the greedy encoder's per-position and per-literal work at qualities 4
   to 9, where lzbench 2.4 had mbrotli compressing up to 9% slower than Google

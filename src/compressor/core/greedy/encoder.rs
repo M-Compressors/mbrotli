@@ -127,6 +127,27 @@ impl GreedyEncoder {
         params: &CompressParams,
         size_hint: usize,
     ) -> BrotliResult<Self> {
+        Self::expecting(level, params, size_hint, size_hint)
+    }
+
+    /// Creates an encoder whose output follows `size_hint`, as [`Self::new`],
+    /// but whose storage is sized for `expected_input` bytes (zero if
+    /// unknown).
+    ///
+    /// The two differ for a stream of unknown length: the hint C infers when
+    /// it first encodes decides the match finder and context modelling, but
+    /// the stream may go on past it, so the matcher's layout and the window's
+    /// capacity must not take it as the total.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::new`].
+    pub(crate) fn expecting(
+        level: Level,
+        params: &CompressParams,
+        size_hint: usize,
+        expected_input: usize,
+    ) -> BrotliResult<Self> {
         let resolved = GreedyParams::new(params, size_hint)?;
         let (last_bytes, last_bytes_bits) = resolved.window.header();
         #[cfg(feature = "experimental")]
@@ -136,7 +157,14 @@ impl GreedyEncoder {
             (last_bytes, last_bytes_bits)
         };
         let mut ringbuffer = RingBuffer::new(resolved.rb_bits(), resolved.lgblock);
-        ringbuffer.expect_input(size_hint);
+        ringbuffer.expect_input(expected_input);
+        let mut matcher = MatchFinder::for_input(resolved.hasher, expected_input);
+        // A stream that knows its size takes its table now, before the window
+        // is allocated; one of unknown size takes it once the size is
+        // inferred, from `materialize`.
+        if size_hint != 0 {
+            matcher.materialize();
+        }
         let references = ReferenceState::default();
         #[cfg(feature = "experimental")]
         let references = {
@@ -150,7 +178,7 @@ impl GreedyEncoder {
             kernels: dispatch::select(level),
             params: resolved,
             ringbuffer,
-            matcher: MatchFinder::for_input(resolved.hasher, size_hint),
+            matcher,
             is_prepared: false,
             matcher_dirty: false,
             cleanup: Cleanup::Nothing,
@@ -189,24 +217,40 @@ impl GreedyEncoder {
     /// A workspace compares these against what a new call would resolve to:
     /// equal parameters mean an equally shaped encoder, so resetting this one
     /// gives the same stream a fresh one would.
-    /// Re-aims the encoder at the stream `fresh` describes.
+    /// Re-aims the encoder at the stream `fresh` describes, sizing storage
+    /// for `expected_input` bytes as [`Self::expecting`] does.
     ///
     /// Returns `false`, changing nothing, when `fresh` is another shape or
-    /// its size hint would have selected another match finder, in which
-    /// case the caller has to build a new encoder. Otherwise the size hint
-    /// is taken over — it decides literal context modelling and the
-    /// matcher's next layout — and the encoder is as good as one built for
-    /// `fresh`, once reset.
-    pub(crate) fn retarget(&mut self, fresh: GreedyParams) -> bool {
+    /// `expected_input` would have selected another match finder variant, in
+    /// which case the caller has to build a new encoder. Otherwise the size
+    /// hint is taken over — it decides literal context modelling — along
+    /// with the expected input the matcher's next layout is chosen for, and
+    /// the encoder is as good as one built for them, once reset.
+    pub(crate) fn retarget(&mut self, fresh: GreedyParams, expected_input: usize) -> bool {
         if !self.params.same_shape(&fresh) {
             return false;
         }
-        if !self.matcher.retarget(fresh.hasher, fresh.size_hint) {
+        if !self.matcher.retarget(fresh.hasher, expected_input) {
             return false;
         }
-        self.ringbuffer.expect_input(fresh.size_hint);
+        self.ringbuffer.expect_input(expected_input);
         self.params = fresh;
         true
+    }
+
+    /// Allocates the match finder's tables, for a stream whose size has just
+    /// been inferred and which has not yet encoded any input.
+    pub(crate) fn materialize(&mut self) {
+        self.matcher.materialize();
+    }
+
+    /// Takes over the bits `previous`, a stream that has encoded no input,
+    /// has already committed: the window header, which an empty flush writes
+    /// out and byte-aligns.
+    pub(crate) const fn adopt_stream_head(&mut self, previous: &Self) {
+        debug_assert!(previous.input_pos == 0);
+        self.last_bytes = previous.last_bytes;
+        self.last_bytes_bits = previous.last_bytes_bits;
     }
 
     /// Restores the encoder to the state its constructor left it in.

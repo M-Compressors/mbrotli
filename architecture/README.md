@@ -48,12 +48,12 @@ FFI do not appear in public signatures. Each codec compiles independently.
 
 | Specification | Scope |
 | --- | --- |
-| [Compressor](compressor.md) | Public API, sessions, I/O, dispatch and errors. |
+| [Compressor](compressor.md) | Public API, sessions, C-compatible size hint inference for streams of unknown length, I/O, dispatch and errors. |
 | [Encoder workspace](encoder-workspace.md) | Retained storage, reset, accounting and backpressure. |
 | [Bit output](bit-output.md) | Initialized destinations, bit operations and overflow. |
 | [Serial output identity](universal-encoding.md) | Shared scheduling, empty finalization and C compatibility. |
 | [Fast encoder](fast-encoder.md) | Qualities 0–1: fragments, entropy coding and SIMD scans. |
-| [Greedy encoder](greedy-encoder.md) | Qualities 2–9: fixed boxed tables, in-place compact-map rehashing and buffer migration, store-rate-driven mid-stream sparse-to-dense promotion, bounded pool growth, dense stores and slice-fed range stores, match scoring and meta-blocks with slice-fed literal splitting. |
+| [Greedy encoder](greedy-encoder.md) | Qualities 2–9: fixed boxed tables, in-place compact-map rehashing and buffer migration, first-block sampling for the q5/q6 dense-table choice, store-rate-driven mid-stream sparse-to-dense promotion, bounded pool growth, dense stores and slice-fed range stores, match scoring and meta-blocks with slice-fed literal splitting. |
 | [High-quality encoder](hq-encoder.md) | Qualities 10–11: tree search, command-price rows, ordered starts and clustering. |
 | [Owned sessions](owned-sessions.md) | Lifetime-free raw and framed sessions sharing the borrowed state machines and release paths; `reinit` and input-free `flush`/`finish`. |
 | [Parallel compression](parallel-compression.md) | Planning, encoder reconfiguration, caller-run tasks, staging and assembly. |

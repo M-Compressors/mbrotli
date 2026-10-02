@@ -277,7 +277,7 @@ what `prepare` is told about it:
 | --- | --- | --- | --- | --- |
 | Compact | one-shot input of at most 1024 bytes while the matcher is still compact | `KeyMap`, sized two entries per input byte, probed once per position: counter and chain head per bucket | one chain: `Vec<u64>` of `position | next << 32`, one node pushed per store in front of its bucket's previous node; a search walks the newest `BLOCK` nodes, the order a block scan takes | fill a map of at most 16 KiB |
 | Sparse | a known input below the dense limit; an input of unknown length on a deep shape; unless the dense table already exists | a boxed `[u64; BUCKETS]`: generation stamp, block index with a starter flag, counter | typed pools: `Vec<[u32; 4]>` starters that grow into `Vec<[u32; BLOCK]>` full blocks on their fifth store, tags alongside for tagged shapes | bump the generation |
-| Dense | the matcher's size hint is at least the shape's dense limit — a thirty-second of the table for the tagged q5 shape and a sixteenth for q6 (32 KiB and 128 KiB of input); for deep q7–q9 shapes an eighth of it on the matcher's first stream (1, 2 and 4 MiB) and a sixty-fourth from its second stream on (256 KiB, 256 KiB and 512 KiB) — or the length is unknown on a tagged shape, or the matcher already holds the dense table; a sparse stream also switches mid-stream at a checkpoint once its store rate repays the clear (see [Mid-stream promotion](#mid-stream-promotion)) | `[u16; BUCKETS]` counters | one flat `Box<[u32; SLOTS]>` with `SLOTS = BUCKETS * BLOCK`, viewed as `[[u32; BLOCK]; BUCKETS]` for a run, zeroed once per matcher | zero the counters |
+| Dense | on a tagged shape that knows its input, the first block samples as ordinary data and the input is at least a hundred-and-twenty-eighth of the table (8 KiB at q5, 16 KiB at q6), or it does not sample as repetitive data covering half the input and the size hint reaches the dense limit — a thirty-second of the table for q5 and a sixteenth for q6 (32 KiB and 128 KiB of input) (see [Sampling the first block](#sampling-the-first-block)); for deep q7–q9 shapes an eighth of it on the matcher's first stream (1, 2 and 4 MiB) and a sixty-fourth from its second stream on (256 KiB, 256 KiB and 512 KiB) — or the length is unknown on a tagged shape, or the matcher already holds the dense table; a sparse stream also switches mid-stream at a checkpoint once its store rate repays the clear (see [Mid-stream promotion](#mid-stream-promotion)) | `[u16; BUCKETS]` counters | one flat `Box<[u32; SLOTS]>` with `SLOTS = BUCKETS * BLOCK`, viewed as `[[u32; BLOCK]; BUCKETS]` for a run, zeroed once per matcher | zero the counters |
 
 `BucketMatcher` owns only `Layout<BUCKETS, BLOCK, SLOTS>`, the retargetable size hint,
 and the saturating stream count. Each enum variant owns its own storage:
@@ -470,6 +470,48 @@ The dense decision uses the current retargetable size hint, not `prepare`'s
 on-demand layouts on deep shapes. Deep-shape thresholds also depend on whether
 the matcher has been reused. These layout choices preserve candidate order and
 output; allocation timing is not part of the public reuse contract.
+
+### Sampling the first block
+
+Which layout is cheaper depends on how many positions the stream stores, and
+that depends on the data more than on its length: text, markup, JSON and
+binary formats store at almost every position, incompressible input about a
+third as often once the random-data heuristic skips, and repetitive input
+almost never, because long copies cover it. A tagged shape (q5, q6) whose size
+is known therefore samples the block `prepare` receives
+(`greedy::probe::sample_store_outlook`) once the input reaches
+`ORDINARY_DENSE_LIMIT`, a hundred-and-twenty-eighth of the table:
+
+```mermaid
+flowchart TD
+    start[BucketMatcher::wants_dense] --> deep{deep shape or unknown length?}
+    deep -->|yes| length[size hint at least dense_limit]
+    deep -->|no| small{input below table/128?}
+    small -->|yes| sparse[on demand]
+    small -->|no| sample[sample 256 eight-byte windows of the first block]
+    sample --> rep{half the windows repeat?}
+    rep -->|yes, block at least half the input| sparse
+    rep -->|yes, input outruns the block| length
+    rep -->|no| entropy{at least 7.6 bits per sampled byte?}
+    entropy -->|incompressible| length
+    entropy -->|ordinary| dense[dense table]
+    sample -->|block shorter than a window| length
+```
+
+Repeats are counted against a 4096-bit filter, so a stray collision adds about
+one window in thirty; ordinary data repeats at most an eighth of its windows at
+this sampling and repetitive data four fifths or more. The byte histogram for
+the entropy is built only after the repeat check, because a run of one byte
+would chain every increment through one counter. The sample costs 0.3-1 us,
+once per stream. Cold one-shot measurements behind the limits: ordinary data
+took the dense table faster from 8 KiB at q5 (0.84-0.94 of the on-demand time)
+and 16 KiB at q6 (0.86-0.98), 0.72-0.89 from 32 KiB; repetitive data lost two
+to twelve times with it at every size to 128 KiB, but `backward65536` cycled
+to 256 KiB, whose first 64 KiB are runs, stores along its 64 KiB-distant copies
+and lost half again its time without the table, hence the coverage condition.
+Deep shapes measured within a few per cent either way on ordinary data and
+split on repetitive data, so they keep the length rule. Like every layout
+choice this changes no output.
 Sparse pools normally grow geometrically. When a pool has promoted 1024
 starter blocks, `reserve_populated_blocks` reserves from the current size hint to avoid
 repeatedly copying a populated pool. The estimate is one full block per sixteen
@@ -484,7 +526,19 @@ new hint resolves to the same shape and the same match-finder variant takes
 the hint over (`GreedyEncoder::retarget`, `MatchFinder::retarget`) instead
 of being rebuilt, so a compressor fed inputs of varying lengths keeps its
 tables; only a hint that crosses the quick matchers' 2048-byte compact
-boundary, or changes the plan, still rebuilds.
+boundary, or changes the plan, still rebuilds. A session of unknown length
+retargets the same way when it infers its hint before its first encode
+(`Encoder::retarget_size_hint`), with the hint and the expected input passed
+separately: the hint resolves `GreedyParams` (plan and context-map gate), the
+expected input the finder variant, layout and window capacity
+(`GreedyEncoder::expecting`, `GreedyEncoder::retarget(fresh, expected_input)`).
+A rebuild there takes over the header bits an empty first flush already wrote
+(`GreedyEncoder::adopt_stream_head`). `QuickMatcher::new` allocates no full
+table: the constructor of an encoder that knows its size, or
+`retarget_size_hint` for one that inferred it, calls `materialize` before the
+window is allocated, so a matcher rebuilt for the quick small-input variant
+costs no zeroed allocation and the table still comes from fresh pages;
+`prepare` allocates one only if neither ran.
 The table is kept flat on purpose: a zero-filled vector of integers, converted
 to a boxed array at its final length,
 comes straight from the allocator's zeroed pages, whereas a vector of arrays
@@ -530,8 +584,8 @@ union of them:
 ```mermaid
 flowchart LR
     prepare[prepare: one-shot? input length; size hint; tables held] -->|still compact and at most 1024 bytes| compact[Compact: key map + one chain of nodes]
-    prepare -->|known short input, or unknown length on a deep shape| sparse[Sparse: stamped entries + typed pools]
-    prepare -->|size hint at least the dense limit for a first or a later stream, unknown length on a tagged shape, or table held| dense[Dense: counters and flat key-addressed blocks]
+    prepare -->|known short input, repetitive or incompressible tagged input below the limit, or unknown length on a deep shape| sparse[Sparse: stamped entries + typed pools]
+    prepare -->|ordinary tagged input from table/128, size hint at least the dense limit, unknown length on a tagged shape, or table held| dense[Dense: counters and flat key-addressed blocks]
     compact --> run[Matcher::visit_run binds one concrete run for the block]
     sparse --> run
     sparse --> checkpoint{checkpoint: store rate repays the clear?}

@@ -197,7 +197,10 @@ Serial API identity requires the same encoder configuration, dictionary,
 declared size, flush boundaries, and offset. For one-shot equivalence, declare
 the exact input size, keep offset zero, and avoid explicit flushes. Chunk size,
 destination shape, workspace reuse, and SIMD selection do not change bytes.
-Unknown size can change match-finder selection.
+Unknown size can change match-finder selection: like C's streaming API, a
+session of unknown length infers its size hint from the bytes it holds plus
+the current call's input when it first encodes, so a body passed in one call
+compresses as if its length had been declared.
 
 The ordinary encoder differential uses the pinned C encoder's streaming API
 with matching settings and block scheduling. C's native one-shot API can rewrite

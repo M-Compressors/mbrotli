@@ -29,8 +29,9 @@ quality 3 or higher; dictionary operations require quality 5 or higher.
 
 `EncoderConfig::lower(size_hint)` builds private `CompressParams`. One-shot
 operations declare the complete input length. Sessions and adapters use
-`StreamConfig`: unknown size gives hint zero, while `InputSize::Exact` supplies
-the declared length. The hint can change the quality 4/5 matcher selection.
+`StreamConfig`: `InputSize::Exact` supplies the declared length, while an unknown
+size starts at hint zero and is inferred before the first encode (see
+[Size hint inference](#size-hint-inference)). The hint can change the quality 4–9 matcher selection.
 Nonzero offsets require `experimental` and quality 2 or higher.
 
 ## Ownership and reuse
@@ -109,6 +110,93 @@ and byte padding, preserving the dictionary; an already aligned empty flush emit
 nothing. `Finish` emits the last block. Frequent flushes can increase output size.
 Equivalent configuration, dictionary, declared size, flush boundaries and offset
 preserve bytes across APIs, chunk sizes, reuse and backends.
+
+## Size hint inference
+
+C's `BrotliEncoderCompressStream` runs `UpdateSizeHint` right before every
+`EncodeData` while `BROTLI_PARAM_SIZE_HINT` is still zero, setting it to the
+unprocessed ring-buffer bytes plus the caller's remaining `available_in`
+(capped at 2^30). Its first `EncodeData` comes when the current input block
+fills or a flush or finish is requested, and its hasher is set up there. The
+hint then picks H4 or H54 at quality 4, H5 or H6 at 5–9, and gates the complex
+static context map at 5–9 (all at one mebibyte). Async adapters build an encoder
+per body without a length and hand it the whole body in one call, so this
+inference decides their output.
+
+`core::session::OperationState` mirrors it. A stream started with
+`InputSize::Unknown` holds `SizeHint::Open`; `Exact` starts `Settled`. Before
+the scheduler runs, `infer_size_hint` checks whether this call is the one C
+would first encode in: staged bytes plus this call's input reach
+`StreamState::block_limit` (the block size, or two bytes for a continuation's
+flint), or the operation is not `Process`. If so and anything is known, it
+settles the hint at `staging + input` and calls `Compressor::resolve_size_hint`,
+which re-lowers the stream's parameters with that hint and asks the retained
+encoder to `retarget_size_hint`. Encoders that do not read the hint (fast,
+high-quality) ignore it.
+
+The greedy encoder takes two values. The inferred hint goes into `GreedyParams`
+and decides what reaches the bytes: the match finder plan and the context-map
+gate. The expected input sizes storage only — the matcher's quick/full variant
+and layout, and the window's capacity — and is the known total only when the
+first encode is a finish of at most `SIZED_STORAGE_LIMIT` (4 KiB); otherwise it
+stays zero (unknown), as before inference existed. After a flush or a full block
+the stream goes on, and above 4 KiB a fresh encoder sized for the known total
+measured slower on JSON and HTML than one sized for an unknown total (up to
++24% at qualities 2, 3 and 5 from 6 KiB, quality 6 from 10 KiB); at or below it
+the compact and quick slot maps and the on-demand bucket layouts win (1 KiB
+JSON at quality 6: 62 -> 22 us). A greedy encoder that has
+encoded no input retargets in place when the hint keeps its shape and the
+expected input its match-finder variant, and is otherwise rebuilt
+(`GreedyEncoder::expecting`) from the same level; the rebuilt encoder adopts the
+header bits an empty first flush may already have written, so the stream is not
+restarted.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Settled: InputSize::Exact
+    [*] --> Open: InputSize::Unknown
+    Open --> Open: Process below one block, or nothing known yet
+    Open --> Settled: block fills, Flush or Finish with input known
+    Settled --> [*]: release or reinit
+```
+
+```mermaid
+sequenceDiagram
+    participant Op as OperationState::run
+    participant C as Compressor
+    participant E as driver::Encoder
+    participant S as StreamState
+    Op->>Op: infer_size_hint(staging + input, operation)
+    alt Open and C would encode now
+        Op->>C: resolve_size_hint(stream, min(known, 2^30), Finish ? known : 0)
+        C->>C: stream_params(stream, hint)
+        C->>E: retarget_size_hint(level, params, expected_input)
+        alt greedy, same shape and finder variant
+            E->>E: GreedyEncoder::retarget(fresh, expected_input)
+        else greedy, new match finder
+            E->>E: GreedyEncoder::expecting + adopt_stream_head
+        end
+    end
+    Op->>S: process(encoder, buffers, input, output, operation)
+```
+
+Streams whose inferred hint resolves the same as zero emit the same bytes as
+before. A body of at most 4 KiB that is finished in the call that first encodes
+it now takes the small-input storage (quick H2–H4 slots, compact or sparse
+bucket tables) instead of tables sized for an unbounded stream.
+
+A full quick (H2/H3/H4/H54) table is not allocated by `QuickMatcher::new`. An
+encoder built for a known size allocates it in its constructor
+(`MatchFinder::materialize`); one built at `begin` for an unknown size allocates
+it in `retarget_size_hint`, after the retarget or rebuild, so a rebuild for the
+quick small-input variant discards no table. Either way the table is allocated
+before the window: allocated at the matcher's first preparation instead, after
+the window, it reused freed heap that `calloc` had to clear, 5-18% slower on
+8-50 KiB streams at qualities 2 and 3. Preparation still allocates a table that
+is missing, for streams that reach it without either.
+A failure here fails the session like any encode error. The framed compressor's
+resources share `OperationState`, so a resource of unknown length infers its hint
+from its first chunk the same way.
 
 ## I/O and finalization
 

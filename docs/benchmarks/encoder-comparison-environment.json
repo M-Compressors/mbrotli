@@ -1,7 +1,7 @@
 {
-  "date": "2026-10-01",
-  "baseline_commit": "a3896d1362b6d54057eebe5e9d5d7a0ef917355b",
-  "source_state": "Working tree based on baseline_commit with uncommitted greedy-encoder changes: slice-fed DenseRun::store_range for the untagged q7-q9 bucket shapes, one flat position/tag index in dense_store for the tagged q5-q6 shapes, slice-fed plain literal splitting (BlockSplitter::add_bytes) in the greedy meta-block builder, and the comparison package's lockfile updated to the current mbrotli 0.5.4 dependency set. Decoder sources unchanged from baseline_commit.",
+  "date": "2026-10-02",
+  "baseline_commit": "5f39a1d0e123292de72cc6630515aa46ef7f2216",
+  "source_state": "Working tree based on baseline_commit with uncommitted compressor changes: sessions of unknown length infer C's UpdateSizeHint size hint before their first encode, sizing storage for the inferred total only for a body of at most 4 KiB finished in that call; the full QuickMatcher table (q2-q4, H54) is allocated by MatchFinder::materialize once the size is known; and the q5/q6 tagged bucket matchers that know their input sample the first block (greedy::probe::sample_store_outlook) to choose the dense table from 8/16 KiB for ordinary data and to keep repetitive data on demand. One-shot calls, which these sweeps time, reach the first and last changes. Decoder sources unchanged from baseline_commit.",
   "c_revision": "4508218e7fef90fa4273286f7a415065946f2c43",
   "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)\nbinary: rustc\ncommit-hash: 48a229ceaefd4985c50990b14116b6d856af0985\ncommit-date: 2026-09-01\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.1\nLLVM version: 22.1.8",
   "c_compiler": "cc (Ubuntu 11.4.0-1ubuntu1~22.04.3) 11.4.0",
@@ -32,16 +32,16 @@
     "burli-decode": "0.3.3"
   },
   "sha256": {
-    "src/compressor/core/greedy/hashers.rs": "cc95e7153d748a4e089e369dc6f08b9fa0da3abd6943173a6facbc0022b45fa5",
+    "src/compressor/core/greedy/hashers.rs": "f1eb478a4712a838bd0d250dc0fe237038891b4696b021fa3be7ad8d244137a4",
     "src/compressor/core/greedy/backward_references.rs": "799326c4c280a2b4b158b34bd3f0fff608252e97bca018023242825496c038b9",
-    "src/compressor/core/greedy/encoder.rs": "d276b8a5d7ceed307c6744a5793fb60ecd8ac0c7ac4c3b3742c04a530e66ef33",
+    "src/compressor/core/greedy/encoder.rs": "8d60af9a9156b806a9558ecdabc826e2f27ae813009df7faa21b3b8c8289ba98",
     "src/shared/match_len.rs": "5bba6fa8ba55949c429df336bdbfae27c1f821a8427bfa9a088bb94c4755b859",
     "src/shared/dictionary/mod.rs": "1e6f2fa840cc8296b48e0d2431636385ab925bf7612238b3bc359d29b1aedb75",
     "src/shared/ringbuffer.rs": "de1232f5cedc6de4865363c08512e39e700763c0272c982f850218fac4ac81f5",
     "src/compressor/core/bound.rs": "87e8c0d3672fef64dd8be6fa92b5f69175bddd9ab5eed710079cefea9ef18ae6",
-    "src/compressor/encoder.rs": "9078aed43c8121787cea9e2b114013b72ddc1c84011a0cfccf9a939474ed4597",
-    "Cargo.toml": "81dbcda90229565158222f959bd581bf9b05fe203a35c3f8365e499d8484e63a",
-    "Cargo.lock": "a5e0fed4ceb18b430caf424e4bec8a792cc08b9e687414f3d845fcbf08536290",
+    "src/compressor/encoder.rs": "4c5e0b160d8032e254a576048a1e57871afdfd5088b78011d0080eb6e94021e9",
+    "Cargo.toml": "c813149b6f0d2ce669d99d270949eb3f7f17e5bbeb655a0eb95bbdb7c275980c",
+    "Cargo.lock": "5d0e3c2c47f241ae0a80a695eb9722e58e68b6a014f8bef88fafdbb8a9bb6ed4",
     "benchmarks/comparison/Cargo.toml": "71fdca7f059fb42e55b553ac414b98e2ab5fd20ff77e20a47b70d2f1cb97bb5f",
     "benchmarks/comparison/Cargo.lock": "1b3c78359503c5a076068a40930dec1a9c2114aa0f4653382d9de9ff940d5586",
     "benchmarks/comparison/src/core.rs": "4165ffb8a939cb60a150f7f50117f6d0d2303979aeeb782fa220f1e6ebcef7b8",
@@ -49,15 +49,20 @@
     "benchmarks/comparison/benches/implementations.rs": "4235d7819fcae8a1833fcb7fcbe8abccb7e827d25c4e8248cc6955f94ecab045",
     "brotli-ffi/build.rs": "c2c982f3c5fdf878664ac006b850d8be4885c801ebb37e7c9266a6cc62103064",
     "brotli-ffi/vendor/brotli/tests/testdata/alice29.txt": "7467306ee0feed4971260f3c87421154a05be571d944e9cb021a5713700c38f0",
-    "docs/benchmarks/encoder-comparison.csv": "02f23f99217fcc7bd78f9cd56d371ee0f52933903d730829c82157a5ae6c86b9",
+    "docs/benchmarks/encoder-comparison.csv": "8278d1e685128f8d48ba6d8617996eacede07c1faadbeb26d16c5b23ddaa9bda",
     "benchmarks/comparison/quality_docs.py": "425b7fd4a4d5010b9d58e74ff7cea5e5121f9d2cc61690fd34e570e6d6ec139e",
     "benchmarks/comparison/report.py": "b6d32822384481eec23c27fb46c511b2b2162ad66ab9cab0536c441831eba224",
     "benchmarks/comparison/plot.py": "9dd839eb913a2782a676d9069d26fdd472bd78f3ae2c387cc43a613a8e2aa84b",
     "src/compressor/core/greedy/metablock.rs": "77b7902caa6b94d72a03f53f3db0b54ed0fc411d1a38c857987f60b1584c6400",
-    "src/compressor/core/greedy/split.rs": "b53f444764f561e6791cdc0c43cd1be9a7391a86980295f58eb33496bf12f80b"
+    "src/compressor/core/greedy/split.rs": "b53f444764f561e6791cdc0c43cd1be9a7391a86980295f58eb33496bf12f80b",
+    "src/compressor/core/session.rs": "554f2974e22e7751e0d707a9cca64b453277fba4b54a1b8a72151432113d8aea",
+    "src/compressor/core/driver.rs": "d578d3816fd533fa697b5b9d1816e6f49e59b4751b493c59bb694d498765d268",
+    "src/compressor/core/stream.rs": "2533209f86513772afd1a8c30a945351a13af21f7eef7461690087a24db43435",
+    "src/compressor/session.rs": "c3d85bc7890bf7fe9e86f413f6f31f7d02166755c85b37b44a3e9c043de6260b",
+    "src/compressor/core/greedy/probe.rs": "a56259321448453f1e2c32a713f5ab306f7b5f65cebfd3c129e4dc724a89d502"
   },
   "binary": "benchmarks/comparison/target/release/deps/implementations-6831f8d17c2e15de",
-  "binary_sha256": "ba5eb4d0a3b57b230583566a74f1fd3e5b3e64217c49619a160b1689071cc9f0",
+  "binary_sha256": "befd0f1f4b3b1de8f030168cd0b85eae94da5e2dffa9a8b851192228ef438186",
   "corpus_generation": "See pinned core.rs: xorshift64 seed 0x243f6a8885a308d3; structured binary ((i/16)^i) mod 256; repeated a; cyclic Alice.",
   "sampling": {
     "samples": 20,
@@ -69,27 +74,27 @@
     "round_trip_cases_before_timing": 432,
     "timed_sweep_exit_code": 0,
     "measured_cases": 432,
-    "exporter": "report.py rejected no rows; all input lengths matched",
-    "output_sizes_vs_enc_2026_09_28": "identical for every implementation and case (sizes.csv unchanged)"
+    "exporter": "report.py rejected no rows; all input lengths matched"
   },
   "plotting": "Matplotlib 3.10.8",
-  "baseline": "enc-2026-10-01",
+  "baseline": "enc-2026-10-02",
   "command": [
-    "cd benchmarks/comparison && taskset -c 0 target/release/deps/implementations-6831f8d17c2e15de --bench --save-baseline enc-2026-10-01 '^implementations/cold/(empty|tiny-text)/'",
-    "cd benchmarks/comparison && taskset -c 2 target/release/deps/implementations-6831f8d17c2e15de --bench --save-baseline enc-2026-10-01 '^implementations/cold/(alice29|text-1m)/'",
-    "cd benchmarks/comparison && taskset -c 4 target/release/deps/implementations-6831f8d17c2e15de --bench --save-baseline enc-2026-10-01 '^implementations/cold/(binary-64k|random-64k)/'",
-    "cd benchmarks/comparison && taskset -c 6 target/release/deps/implementations-6831f8d17c2e15de --bench --save-baseline enc-2026-10-01 '^implementations/cold/(random-1m|repeated-1m)/'"
+    "cd benchmarks/comparison && taskset -c 0 target/release/deps/implementations-6831f8d17c2e15de --bench --save-baseline enc-2026-10-02 '^implementations/cold/(empty|tiny-text)/'",
+    "cd benchmarks/comparison && taskset -c 2 target/release/deps/implementations-6831f8d17c2e15de --bench --save-baseline enc-2026-10-02 '^implementations/cold/(alice29|text-1m)/'",
+    "cd benchmarks/comparison && taskset -c 4 target/release/deps/implementations-6831f8d17c2e15de --bench --save-baseline enc-2026-10-02 '^implementations/cold/(binary-64k|random-64k)/'",
+    "cd benchmarks/comparison && taskset -c 6 target/release/deps/implementations-6831f8d17c2e15de --bench --save-baseline enc-2026-10-02 '^implementations/cold/(random-1m|repeated-1m)/'"
   ],
-  "started_at_utc": "2026-09-30T23:11:30+00:00",
-  "finished_at_utc": "2026-09-30T23:24:20+00:00",
+  "started_at_utc": "2026-10-01T22:09:30+00:00",
+  "finished_at_utc": "2026-10-01T22:22:43+00:00",
   "measured_cases": 432,
-  "size_manifest": "encoder-comparison-2026-10-01/sizes.csv",
+  "size_manifest": "encoder-comparison-2026-10-02/sizes.csv",
   "limitations": [
     "Single WSL2 host; frequency, thermal state, and host scheduling uncontrolled.",
     "Fixed encoder order; confidence bounds describe sampling variation, not all environmental bias.",
     "Cold native APIs; retained workspace and streaming are measured by the root benchmarks.",
     "Eight benchmark processes ran at once on separate cores and shared the last-level cache, memory bandwidth and the package's turbo budget; absolute timings are below a single-core sweep and latency cases of tens of nanoseconds (empty input) move most. Ratios to C are the comparable quantity.",
-    "No builds or other benchmark processes ran on the host during the sweep; AFL campaigns started after it ended."
+    "No builds, tests or other benchmark processes ran on the host during the sweep."
   ],
-  "timed_sweep_exit_code": 0
+  "timed_sweep_exit_code": 0,
+  "timestamps_note": "wall-clock date -u taken immediately before the eight lanes started and after the last one ended (encoder and decoder sweeps ran together)"
 }

@@ -97,7 +97,7 @@ impl Encoder {
                 let Ok(fresh) = GreedyParams::new(params, size_hint) else {
                     return false;
                 };
-                if !encoder.retarget(fresh) {
+                if !encoder.retarget(fresh, size_hint) {
                     return false;
                 }
                 encoder.reset();
@@ -114,6 +114,38 @@ impl Encoder {
                 true
             }
         }
+    }
+
+    /// Re-aims an encoder that has not encoded any input at `params`' size
+    /// hint, the way C's first `EncodeData` sets up its hasher, with storage
+    /// sized for `expected_input` bytes (zero if unknown).
+    ///
+    /// Only the greedy family reads the hint. Its encoder is retargeted in
+    /// place when the hint keeps its shape and `expected_input` its match
+    /// finder variant, and is otherwise rebuilt; the rebuilt one keeps the
+    /// header bits an earlier empty flush may already have written. Either
+    /// way its full quick table is allocated here, before the window is.
+    ///
+    /// # Errors
+    ///
+    /// Propagates what [`GreedyEncoder::expecting`] reports.
+    pub(crate) fn retarget_size_hint(
+        &mut self,
+        level: Level,
+        params: &CompressParams,
+        expected_input: usize,
+    ) -> BrotliResult<()> {
+        let Self::Greedy(encoder) = self else {
+            return Ok(());
+        };
+        let size_hint = params.size_hint().unwrap_or(0);
+        if !encoder.retarget(GreedyParams::new(params, size_hint)?, expected_input) {
+            let mut rebuilt = GreedyEncoder::expecting(level, params, size_hint, expected_input)?;
+            rebuilt.adopt_stream_head(encoder);
+            **encoder = rebuilt;
+        }
+        encoder.materialize();
+        Ok(())
     }
 
     /// Compresses one block, consulting `attached` for matches.

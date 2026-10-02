@@ -242,7 +242,9 @@ flowchart LR
 
 ## Cold matcher allocation and SIMD
 
-Quick H2/H3/H4 matchers use `SmallSlots` when the resolved size hint is between
+Quick H2/H3/H4 matchers use `SmallSlots` when the expected input (the declared
+size, or a session's inferred total of at most 4 KiB when its first encode is a
+finish) is between
 1 and 2048 bytes. It stores packed logical hash keys and positions in one open
 addressed vector; a missing key reads as position zero, exactly like a fresh full
 table. Keys are bounded by the quick matcher's logical bucket range, so the

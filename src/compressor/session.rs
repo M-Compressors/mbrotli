@@ -37,10 +37,16 @@ use super::error::EncodeError;
 
 /// How much input a stream will carry, when that is known in advance.
 ///
-/// Qualities four and five choose a different match finder for inputs of a
-/// mebibyte or more, so telling the encoder how much is coming changes the
-/// bytes it emits. [`InputSize::Exact`] is what makes a streamed stream match
-/// the same bytes compressed in one shot.
+/// Qualities four to nine choose their match finder, and five to nine their
+/// literal context modelling, from how much input is expected, so the size
+/// changes the bytes the encoder emits. [`InputSize::Exact`] is what makes a
+/// streamed stream match the same bytes compressed in one shot.
+///
+/// With [`InputSize::Unknown`] the session infers the size the way the
+/// reference's streaming entry point does: when it first has to encode —
+/// a block fills, or a flush or finish is requested — it takes the bytes it
+/// has gathered plus that call's input, capped at a gibibyte. A body handed
+/// over in one call is therefore treated as if its length had been declared.
 ///
 /// `Exact(0)` declares a stream that is known to be empty, which is a different
 /// statement from `Unknown` even though the reference resolves the same match
@@ -64,10 +70,11 @@ pub enum InputSize {
 }
 
 impl InputSize {
-    /// Returns the size hint the encoders resolve their match finder from.
+    /// Returns the size hint a stream starts with.
     ///
-    /// An unknown size is zero, which is what the reference's streaming entry
-    /// point leaves `BROTLI_PARAM_SIZE_HINT` at.
+    /// An unknown size starts at zero, as the reference's
+    /// `BROTLI_PARAM_SIZE_HINT` does, until the session infers it before it
+    /// first encodes.
     pub(crate) const fn hint(self) -> usize {
         match self {
             Self::Unknown => 0,
@@ -858,7 +865,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn an_unknown_size_hints_zero_the_way_the_reference_does() {
+    fn an_unknown_size_starts_from_a_zero_hint_the_way_the_reference_does() {
         assert_eq!(InputSize::Unknown.hint(), 0);
         assert_eq!(InputSize::Exact(0).hint(), 0);
         assert_eq!(InputSize::Exact(4096).hint(), 4096);

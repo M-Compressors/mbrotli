@@ -853,7 +853,62 @@ impl Compressor {
             self.check_dictionary()?;
         }
 
-        let params = self.config.lower(Some(stream.input_size().hint()));
+        let params = self.stream_params(stream, stream.input_size().hint())?;
+        let limit = match self.workspace.acquire(self.level, &params, 0) {
+            Ok(encoder) => encoder.block_size_limit(),
+            Err(error) => {
+                self.workspace.invalidate();
+                return Err(EncodeError::from_core(error, 0));
+            }
+        };
+
+        self.staging.clear();
+        self.pending.clear();
+        self.served = 0;
+        if self.staging.capacity() < limit {
+            self.staging
+                .try_reserve(limit)
+                .map_err(|_| EncodeError::AllocationFailed { requested: limit })?;
+        }
+        self.active = true;
+        Ok(limit)
+    }
+
+    /// Re-aims the active stream's encoder at the size hint C's
+    /// `UpdateSizeHint` infers for a stream of unknown length, with storage
+    /// sized for `expected_input` bytes (zero while the total is unknown).
+    ///
+    /// Runs before the stream first encodes any input.
+    ///
+    /// # Errors
+    ///
+    /// Returns what [`Self::begin`] would for the same stream, and
+    /// [`EncodeError::InternalInvariant`] when the session has no encoder.
+    pub(crate) fn resolve_size_hint(
+        &mut self,
+        stream: StreamConfig,
+        size_hint: usize,
+        expected_input: usize,
+    ) -> Result<(), EncodeError> {
+        let params = self.stream_params(stream, size_hint)?;
+        let level = self.level;
+        let Some(encoder) = self.workspace.encoder() else {
+            return Err(EncodeError::InternalInvariant {
+                detail: "a session outlived the encoder it was started with",
+            });
+        };
+        encoder
+            .retarget_size_hint(level, &params, expected_input)
+            .map_err(|error| EncodeError::from_core(error, 0))
+    }
+
+    /// Lowers the configuration for `stream`, expecting `size_hint` bytes.
+    fn stream_params(
+        &self,
+        stream: StreamConfig,
+        size_hint: usize,
+    ) -> Result<super::internal::CompressParams, EncodeError> {
+        let params = self.config.lower(Some(size_hint));
         #[cfg(feature = "experimental")]
         let params = {
             let input_bytes = match stream.input_size() {
@@ -875,24 +930,9 @@ impl Compressor {
             params.stream_offset = stream.stream_offset().min((1u64 << bits) - 16) as usize;
             params
         };
-        let limit = match self.workspace.acquire(self.level, &params, 0) {
-            Ok(encoder) => encoder.block_size_limit(),
-            Err(error) => {
-                self.workspace.invalidate();
-                return Err(EncodeError::from_core(error, 0));
-            }
-        };
-
-        self.staging.clear();
-        self.pending.clear();
-        self.served = 0;
-        if self.staging.capacity() < limit {
-            self.staging
-                .try_reserve(limit)
-                .map_err(|_| EncodeError::AllocationFailed { requested: limit })?;
-        }
-        self.active = true;
-        Ok(limit)
+        #[cfg(not(feature = "experimental"))]
+        let _ = stream;
+        Ok(params)
     }
 
     /// Refuses to start anything while an abandoned session is unaccounted for.

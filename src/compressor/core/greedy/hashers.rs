@@ -24,6 +24,7 @@ use core::num::NonZeroUsize;
 use fearless_simd::{Simd, SimdBase, SimdMask, u8x16, u8x32};
 
 use super::params::{BucketShape, ChainShape, HasherPlan};
+use super::probe::{StoreOutlook, sample_store_outlook};
 use crate::shared::constants::HASH_MUL32;
 use crate::shared::dictionary::{self, DictionaryStats};
 use crate::shared::fixed::{fixed_table, fixed_table_from_vec};
@@ -557,7 +558,13 @@ pub(crate) struct QuickMatcher<
     const USE_DICTIONARY: bool,
     const COMPACT: bool = false,
 > {
-    /// The full table; `None` while a compact matcher is on its first stream.
+    /// The full table; `None` until the first stream prepares the matcher,
+    /// and while a compact matcher is on its first stream.
+    ///
+    /// A session of unknown length builds its encoder before it knows its
+    /// size, so the table waits for [`Self::materialize`] once the size is
+    /// inferred, and the encoder can still be swapped for the compact matcher
+    /// without having paid for a table it drops.
     buckets: Option<Box<[u32; BUCKETS]>>,
     /// The map a compact matcher's first stream indexes through.
     compact: SmallSlots,
@@ -589,11 +596,26 @@ impl<
             + self.compact.entries.capacity() * size_of::<u32>()
     }
 
-    /// Creates an empty table.
+    /// Creates an empty matcher; its table is allocated when first prepared.
     pub(crate) fn new() -> Self {
         Self {
-            buckets: if COMPACT { None } else { Self::table() },
+            buckets: None,
             compact: SmallSlots::default(),
+        }
+    }
+
+    /// Allocates a full matcher's table now rather than at its first
+    /// preparation; a compact matcher, or one that already holds its table,
+    /// is left alone.
+    ///
+    /// Where the table is allocated matters as much as whether: taken before
+    /// the window, a fresh table gets zero pages from the allocator; taken at
+    /// the first preparation, after the window, it reuses freed heap that
+    /// `calloc` has to clear, which measured 5-18% slower on 8-50 KiB
+    /// streams at qualities 2 and 3.
+    fn materialize(&mut self) {
+        if !COMPACT && self.buckets.is_none() {
+            self.buckets = Self::table();
         }
     }
 
@@ -827,10 +849,10 @@ impl<
             Sweep::Full
         };
         let Some(table) = &mut self.buckets else {
-            if clear || !one_shot || input_size > SMALL_SLOTS_MAX_INPUT {
-                // A compact matcher past its first stream, or one whose
-                // stream the map cannot hold: the map has served its
-                // purpose, and a fresh table needs no clearing.
+            if !COMPACT || clear || !one_shot || input_size > SMALL_SLOTS_MAX_INPUT {
+                // A full matcher's first stream, a compact matcher past its
+                // first stream, or one whose stream the map cannot hold: the
+                // map has no part to play, and a fresh table needs no clearing.
                 self.buckets = Self::table();
                 if self.buckets.is_some() {
                     self.compact = SmallSlots::default();
@@ -1328,6 +1350,47 @@ impl<const HASH64: bool, const BUCKETS: usize, const BLOCK: usize, const SLOTS: 
         }
     }
 
+    /// Shortest known input of ordinary data that gets a tagged shape's
+    /// dense table: a hundred-and-twenty-eighth of it, eight kibibytes at
+    /// quality five and sixteen at quality six.
+    ///
+    /// Cold one-shot text, markup, JSON and binary formats measured the dense
+    /// table faster from there (q5 8 KiB: 0.84-0.94 of the on-demand time,
+    /// q6 16 KiB: 0.86-0.98, both 0.72-0.89 from 32 KiB), well below
+    /// [`Self::dense_limit`], which also has to cover the inputs
+    /// [`sample_store_outlook`] now tells apart.
+    const ORDINARY_DENSE_LIMIT: usize = BUCKETS * BLOCK * size_of::<u32>() / 128;
+
+    /// Whether a stream whose first block is `block` gets the dense table.
+    ///
+    /// The deep shapes and streams of unknown length follow
+    /// [`Self::dense_limit`] alone. A tagged shape that knows its input
+    /// samples the first block once the input reaches
+    /// [`Self::ORDINARY_DENSE_LIMIT`]: repetitive input never takes the
+    /// table, which measured two to twelve times slower on it at every
+    /// size up to 128 KiB because long copies leave nothing to store, as
+    /// long as the sampled block is at least half the input — `backward65536`
+    /// cycled to 256 KiB starts with runs but stores along its 64 KiB-distant
+    /// copies, and lost half again its time without the table; incompressible
+    /// input, a block too short to sample and repetitive input that outruns
+    /// its sample keep [`Self::dense_limit`]; anything else takes the table
+    /// from the lower limit.
+    fn wants_dense(&self, block: &[u8]) -> bool {
+        let expected = self.expected_input();
+        if !Self::TAGGED || self.size_hint == 0 {
+            return expected >= self.dense_limit();
+        }
+        if expected < Self::ORDINARY_DENSE_LIMIT {
+            return false;
+        }
+        match sample_store_outlook(block) {
+            // A first block covering at least half the input speaks for it.
+            Some(StoreOutlook::Repetitive) if expected / 2 <= block.len() => false,
+            Some(StoreOutlook::Ordinary) => true,
+            _ => expected >= self.dense_limit(),
+        }
+    }
+
     /// Re-aims the matcher at a stream of `size_hint` bytes.
     ///
     /// The shape is fixed by the type; only the layout choice the next
@@ -1338,12 +1401,15 @@ impl<const HASH64: bool, const BUCKETS: usize, const BLOCK: usize, const SLOTS: 
     }
 
     /// Resets the current layout or promotes it, transferring compatible buffers.
-    fn select_layout(&mut self, one_shot: bool, input_size: usize) {
+    ///
+    /// `block` is the stream's first block, which [`Self::wants_dense`] may
+    /// sample.
+    fn select_layout(&mut self, one_shot: bool, input_size: usize, block: &[u8]) {
         let compact = matches!(self.layout, Layout::Compact(_))
             && one_shot
             && input_size <= COMPACT_INPUT_LIMIT;
-        let dense = matches!(self.layout, Layout::Dense(_))
-            || (!compact && self.expected_input() >= self.dense_limit());
+        let dense =
+            matches!(self.layout, Layout::Dense(_)) || (!compact && self.wants_dense(block));
         let previous =
             ::core::mem::replace(&mut self.layout, Layout::Compact(CompactLayout::default()));
         self.layout = match previous {
@@ -2523,12 +2589,12 @@ impl<const HASH64: bool, const BUCKETS: usize, const BLOCK: usize, const SLOTS: 
         CHECKPOINT_INTERVAL
     }
 
-    fn prepare(&mut self, one_shot: bool, input_size: usize, _data: &[u8], _clear: bool) -> Sweep {
+    fn prepare(&mut self, one_shot: bool, input_size: usize, data: &[u8], _clear: bool) -> Sweep {
         // Every layout empties itself in time that does not depend on what
         // the stream stored: the dense counters are a fixed memset, the
         // sparse table a generation bump, and the compact map is sized by
         // the input.
-        self.select_layout(one_shot, input_size);
+        self.select_layout(one_shot, input_size, data.get(..input_size).unwrap_or(data));
         Sweep::SelfCleaning
     }
 
@@ -3022,6 +3088,18 @@ impl MatchFinder {
             HasherPlan::H5(shape) => Self::bucket(false, shape, size_hint),
             HasherPlan::H6(shape) => Self::bucket(true, shape, size_hint),
             _ => Self::from(plan),
+        }
+    }
+
+    /// Allocates the full quick tables now; other finders allocate on their
+    /// own schedule. See `QuickMatcher::materialize`.
+    pub(crate) fn materialize(&mut self) {
+        match self {
+            Self::H2(matcher) => matcher.materialize(),
+            Self::H3(matcher) => matcher.materialize(),
+            Self::H4(matcher) => matcher.materialize(),
+            Self::H54(matcher) => matcher.materialize(),
+            _ => {}
         }
     }
 
@@ -3580,6 +3658,71 @@ mod tests {
         assert_eq!(layout.generation, 2);
     }
 
+    #[test]
+    fn a_tagged_shape_that_knows_its_input_samples_the_first_block() {
+        fn layout<M: Matcher>(matcher: &mut M, input_size: usize, block: &[u8]) {
+            matcher.prepare(true, input_size, block, true);
+        }
+        fn name<const H: bool, const B: usize, const K: usize, const S: usize>(
+            matcher: &BucketMatcher<H, B, K, S>,
+        ) -> &'static str {
+            match matcher.layout {
+                Layout::Compact(_) => "compact",
+                Layout::Sparse(_) => "sparse",
+                Layout::Dense(_) => "dense",
+            }
+        }
+        let mut state = 0x9E37_79B9u32;
+        let mut text = Vec::new();
+        let words = [
+            "alice ", "rabbit ", "queen ", "hatter ", "tea ", "garden ", "door ",
+        ];
+        while text.len() < 1 << 16 {
+            state = state.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+            text.extend_from_slice(words[(state >> 16) as usize % words.len()].as_bytes());
+        }
+        let random: Vec<u8> = (0..1 << 16)
+            .map(|_| {
+                state ^= state << 13;
+                state ^= state >> 17;
+                state ^= state << 5;
+                state as u8
+            })
+            .collect();
+        let runs = vec![b'x'; 1 << 16];
+        // Quality six: ordinary data from 16 KiB, the length rule from 128 KiB.
+        for (size_hint, block, expected) in [
+            (20_000, &text[..20_000], "dense"),
+            (8_000, &text[..8_000], "sparse"),
+            (64 << 10, &random[..], "sparse"),
+            (128 << 10, &random[..], "dense"),
+            (128 << 10, &runs[..], "sparse"),
+            // Runs that cover less than half the input do not speak for it.
+            (200 << 10, &runs[..], "dense"),
+            // Nothing to sample keeps the length rule.
+            (20_000, &[][..], "sparse"),
+            // An unknown length is a long stream, whatever it starts with.
+            (0, &runs[..], "dense"),
+        ] {
+            let mut matcher = Q6Bucket::new(size_hint);
+            layout(&mut matcher, block.len().max(size_hint.min(1 << 16)), block);
+            assert_eq!(
+                name(&matcher),
+                expected,
+                "q6 hint {size_hint}, {} bytes",
+                block.len()
+            );
+        }
+        // Quality five: ordinary data from 8 KiB.
+        let mut matcher = BucketMatcher::<false, { 1 << 14 }, 16, { (1 << 14) * 16 }>::new(10_000);
+        layout(&mut matcher, 10_000, &text[..10_000]);
+        assert_eq!(name(&matcher), "dense");
+        // A deep shape follows the length rule alone.
+        let mut matcher = Q7Bucket::new(1 << 16);
+        layout(&mut matcher, 1 << 16, &text);
+        assert_eq!(name(&matcher), "sparse");
+    }
+
     /// The shape quality seven resolves to.
     type Q7Bucket = BucketMatcher<false, { 1 << 15 }, 64, { (1 << 15) * 64 }>;
 
@@ -3649,8 +3792,9 @@ mod tests {
         let expected = search_at(&mut primed(Q6Bucket::new(1 << 20), &data), &data, REPEAT_AT);
         assert!(expected.is_match());
         // Short enough that the block's remainder, not the hint, decides.
+        // No block to sample keeps the length rule, which leaves it sparse.
         let mut matcher = Q6Bucket::new(20_000);
-        matcher.prepare(true, 20_000, &data, true);
+        matcher.prepare(true, 20_000, &[], true);
         assert!(matches!(matcher.layout, Layout::Sparse(_)));
         matcher.checkpoint(0, 20_000);
         matcher.store_range(&data, usize::MAX, 0, REPEAT_AT);

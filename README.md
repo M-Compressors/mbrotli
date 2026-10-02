@@ -53,7 +53,7 @@ the compressed size as a percentage of the input and matches for both.
 **14–20% faster** compression at -8 and -11, within 9% at lower levels, and
 decompression 3–10% behind C. Our own
 [local lzbench rerun](docs/benchmarks/README.md#local-lzbench-rerun-ours-not-independent)
-tracks later changes on a different machine.
+measures the current tree on a different machine and compiler.
 
 ### Our benchmarks
 
@@ -65,7 +65,7 @@ depending on the workload and quality setting.
 
 ![Compression speed and output size relative to Google C Brotli across qualities 0–11][bench-chart]
 
-**Recorded 2026-10-01 · Intel Core i7-13700KF · WSL2 · window 22 · cold serial APIs.**
+**Recorded 2026-10-02 · Intel Core i7-13700KF · WSL2 · window 22 · cold serial APIs.**
 Each value is the median of per-dataset ratios across eight equally weighted datasets,
 including empty and tiny inputs. A speed ratio above **1×** is faster than C; a size
 ratio below **1×** is smaller. These are compression results; the separate decoder comparison follows below.
@@ -82,14 +82,14 @@ Results apply to the [recorded revision and machine][bench-qualities].
 
 ![Decompression speed relative to Google C Brotli by source quality][decoder-bench-chart]
 
-**Recorded 2026-10-01 · Intel Core i7-13700KF · WSL2 · window 22 · cold serial APIs.**
+**Recorded 2026-10-02 · Intel Core i7-13700KF · WSL2 · window 22 · cold serial APIs.**
 Google C, mbrotli, Rust brotli and Burli decode identical C-generated streams at
 source qualities **0–11**. SIMD Brotli shares Rust brotli's decoder and is omitted;
 Burli decodes every source quality. All **384 cases** restore the original bytes.
 
 Across the eight equally weighted inputs, the median speed / Burli is
-**0.995×**, and the median speed / Google
-C ranges from **3.1× to 3.8×** by source quality. Empty and tiny inputs retain
+**0.999×**, and the median speed / Google
+C ranges from **3.0× to 3.9×** by source quality. Empty and tiny inputs retain
 the same weight as larger datasets. The chart shows per-quality medians of
 C-time/decoder-time ratios; above **1×** is faster than C. Throughput in the
 quality pages counts restored bytes. Construction, allocation, decode and disposal

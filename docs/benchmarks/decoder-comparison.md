@@ -1,52 +1,44 @@
-# Decompression comparison — 2026-10-01
+# Decompression comparison — 2026-10-02
 
 [Benchmark index](README.md) · [All quality pages](decoders/README.md) ·
 [Published CSV](decoder-comparison.csv)
 
 The published 384 rows cover four decoders on eight identical C-produced inputs
-at each source quality, recorded as `dec-2026-10-01` with Rust brotli 9.0.0
+at each source quality, recorded as `dec-2026-10-02` with Rust brotli 9.0.0
 (decoder `brotli-decompressor` 6.0.1) and Burli 0.3.3.
-mbrotli's median speed relative to Burli is **0.995×**
-across all 96 corpus/quality pairs; Burli is faster in 54 of them. Empty and tiny
+mbrotli's median speed relative to Burli is **0.999×**
+across all 96 corpus/quality pairs; Burli is faster in 48 of them. Empty and tiny
 inputs have the same weight as large inputs. Per-workload results include cases
 where mbrotli is slower.
 
 | Source quality | Google C | mbrotli | Rust brotli | Burli | mbrotli / Burli |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| q0 | 1.000× | 3.770× | 0.363× | 3.501× | 0.972× |
-| q1 | 1.000× | 3.567× | 0.338× | 3.476× | 0.995× |
-| q2 | 1.000× | 3.631× | 0.580× | 3.531× | 1.037× |
-| q3 | 1.000× | 3.102× | 0.566× | 3.150× | 0.985× |
-| q4 | 1.000× | 3.824× | 0.571× | 3.618× | 1.053× |
-| q5 | 1.000× | 3.083× | 0.604× | 3.099× | 0.975× |
-| q6 | 1.000× | 3.163× | 0.524× | 3.213× | 0.991× |
-| q7 | 1.000× | 3.129× | 0.587× | 3.165× | 0.990× |
-| q8 | 1.000× | 3.198× | 0.537× | 3.214× | 0.956× |
-| q9 | 1.000× | 3.118× | 0.564× | 3.050× | 0.981× |
-| q10 | 1.000× | 3.174× | 0.571× | 3.159× | 1.011× |
-| q11 | 1.000× | 3.089× | 0.563× | 3.073× | 1.033× |
+| q0 | 1.000× | 3.471× | 0.342× | 3.228× | 0.971× |
+| q1 | 1.000× | 3.644× | 0.341× | 3.431× | 1.009× |
+| q2 | 1.000× | 3.792× | 0.539× | 3.748× | 1.023× |
+| q3 | 1.000× | 2.978× | 0.556× | 3.123× | 0.970× |
+| q4 | 1.000× | 3.946× | 0.531× | 3.962× | 1.022× |
+| q5 | 1.000× | 3.177× | 0.527× | 3.126× | 1.011× |
+| q6 | 1.000× | 3.120× | 0.579× | 3.114× | 1.000× |
+| q7 | 1.000× | 3.325× | 0.559× | 3.322× | 0.999× |
+| q8 | 1.000× | 3.232× | 0.529× | 3.166× | 0.968× |
+| q9 | 1.000× | 3.201× | 0.534× | 3.291× | 0.984× |
+| q10 | 1.000× | 3.199× | 0.529× | 3.177× | 1.013× |
+| q11 | 1.000× | 3.322× | 0.573× | 3.272× | 1.019× |
 
 Each library column is the median of eight C mean time / decoder mean time
 ratios. The last column uses direct Burli time / mbrotli time ratios. The overall
 value takes the median of all 96 direct ratios, not an average of quality medians.
 Higher is faster; medians do not establish statistical significance.
 
-Against the September 28 publication, compressed inputs are identical. The
-tree this sweep measures carries the 2026-09-30 command-loop changes (commit
-`a3896d13`), which callgrind and single-core runs show cutting instructions
-and branches; in this parallel sweep mbrotli's speed relative to C moved
-within host variation instead (speed against September 28, geometric mean
-over the twelve qualities: Alice 0.953 mbrotli against 0.977 C, cyclic Alice
-0.994 against 0.970, structured binary 1.006 against 0.981, random 1 MiB 0.965
-against 1.008). mbrotli decodes faster than C in 91 of the 96 pairs. By
-dataset, mbrotli leads Burli on Alice and cyclic Alice (median 1.21× and 1.23×
-Burli's speed), is level on random input and structured binary (0.99-1.02×,
-down to 0.89× at one quality), and trails on empty input (0.69×) and repeated
-bytes (median 0.97×, 0.74× at one quality). Tiny text leads at the median
-(1.10×) but stays Burli's where a first decode builds context-modelled tables
-(down to 0.63×). This suite times only `decompress`; `decompress_to_slice`,
-`decompress_to_uninit` and the streaming sessions are measured by the root
-`decompress` benchmark.
+mbrotli decodes faster than C in 89 of the 96 pairs. By dataset, mbrotli leads
+Burli on Alice and cyclic Alice (median 1.16× and 1.19× Burli's speed), is level
+on random input, structured binary and repeated bytes (0.96-1.01×, down to 0.70×
+at one quality), and trails on empty input (0.73×). Tiny text leads at the
+median (1.13×) but stays Burli's where a first decode builds context-modelled
+tables (down to 0.60×). This suite times only `decompress`;
+`decompress_to_slice`, `decompress_to_uninit` and the streaming sessions are
+measured by the root `decompress` benchmark.
 
 ## Measurement contract
 
@@ -64,8 +56,8 @@ harness defaults: 20 samples, 1 s warmup and at least 3 s measurement per case.
 
 The [environment record](decoder-comparison-environment.json) hashes this CSV,
 the lockfiles, harness sources and the timed executable, and names the baseline
-commit. The working tree's uncommitted changes are in the encoder only. The
-run's [size manifest](decoder-comparison-2026-10-01/sizes.csv) is archived.
+commit; the decoder sources are those of that commit. The run's
+[size manifest](decoder-comparison-2026-10-02/sizes.csv) is archived.
 
 The sweep ran as four corpus shards on logical CPUs 8, 10, 12 and 14 while the
 encoder sweep ran on CPUs 0, 2, 4 and 6: eight benchmark processes at once,

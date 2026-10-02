@@ -28,7 +28,9 @@ select another encoding. Output capacity can determine success versus error.
 Equivalent settings mean the same encoder configuration, dictionary, declared
 size and flush/continuation behavior. The streaming counterpart of one-shot is a
 zero-offset session declaring `InputSize::Exact(input.len() as u64)` and no extra
-flushes. Unknown input size can choose different matchers; flush boundaries alter
+flushes. Unknown input size infers C's `UpdateSizeHint` hint at the first
+encode (see [Compressor](compressor.md#size-hint-inference)), which can choose
+different matchers than a declared size; flush boundaries alter
 meta-blocks; nonzero offsets produce continuations rather than standalone streams.
 These are different compression jobs, not exceptions based on API shape.
 
