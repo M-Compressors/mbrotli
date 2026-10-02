@@ -21,6 +21,7 @@ All checkouts include vendored submodules. Local commands are in
 flowchart TD
     Branch[master push or pull request] --> Routine[ci.yml]
     Routine --> Build[lint, docs, package and semver]
+    Build --> Docs[deny rustdoc warnings: all-features and std with experimental]
     Routine --> Features[std, no_std and isolated codec consumers]
     Routine --> Tests[platform tests and AFL regression replay]
     Tag[any pushed tag] --> HeavyTools[fuzz, Miri and ASan]
@@ -37,6 +38,12 @@ Routine tests cover Linux x86-64, Linux ARM64 and macOS, with an MSRV 1.89 job.
 All-features builds activate `no_std`; separate std checks retain I/O, parallel
 and framing coverage. Alloc-only jobs also compile `thumbv7em-none-eabi`.
 Consumer scripts check available imports and imports that must fail.
+
+Documentation builds deny warnings in both the all-features and std experimental
+profiles, covering alloc-only and std-only API links. Crate-level type links use
+shortcut references with feature-dependent definitions: enabled APIs resolve to
+local items, while disabled APIs link to the feature-selection section. This
+preserves navigation without redundant explicit link targets.
 
 The semver job compares the default `mbrotli` API with the latest published
 release. Experimental APIs and the development-only C FFI crate are outside

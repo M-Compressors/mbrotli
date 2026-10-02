@@ -31,6 +31,10 @@ jobs:
       - run: cargo doc --workspace --all-features --no-deps
         env:
           RUSTDOCFLAGS: -D warnings
+      # all-features enables no_std, so check std-only documentation separately.
+      - run: cargo doc --workspace --features experimental --no-deps
+        env:
+          RUSTDOCFLAGS: -D warnings
       - run: python3 scripts/check_decoder_features.py
       - run: python3 scripts/check_codec_features.py
       - run: cargo package --allow-dirty

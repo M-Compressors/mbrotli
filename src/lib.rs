@@ -25,12 +25,12 @@
 //! | Write into a caller-owned slice | [`compress_to_slice`][compressor-compress-to-slice] | [`decompress_to_slice`][decompressor-decompress-to-slice] |
 //! | Pull output through `std::io::Read` | [`Compressor::reader`][compressor-reader] | [`Decompressor::reader`][decompressor-reader] |
 //! | Push input through `std::io::Write` | [`Compressor::writer`][compressor-writer] | [`Decompressor::writer`][decompressor-writer] |
-//! | Drive input/output incrementally | [`start`][compressor-start] → [`EncoderSession`][encoder-session] | [`start`][decompressor-start] → [`DecoderSession`][decoder-session] |
-//! | Same, with the session owning the codec | [`into_session`][compressor-into-session] → [`EncoderSessionOwned`][encoder-session-owned] | [`into_session`][decompressor-into-session] → [`DecoderSessionOwned`][decoder-session-owned] |
+//! | Drive input/output incrementally | [`start`][compressor-start] → [`EncoderSession`] | [`start`][decompressor-start] → [`DecoderSession`] |
+//! | Same, with the session owning the codec | [`into_session`][compressor-into-session] → [`EncoderSessionOwned`] | [`into_session`][decompressor-into-session] → [`DecoderSessionOwned`] |
 //!
 //! ## Reuse memory between payloads
 //!
-//! [`Compressor`][compressor] and [`Decompressor`][decompressor] own reusable working state. Keep the codec and your
+//! [`Compressor`] and [`Decompressor`] own reusable working state. Keep the codec and your
 //! output buffer alive across operations when allocation reuse matters.
 //!
 //! <details>
@@ -240,7 +240,7 @@
 //!
 //! # Native decompression
 //!
-//! [`Decompressor`][decompressor] provides reusable Vec/slice APIs, incremental sessions, and synchronous
+//! [`Decompressor`] provides reusable Vec/slice APIs, incremental sessions, and synchronous
 //! reader/writer adapters. Vec appends are rolled back on failure. The decoder is
 //! currently scalar Rust; SIMD acceleration applies to the encoder.
 //!
@@ -284,7 +284,7 @@
 //!
 //! # Structured framing
 //!
-//! With `compression,experimental`, [`framing::FramedCompressor`][framed-compressor]
+//! With `compression,experimental`, [`framing::FramedCompressor`]
 //! owns reusable raw and container storage. Borrowed input preserves resource/metadata order.
 //! Native sessions and one-shot operations support alloc; framed Read/Write
 //! adapters require std APIs.
@@ -301,8 +301,8 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
-//! With `decompression,experimental`, [`FramedDecompressor`][framed-decompressor]
-//! decodes a container into [`FramedOutput`][framed-output]: resources in wire order
+//! With `decompression,experimental`, [`FramedDecompressor`]
+//! decodes a container into [`FramedOutput`]: resources in wire order
 //! with their metadata, global metadata, and the validated container layout.
 //! Keep the decoder across calls to reuse its storage.
 //! Compression support is optional; the decoder can be built on its own.
@@ -329,14 +329,14 @@
 //! This event reader preserves resource boundaries; it does not flatten the container
 //! into one `Read` stream.
 //!
-//! [`FramedDecodeConfig`][framed-decode-config] defaults to
+//! [`FramedDecodeConfig`] defaults to
 //! [`InputMode::FramedOnly`][framed-only]; [`InputMode::Auto`][framed-auto] also
-//! accepts a raw Brotli member. [`FramedDecodeLimits`][framed-decode-limits] configures
+//! accepts a raw Brotli member. [`FramedDecodeLimits`] configures
 //! resource, input, output, metadata and workspace budgets. External dictionary
 //! references use an explicit [`DictionaryResolver`][dictionary-resolver]; resource
 //! checksums are recorded without verification.
 //! The owner, one-shot APIs and native sessions also work with `no_std` and `alloc`;
-//! [`FramedReader`][framed-reader] requires std APIs. See [framed decoder mechanics][framed-decoder]
+//! [`FramedReader`] requires std APIs. See [framed decoder mechanics][framed-decoder]
 //! for validation, dictionaries and streaming semantics.
 //!
 //! # Select only the codecs you need
@@ -362,35 +362,35 @@
 // Resolve available APIs locally; unavailable APIs link to feature selection.
 #![cfg_attr(
     all(feature = "compression", feature = "experimental"),
-    doc = "[framed-compressor]: crate::framing::FramedCompressor"
+    doc = "[`framing::FramedCompressor`]: crate::framing::FramedCompressor"
 )]
 #![cfg_attr(
     not(all(feature = "compression", feature = "experimental")),
-    doc = "[framed-compressor]: #select-only-the-codecs-you-need"
+    doc = "[`framing::FramedCompressor`]: #select-only-the-codecs-you-need"
 )]
 #![cfg_attr(
     all(feature = "decompression", feature = "experimental"),
     doc = r#"
-[framed-decompressor]: crate::framing::FramedDecompressor
-[framed-output]: crate::framing::FramedOutput
+[`FramedDecompressor`]: crate::framing::FramedDecompressor
+[`FramedOutput`]: crate::framing::FramedOutput
 [framed-decompressor-start]: crate::framing::FramedDecompressor::start
-[framed-decode-config]: crate::framing::FramedDecodeConfig
+[`FramedDecodeConfig`]: crate::framing::FramedDecodeConfig
 [framed-only]: crate::framing::InputMode::FramedOnly
 [framed-auto]: crate::framing::InputMode::Auto
-[framed-decode-limits]: crate::framing::FramedDecodeLimits
+[`FramedDecodeLimits`]: crate::framing::FramedDecodeLimits
 [dictionary-resolver]: crate::framing::DictionaryResolver
 "#
 )]
 #![cfg_attr(
     not(all(feature = "decompression", feature = "experimental")),
     doc = r#"
-[framed-decompressor]: #select-only-the-codecs-you-need
-[framed-output]: #select-only-the-codecs-you-need
+[`FramedDecompressor`]: #select-only-the-codecs-you-need
+[`FramedOutput`]: #select-only-the-codecs-you-need
 [framed-decompressor-start]: #select-only-the-codecs-you-need
-[framed-decode-config]: #select-only-the-codecs-you-need
+[`FramedDecodeConfig`]: #select-only-the-codecs-you-need
 [framed-only]: #select-only-the-codecs-you-need
 [framed-auto]: #select-only-the-codecs-you-need
-[framed-decode-limits]: #select-only-the-codecs-you-need
+[`FramedDecodeLimits`]: #select-only-the-codecs-you-need
 [dictionary-resolver]: #select-only-the-codecs-you-need
 "#
 )]
@@ -403,7 +403,7 @@
     doc = r#"
 [framed-decompressor-reader]: crate::framing::FramedDecompressor::framed_reader
 [framed-reader-next-event]: crate::framing::FramedReader::next_event
-[framed-reader]: crate::framing::FramedReader
+[`FramedReader`]: crate::framing::FramedReader
 "#
 )]
 #![cfg_attr(
@@ -415,59 +415,59 @@
     doc = r#"
 [framed-decompressor-reader]: #select-only-the-codecs-you-need
 [framed-reader-next-event]: #select-only-the-codecs-you-need
-[framed-reader]: #select-only-the-codecs-you-need
+[`FramedReader`]: #select-only-the-codecs-you-need
 "#
 )]
 #![cfg_attr(
     feature = "compression",
     doc = r#"
-[compressor]: crate::Compressor
+[`Compressor`]: crate::Compressor
 [compressor-compress]: crate::Compressor::compress
 [compressor-compress-into]: crate::Compressor::compress_into
 [compressor-compress-to-slice]: crate::Compressor::compress_to_slice
 [compressor-start]: crate::Compressor::start
-[encoder-session]: crate::EncoderSession
+[`EncoderSession`]: crate::EncoderSession
 [compressor-into-session]: crate::Compressor::into_session
-[encoder-session-owned]: crate::EncoderSessionOwned
+[`EncoderSessionOwned`]: crate::EncoderSessionOwned
 "#
 )]
 #![cfg_attr(
     not(feature = "compression"),
     doc = r#"
-[compressor]: #select-only-the-codecs-you-need
+[`Compressor`]: #select-only-the-codecs-you-need
 [compressor-compress]: #select-only-the-codecs-you-need
 [compressor-compress-into]: #select-only-the-codecs-you-need
 [compressor-compress-to-slice]: #select-only-the-codecs-you-need
 [compressor-start]: #select-only-the-codecs-you-need
-[encoder-session]: #select-only-the-codecs-you-need
+[`EncoderSession`]: #select-only-the-codecs-you-need
 [compressor-into-session]: #select-only-the-codecs-you-need
-[encoder-session-owned]: #select-only-the-codecs-you-need
+[`EncoderSessionOwned`]: #select-only-the-codecs-you-need
 "#
 )]
 #![cfg_attr(
     feature = "decompression",
     doc = r#"
-[decompressor]: crate::Decompressor
+[`Decompressor`]: crate::Decompressor
 [decompressor-decompress]: crate::Decompressor::decompress
 [decompressor-decompress-into]: crate::Decompressor::decompress_into
 [decompressor-decompress-to-slice]: crate::Decompressor::decompress_to_slice
 [decompressor-start]: crate::Decompressor::start
-[decoder-session]: crate::DecoderSession
+[`DecoderSession`]: crate::DecoderSession
 [decompressor-into-session]: crate::Decompressor::into_session
-[decoder-session-owned]: crate::DecoderSessionOwned
+[`DecoderSessionOwned`]: crate::DecoderSessionOwned
 "#
 )]
 #![cfg_attr(
     not(feature = "decompression"),
     doc = r#"
-[decompressor]: #select-only-the-codecs-you-need
+[`Decompressor`]: #select-only-the-codecs-you-need
 [decompressor-decompress]: #select-only-the-codecs-you-need
 [decompressor-decompress-into]: #select-only-the-codecs-you-need
 [decompressor-decompress-to-slice]: #select-only-the-codecs-you-need
 [decompressor-start]: #select-only-the-codecs-you-need
-[decoder-session]: #select-only-the-codecs-you-need
+[`DecoderSession`]: #select-only-the-codecs-you-need
 [decompressor-into-session]: #select-only-the-codecs-you-need
-[decoder-session-owned]: #select-only-the-codecs-you-need
+[`DecoderSessionOwned`]: #select-only-the-codecs-you-need
 "#
 )]
 #![cfg_attr(

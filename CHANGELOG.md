@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Fix redundant crate-documentation type links rejected by Rust 1.99's strict
+  rustdoc checks, preserving feature-dependent destinations. CI also checks
+  std experimental documentation, which all-features builds exclude.
 - Infer the size hint of a stream of unknown length the way C's
   `BrotliEncoderCompressStream` does. `UpdateSizeHint` runs right before C first
   encodes — when an input block fills or a flush or finish is requested — and
