@@ -71,11 +71,22 @@ flowchart LR
 `decompress_to_slice` and `decompress_with_dictionary_to_slice` end their
 session with one call, so no later call needs the history of a paused member.
 They call the private `finish_linear`, which passes `Delivery::Linear` to the
-operation. The operation turns it into `Output::linear` only for a call that
-starts the operation (`total_in == 0 && total_out == 0`), so the first member
-begins at `dst[0]` and every history position equals its slice index. The
-member boundary clears the flag; later members in concatenated mode use the
-ring as before.
+operation; the appending `Vec` path of `decompress_into` (and of `decompress`
+on a reused decoder) calls it once per growth step with `dst[start..]`, and
+`decompress_to_uninit` once per zeroing step. The operation turns it into `Output::linear` while the first member
+is still being decoded (`members == 0` and no pending boundary), so the
+member begins at `dst[0]` and every history position equals its slice index.
+A `Linear` slice holds everything the operation produced so far in front of
+the space a call may write: each call resumes at `total_out`
+(`Output::produced` starts there and `total_before` is `total_out` less it),
+which lets `decompress_to_uninit` and `decompress_into` grow one zeroed
+buffer across calls without losing history (see [uninitialized
+output](uninit-output.md#linear-one-shot-history) and
+[decompressor](decompressor.md)). A vector that reallocates between calls
+keeps its contents, so its indices stay the history positions. A slice shorter than
+`total_out` fails the operation with `InternalInvariant`. The member boundary
+clears the flag; later members in concatenated mode use the ring as before,
+delivered at their offset in the same slice.
 
 `Output::linear` is read once per call, by `Stream::run`, and nowhere below it.
 `run` picks one of two instantiations of the state machine:
@@ -188,8 +199,11 @@ stored recognition, transfer, history wrap, concatenation, limits and read-ahead
 - Collection requires a fresh workspace and destination; transfer gives the
   caller a power-of-two allocation and leaves no history window for reuse.
 - Appended and reused Vec output initializes newly exposed destination slices.
-- Linear slice history covers only the first member of a one-call slice
-  operation; sessions and later concatenated members deliver from the ring.
+- Linear history covers only the first member of a one-shot operation;
+  sessions, later concatenated members and a collected member that outgrew
+  its window deliver from the ring. Switching the latter to linear delivery
+  after the collected prefix was copied out measured 1.8 times slower (8 MiB
+  mixed corpus, q5/q9) and was not kept.
 - The linear and ring command loops are separate instantiations, which adds
   about 60 KiB of `.text` to a program that uses both `decompress_to_slice`
   and a ring path. Removing the ring code from the linear loop left its

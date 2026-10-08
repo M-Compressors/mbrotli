@@ -1,17 +1,19 @@
 #![cfg(feature = "decompression")]
 //! Decoding into uninitialized memory against the initialized-slice APIs.
 //!
-//! `process_uninit` and `decompress_to_uninit` always deliver through the
-//! ring, never using the destination as history. They must agree with
-//! `process` and `decompress_to_slice` on every byte, count, status and error,
-//! and must not write a byte past what they report.
+//! `process_uninit` delivers through the ring; `decompress_to_uninit` zeroes
+//! its destination one meta-block (at most 32 KiB) ahead of the decoder and
+//! uses it as history. Both must agree with `process` and
+//! `decompress_to_slice` on every byte, count, status and error, and must not
+//! write a byte past what they report.
 
 mod support;
 
 use std::mem::MaybeUninit;
 
 use mbrotli::{
-    DecodeError, DecodeOperation, DecodeProgress, DecodeStreamConfig, DecoderStatus, Decompressor,
+    DecodeError, DecodeLimits, DecodeOperation, DecodeProgress, DecodeStreamConfig, DecoderConfig,
+    DecoderStatus, Decompressor, MemberMode,
 };
 use support::{Rng, c_compress};
 
@@ -251,4 +253,115 @@ fn decompress_to_uninit_reports_the_same_errors_as_decompress_to_slice() {
         decoder.decompress_to_uninit(&compressed, &mut room).ok(),
         Some(data.len())
     );
+}
+
+/// Decodes `compressed` into `capacity` uninitialized bytes and into an
+/// initialized slice of the same length, and checks both report the same
+/// outcome, the same bytes, and nothing written past the uninitialized result.
+fn assert_uninit_matches_slice(decoder: &mut Decompressor, compressed: &[u8], capacity: usize) {
+    let mut slice = vec![0; capacity];
+    let expected = decoder.decompress_to_slice(compressed, &mut slice);
+    let mut uninitialized = vec![MaybeUninit::new(SENTINEL); capacity + 64];
+    let actual = decoder.decompress_to_uninit(compressed, &mut uninitialized[..capacity]);
+    assert_eq!(
+        actual.as_ref().map_err(ToString::to_string),
+        expected.as_ref().map_err(ToString::to_string),
+        "capacity {capacity}"
+    );
+    let written = match (actual, expected) {
+        (Ok(written), _) | (Err(DecodeError::OutputTooSmall { written }), _) => written,
+        (Err(_), _) => return,
+    };
+    assert_eq!(read(&uninitialized[..written]), slice[..written]);
+    assert!(
+        untouched(&uninitialized[written..]),
+        "capacity {capacity}: a byte past the result was written"
+    );
+}
+
+#[test]
+fn decompress_to_uninit_decodes_output_many_zeroing_steps_long() {
+    let mut decoder = Decompressor::new(Default::default()).expect("a decoder");
+    let mixed = payload(1 << 21);
+    // One run compresses into meta-blocks far longer than a zeroing step.
+    let runs = b"one long run of repeated text; ".repeat(70_000);
+    for data in [&mixed, &runs] {
+        for quality in [1, 5, 9] {
+            let compressed = c_compress(quality, 24, data);
+            for capacity in [data.len(), data.len() + 100_000] {
+                assert_uninit_matches_slice(&mut decoder, &compressed, capacity);
+            }
+        }
+    }
+}
+
+#[test]
+fn decompress_to_uninit_reports_output_too_small_at_every_step_boundary() {
+    let mut decoder = Decompressor::new(Default::default()).expect("a decoder");
+    let data = payload(200_000);
+    let step = 32 << 10;
+    for quality in [0, 5, 11] {
+        let compressed = c_compress(quality, 22, &data);
+        let mut capacities = vec![0, 1, 2, data.len() - 1, data.len(), data.len() + 1];
+        for multiple in 1..=data.len() / step {
+            capacities.extend([multiple * step - 1, multiple * step, multiple * step + 1]);
+        }
+        for capacity in capacities {
+            assert_uninit_matches_slice(&mut decoder, &compressed, capacity);
+        }
+    }
+}
+
+#[test]
+fn decompress_to_uninit_decodes_concatenated_members() {
+    let config = DecoderConfig::default().with_member_mode(MemberMode::Concatenated);
+    let mut decoder = Decompressor::new(config).expect("a decoder");
+    let first = payload(100_000);
+    let second = b"the second member repeats itself. ".repeat(3000);
+    let mut compressed = c_compress(5, 22, &first);
+    compressed.extend(c_compress(9, 22, &second));
+    let total = first.len() + second.len();
+    for capacity in [
+        0,
+        first.len() - 1,
+        first.len(),
+        first.len() + 1,
+        total - 1,
+        total,
+        total + 10,
+    ] {
+        assert_uninit_matches_slice(&mut decoder, &compressed, capacity);
+    }
+    let mut output = vec![MaybeUninit::uninit(); total];
+    assert_eq!(
+        decoder.decompress_to_uninit(&compressed, &mut output).ok(),
+        Some(total)
+    );
+    assert_eq!(read(&output), [first, second].concat());
+}
+
+#[test]
+fn decompress_to_uninit_enforces_the_output_limit_like_decompress_to_slice() {
+    let data = payload(100_000);
+    let compressed = c_compress(5, 22, &data);
+    for limit in [0, 1, 50_000, 99_999, 100_000] {
+        let limits = DecodeLimits::default().with_max_output_bytes(Some(limit));
+        let config = DecoderConfig::default().with_limits(limits);
+        let mut decoder = Decompressor::new(config).expect("a decoder");
+        assert_uninit_matches_slice(&mut decoder, &compressed, data.len());
+    }
+}
+
+#[test]
+fn decompress_to_uninit_reports_corrupt_input_like_decompress_to_slice() {
+    let mut decoder = Decompressor::new(Default::default()).expect("a decoder");
+    let data = payload(150_000);
+    let compressed = c_compress(9, 22, &data);
+    let mut rng = Rng::new(0x00c0_ffee);
+    for _ in 0..64 {
+        let mut corrupt = compressed.clone();
+        let index = rng.next_u8() as usize * corrupt.len() / 256;
+        corrupt[index] ^= 1 << (rng.next_u8() % 8);
+        assert_uninit_matches_slice(&mut decoder, &corrupt, data.len());
+    }
 }

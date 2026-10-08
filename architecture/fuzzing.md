@@ -364,7 +364,10 @@ absolute offsets and length checks under the same decode/determinism oracle.
 `decode_serialized` gated at binary, body and registry levels by `experimental`.
 The first target compares independent C results and exact member consumption;
 streaming checks one-shot equivalence and cumulative progress; `decompress`
-also compares `decompress_to_uninit` with ring delivery. `session_targets`
+also compares `decompress_to_uninit`, which decodes linearly into memory it
+zeroes one meta-block ahead, with ring delivery, and the same warm decoder's
+`decompress_into` onto a prefixed vector (linear append) with the collected
+`decompress` result, including rollback of a failed append. `session_targets`
 adds `decoder_session`: borrowed and owned sessions driven by complementary
 plans that mix `process`, `process_uninit`, `flush` and `finish` reach the same
 bytes and ending as each other and as one-shot decoding, `process_uninit`

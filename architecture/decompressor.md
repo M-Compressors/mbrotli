@@ -69,15 +69,36 @@ let mut decoder = Decompressor::new(config)?;
 
 `decompress` returns a Vec, `decompress_into` appends and returns its range, and
 `decompress_to_slice` fills the caller's initialized slice, and
-`decompress_to_uninit` an uninitialized one through ring delivery (see
-[uninitialized output](uninit-output.md)); sessions have `process_uninit`. Eligible complete
-stored members use the borrowed-payload shortcut described below, in `decompress`
-and, when the payload fits, in `decompress_to_uninit`; `stored_one_shot` holds
-the eligibility check both share. Other Vec shapes first
+`decompress_to_uninit` an uninitialized one, zeroed one meta-block (at most
+32 KiB) ahead of the decoder so it can serve as linear history too (see
+[uninitialized output](uninit-output.md)); sessions have `process_uninit`,
+which delivers through the ring. Eligible complete
+stored members use the borrowed-payload shortcut described below, in `decompress`,
+`decompress_into` and, when the payload fits, in `decompress_to_uninit`;
+`stored_one_shot` holds the eligibility check they share. Other Vec shapes first
 run the session with no destination at all, which parses up to the first byte
-of output, then reserve what the meta-block declares (`declared_remaining`, at
-least a small geometric step, at most 16 MiB) so a stream usually gets one
-reservation rather than a chain of copies; the unused tail is trimmed. Any Vec append is
+of output. A fresh decoder writing a fresh vector in single-member mode
+collects into its window, which the vector takes (see [owned decoder
+output](decoder-owned-output.md)); a member longer than the window continues
+through the ring. Every other shape (a reused decoder, a vector with contents
+or capacity, a dictionary, concatenated members) decodes linearly into the
+vector: it reserves what the meta-block declares (`declared_remaining`, at
+least a small geometric step, at most 16 MiB), so a stream usually gets one
+reservation rather than a chain of copies, but zero-fills only
+`ZERO_AHEAD_STEP` (32 KiB) of it ahead of the decoder at a time, and passes
+`dst[start..]` with `Delivery::Linear`, so the bytes already decoded are the
+first member's history; later members are delivered from the ring at their
+offset. The reservation grows only when decoding reaches its end, not per
+zeroing step: growing it per step left a 32 MiB vector for a 481 KB output
+(`appending_reserves_in_proportion_to_the_output` guards this). The unused
+tail is trimmed. Criterion `decompress/reused` (one decoder and vector,
+q0-q11, default release profile) took 0.61 times the time of the earlier
+ring-and-copy path in geometric mean: 1 MiB text 0.69-0.82, data compressed
+beyond 100:1 0.42-0.65, stored members, now copied straight from the input,
+0.08-0.35, literary text and binary 0.93-1.02, and mapsdatazrh 1.00-1.03,
+where the extra decoding call per 32 KiB step outweighs the saved copy. A
+member that outgrew the collect path stays on the ring: switching it to
+linear delivery measured 1.8 times slower. Any Vec append is
 rolled back on failure; a slice preserves the written prefix and untouched
 suffix. `Single` one-shot calls reject tails. Dictionary variants accept
 `impl Into<DictionaryRef<'dict>>` before the compressed source. Sessions borrow

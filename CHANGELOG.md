@@ -1,5 +1,45 @@
 # Changelog
 
+## Unreleased
+
+- `Decompressor::decompress_to_uninit` decodes compressed members straight
+  into the destination and reads it back as history, as
+  `decompress_to_slice` does, instead of decoding through the history ring
+  and copying out. Safe code may read only what it initialized, so the
+  destination is zeroed just ahead of the decoder, at most one meta-block and
+  32 KiB at a time, through the new `borrowed-buf` 0.1.1 dependency (a stable
+  port of `core::io::BorrowedBuf`, whose `append_fill` zeroes with a memset;
+  `mbrotli` itself stays free of `unsafe`). Nothing past the reported length
+  is written. Exact-sized destinations, i7-13700KF, one core, against v0.5.5:
+  12% less time in geometric mean over text, binary, repetitive and stored
+  corpora at qualities 1, 5, 9 and 11; 1 MiB text 15-20%, 152-481 KB literary
+  texts 3-9%, binary 6-13%, data compressed more than 100:1 28-41%; stored
+  members and 1 KiB outputs unchanged. It now trails `decompress_to_slice`
+  into an initialized slice by 1.2% (was 17%).
+- `Decompressor::decompress_into`, and `decompress` on a reused decoder,
+  decode the first member straight into the vector's new tail as its history
+  instead of through the ring with a copy, zero-filling the vector only 32 KiB
+  ahead of the decoder, and append a complete stored member straight from the
+  input, as `decompress` already did for a fresh vector. The reservation still
+  grows per chunk, as before. Criterion `decompress/reused` (q0-q11, default
+  release profile, i7-13700KF) against v0.5.5: 39% less time in geometric
+  mean; 1 MiB text 18-31%, data compressed more than 100:1 35-58%, stored
+  256 KiB 65% and stored 10 KiB 89-92%, literary texts 1-5%, binary 6%
+  faster to 2% slower, mapsdatazrh unchanged to 3% slower. `decompress/tiny` reused 49% and
+  `decompress_with_dictionary` 12% less time. A fresh decoder's `decompress`
+  keeps its collect path and is unchanged.
+- `mbrotli_decompress` calls `decompress_to_uninit` for every destination
+  larger than 1 KiB instead of zeroing destinations up to
+  `max(64 KiB, 4 x input_len)` in full for `decompress_to_slice` and decoding
+  larger ones through the ring: 9% less time in geometric mean on the same
+  corpora, 15-20% on 1 MiB of text, 28-41% on data compressed more than
+  100:1, no case slower beyond noise. `mbrotli_compress` no longer zeroes the
+  destination at qualities 0 and 1: `compress_to_uninit` measured as fast as
+  in-place fragments, and zeroing cost up to 21% on repetitive input. The
+  only bytes written past the result are now those of a decoding destination
+  of at most 1 KiB, zeroed through `BorrowedBuf::ensure_init` instead of an
+  `unsafe` cast.
+
 ## [v0.5.5](https://github.com/M-Compressors/mbrotli/releases/tag/v0.5.5) - 2026-10-02
 
 - Fix redundant crate-documentation type links rejected by Rust 1.99's strict

@@ -15,6 +15,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "borrowed-buf"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7f17ad7280ae7c89e7f53e05a9cd48d66b77b51c4ad7fb7a5195cec0e2548b50"
+
+[[package]]
 name = "cc"
 version = "1.4.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -73,6 +79,7 @@ checksum = "3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2"
 name = "mbrotli"
 version = "0.5.5"
 dependencies = [
+ "borrowed-buf",
  "fearless_simd",
  "fearless_simd_macros",
  "thiserror",
@@ -92,6 +99,7 @@ dependencies = [
 name = "mbrotli-ffi"
 version = "0.2.2"
 dependencies = [
+ "borrowed-buf",
  "mbrotli",
  "thiserror",
 ]

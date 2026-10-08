@@ -137,3 +137,127 @@ fn stored_short_headers_match_streaming_for_every_bit_mutation() {
         }
     }
 }
+
+/// Mixed text, runs and noise of `len` bytes.
+fn mixed(len: usize) -> Vec<u8> {
+    let mut rng = support::Rng::new(0x0dec_0de5);
+    let mut data = Vec::with_capacity(len);
+    while data.len() < len {
+        match rng.next_u8() % 3 {
+            0 => data.extend_from_slice(b"appended output keeps its history. "),
+            1 => data.extend(std::iter::repeat_n(rng.next_u8(), 300)),
+            _ => data.extend(rng.bytes(80, 256)),
+        }
+    }
+    data.truncate(len);
+    data
+}
+
+#[test]
+fn appending_decodes_into_the_vector_across_many_growth_steps() {
+    // A reused decoder and a vector with a prefix take the appending path,
+    // which decodes the first member straight into the vector's new tail.
+    let mut decoder = Decompressor::new(DecoderConfig::default()).unwrap();
+    for (len, quality, lgwin) in [(1 << 20, 1, 22), (1 << 20, 9, 22), (300_000, 5, 16)] {
+        let payload = mixed(len);
+        let compressed = support::c_compress(quality, lgwin, &payload);
+        let mut output = b"prefix".to_vec();
+        let range = decoder.decompress_into(&compressed, &mut output).unwrap();
+        assert_eq!(range, 6..6 + len);
+        assert_eq!(&output[..6], b"prefix");
+        assert_eq!(output[range], payload);
+        // A reused decoder and allocation decode the same bytes again.
+        output.clear();
+        assert_eq!(
+            decoder.decompress_into(&compressed, &mut output).unwrap(),
+            0..len
+        );
+        assert_eq!(output, payload);
+    }
+}
+
+#[test]
+fn appending_concatenated_members_delivers_each_after_the_previous() {
+    let config = DecoderConfig::default().with_member_mode(MemberMode::Concatenated);
+    let mut decoder = Decompressor::new(config).unwrap();
+    let first = mixed(100_000);
+    let second = b"a second member after the first. ".repeat(4000);
+    let mut compressed = support::c_compress(5, 22, &first);
+    compressed.extend(support::c_compress(9, 18, &second));
+    let mut output = vec![7];
+    let range = decoder.decompress_into(&compressed, &mut output).unwrap();
+    assert_eq!(output[0], 7);
+    assert_eq!(output[range], [first, second].concat());
+}
+
+#[test]
+fn appending_rolls_back_a_corrupt_or_truncated_stream() {
+    let mut decoder = Decompressor::new(DecoderConfig::default()).unwrap();
+    let payload = mixed(200_000);
+    let compressed = support::c_compress(5, 22, &payload);
+    let mut output = b"kept".to_vec();
+    let truncated = &compressed[..compressed.len() - 1];
+    assert!(matches!(
+        decoder.decompress_into(truncated, &mut output),
+        Err(DecodeError::UnexpectedEndOfInput)
+    ));
+    assert_eq!(output, b"kept");
+    let mut trailing = compressed.clone();
+    trailing.push(0);
+    assert!(matches!(
+        decoder.decompress_into(&trailing, &mut output),
+        Err(DecodeError::TrailingData { .. })
+    ));
+    assert_eq!(output, b"kept");
+}
+
+#[test]
+fn appending_a_stored_member_copies_it_and_respects_policies() {
+    let mut rng = support::Rng::new(0x0057_02ed);
+    let payload = rng.bytes(50_000, 256);
+    let compressed = support::c_compress(9, 22, &payload);
+    let mut decoder = Decompressor::new(DecoderConfig::default()).unwrap();
+    let mut output = b"head".to_vec();
+    let range = decoder.decompress_into(&compressed, &mut output).unwrap();
+    assert_eq!(range, 4..4 + payload.len());
+    assert_eq!(output[range], payload);
+
+    // Limits and trailing bytes are the session's to report.
+    let limits = DecodeLimits::default().with_max_output_bytes(Some(1000));
+    let mut limited = Decompressor::new(DecoderConfig::default().with_limits(limits)).unwrap();
+    let mut output = b"head".to_vec();
+    assert!(matches!(
+        limited.decompress_into(&compressed, &mut output),
+        Err(DecodeError::OutputLimitExceeded { limit: 1000 })
+    ));
+    assert_eq!(output, b"head");
+    let mut trailing = compressed.clone();
+    trailing.push(0);
+    assert!(matches!(
+        decoder.decompress_into(&trailing, &mut output),
+        Err(DecodeError::TrailingData { .. })
+    ));
+    assert_eq!(output, b"head");
+}
+
+#[test]
+fn appending_reserves_in_proportion_to_the_output() {
+    // Linear appends zero the vector in small steps; the reservation must
+    // still grow per chunk, not per step, or a 500 KB output would leave
+    // tens of mebibytes reserved.
+    let mut decoder = Decompressor::new(DecoderConfig::default()).unwrap();
+    for (quality, data) in [(5, mixed(500_000)), (9, b"runs ".repeat(100_000))] {
+        let compressed = support::c_compress(quality, 22, &data);
+        let mut warm = Vec::new();
+        decoder.decompress_into(&compressed, &mut warm).unwrap();
+        let mut output = Vec::new();
+        decoder.decompress_into(&compressed, &mut output).unwrap();
+        assert_eq!(output, data);
+        assert!(
+            output.capacity() <= 4 * data.len(),
+            "{} bytes reserved for {}",
+            output.capacity(),
+            data.len()
+        );
+    }
+}

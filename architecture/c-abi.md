@@ -114,28 +114,34 @@ always succeeds.
 
 ```mermaid
 flowchart TD
-    C[mbrotli_compress] --> Q{"q0/q1 and capacity <= max(64 KiB, 4 x input_len)?"}
-    Q -->|yes| ZC[zeroed] --> InPlace[compress_to_slice: fragments written in place]
-    Q -->|no| CU[compress_to_uninit: blocks copied from scratch]
-    D[mbrotli_decompress] --> L{"(capacity > input_len or capacity <= 1 KiB) and capacity <= max(64 KiB, 4 x input_len)?"}
-    L -->|yes| ZD[zeroed] --> Linear["decompress_to_slice: output is the first member's history"]
+    C[mbrotli_compress] --> CU[compress_to_uninit]
+    D[mbrotli_decompress] --> L{"capacity <= LINEAR_SMALL (1 KiB)?"}
+    L -->|yes| ZD["BorrowedBuf::ensure_init zeroes it"] --> Linear["decompress_to_slice: output is the first member's history"]
     L -->|no| DU[decompress_to_uninit]
     DU --> Stored{one complete stored member that fits?}
     Stored -->|yes| Copy[copy payload from input]
-    Stored -->|no| Ring[decode through the history ring, copy out]
+    Stored -->|no| Ahead["zero one meta-block (at most 32 KiB) ahead, decode with output as history"]
 ```
 
-Each pair of paths returns the same bytes, counts and errors. Against the
-initialized paths `mbrotli_compress` and `mbrotli_decompress` used before
-they switched to uninitialized output, the `one_shot` benchmark measured the
-uninitialized ones 3-5% slower for q1 compression of text, 2-7% slower for
-decoding text and binary, and 2.3 times as slow for a 10 KiB stored stream.
-Zeroing costs in proportion to the capacity rather than the output, which is
-why it is bounded by the input length. A destination no larger than the input
-holds data that did not compress, usually a stored stream, which
-`decompress_to_uninit` copies without zeroing anything. Up to 1 KiB zeroing
-costs less than the ring allocation it avoids, which also covers compressed
-streams of tiny inputs that come out larger than their output.
+Each pair of paths returns the same bytes, counts and errors.
+`compress_to_uninit` copies each block out of the encoder's scratch, which on
+the harness corpora (q0 and q1, a fresh encoder per call as here) took as long
+as writing fragments in place into an initialized slice; zeroing the
+destination first, as earlier versions did at q0/q1, made the same calls up to
+21% slower on repetitive data. `decompress_to_uninit` decodes into the
+destination as history and zeroes it only one meta-block ahead of the decoder
+(see [uninitialized output](uninit-output.md)). Earlier versions zeroed the
+whole destination for `decompress_to_slice` when its capacity exceeded the
+input but stayed within `max(64 KiB, 4 x input_len)`, and decoded through the
+history ring otherwise. On exact-sized destinations (harness corpora: text,
+binary, repetitive and stored data, q1/q5/q9/q11, i7-13700KF, one core) the
+current paths take 9% less time in geometric mean: 15-20% on 1 MiB of text,
+which compresses past the ratio limit and took the ring, 28-41% on data
+compressed more than 100:1, where decoding outruns a separate up-front
+zeroing pass, and up to 12% on an 8 MiB mixed corpus; no case got slower by
+more than noise. Only up to 1 KiB does
+zeroing everything win: one decoding call instead of one per meta-block,
+about 7% on 1 KiB of text.
 
 ## Error propagation
 
@@ -181,20 +187,13 @@ the status code crosses the ABI.
   disjoint, since `&[u8]` and `&mut [MaybeUninit<u8>]` may not alias. Empty
   buffers become empty slices regardless of their pointer.
 - **Output is never read before it is written.** The output is viewed as
-  `&mut [MaybeUninit<u8>]`, so an uninitialized C buffer is sound. A codec
-  that benefits from an initialized destination gets one only when zeroing
-  it is cheap next to the work (`affordable_zeroing`: at most `ZEROING_MIN`,
-  64 KiB, or `ZEROING_RATIO`, 4, times the input): `zeroed` fills it and only
-  then views it as `&mut [u8]`. Compression does so at q0/q1
-  (`compresses_in_place`), where the encoder writes fragments in place
-  instead of copying each block from scratch; other qualities always copy
-  from scratch and call `compress_to_uninit`. Decompression does so when the
-  capacity also exceeds the input or is at most `LINEAR_SMALL`, 1 KiB
-  (`decodes_linearly`), and decodes with
-  `decompress_to_slice`, which uses the destination as the first member's
-  history; otherwise `decompress_to_uninit` copies a stored member straight
-  from the input or delivers through the history ring. See
-  [uninitialized output](uninit-output.md).
+  `&mut [MaybeUninit<u8>]`, so an uninitialized C buffer is sound.
+  Compression always calls `compress_to_uninit`. Decompression zeroes a
+  destination of at most `LINEAR_SMALL`, 1 KiB, through
+  `borrowed_buf::BorrowedBuf::ensure_init`, which hands back the zeroed bytes
+  as `&mut [u8]` without `unsafe` in this crate, and decodes with
+  `decompress_to_slice`; larger destinations go to `decompress_to_uninit`.
+  See [uninitialized output](uninit-output.md).
 - **Undetectable misuse remains undefined.** Dangling or too-short buffers,
   and concurrent access by another thread, are the caller's contract.
 - **No unwinding into C.** `catch_unwind` wraps each codec call; the closure
@@ -240,14 +239,10 @@ the status code crosses the ABI.
   it.
 - There is no `no_std` build: the crate needs `std` for `catch_unwind`, the
   system allocator and runtime SIMD detection.
-- The paths are chosen from the input length, since a Brotli stream does not
-  record its output size. An exact-sized buffer for data compressed more than
-  four times beyond 64 KiB decodes through the ring, and a buffer at the limit
-  much larger than its result is zeroed in full.
-- Both costs show on large exact-sized buffers, the shape lzbench uses. On the
-  211 MB Silesia tar (i7-13700KF, one core), `mbrotli_decompress` is 3-4%
-  slower than `decompress_to_slice` into an initialized buffer at qualities 0,
-  5 and 8, which zero the buffer first, and 6% slower at quality 11, whose
-  4.2:1 ratio takes the ring. Zeroing only ahead of the decoder, rather than
-  the whole buffer up front, would need `unsafe` in the `mbrotli` crate or a
-  public history-provider interface; neither exists.
+- Decoding into a C buffer still zeroes every output byte once, just ahead
+  of the decoder. On exact-sized buffers (i7-13700KF, one core, harness
+  corpora) `mbrotli_decompress` therefore takes 1.2% longer than
+  `decompress_to_slice` into an already initialized buffer (geometric mean;
+  previous versions 11.9%), most on data compressed more than 100:1 and on
+  1 MiB of repetitive text, where decoding runs as fast as zeroing; stored,
+  ordinary text and binary data are at parity.

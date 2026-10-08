@@ -23,6 +23,11 @@ version = "0.5.5"
 default-features = false
 features = ["std", "compression", "decompression"]
 
+# Zeroes small C destinations into initialized slices without `unsafe`.
+[dependencies.borrowed-buf]
+version = "0.1.1"
+default-features = false
+
 [dependencies.thiserror]
 version = "2"
 

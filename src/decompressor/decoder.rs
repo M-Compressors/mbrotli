@@ -1,6 +1,7 @@
 use super::{
     DecodeConfigError, DecodeError, DecodeOperation, DecodeProgress, DecodeStreamConfig,
     DecoderConfig, DecoderSession, DecoderSessionOwned, DecoderStatus, core::Stream,
+    session::ZERO_AHEAD_STEP,
 };
 use crate::Backend;
 use crate::RetentionPolicy;
@@ -279,7 +280,7 @@ impl Decompressor {
             return Ok(dst);
         }
         let mut dst = Vec::new();
-        self.decompress_into(src, &mut dst)?;
+        self.decode_into(None, src, &mut dst)?;
         Ok(dst)
     }
     /// Appends a decoded operation, rolling back its entire append on error.
@@ -287,6 +288,10 @@ impl Decompressor {
     /// Returns the range of newly appended bytes, preserving the original
     /// prefix. Rollback restores the length and contents, but may retain an
     /// allocation grown during the failed operation.
+    ///
+    /// The first member decodes straight into the vector's new tail, which
+    /// also serves as its history, and a complete stored member is appended
+    /// straight from `src`.
     ///
     /// # Errors
     /// Returns codec, resource, lifecycle, allocation, or trailing-data errors.
@@ -309,6 +314,16 @@ impl Decompressor {
         src: &[u8],
         dst: &mut Vec<u8>,
     ) -> Result<Range<usize>, DecodeError> {
+        // As in `decompress`: a complete stored member is appended straight
+        // from `src`, without zeroing space for it first.
+        if let Some(payload) = self.stored_one_shot(src) {
+            let start = dst.len();
+            dst.try_reserve(payload.len())
+                .map_err(|_| DecodeError::AllocationFailed)?;
+            dst.extend_from_slice(payload);
+            self.trim(self.retention);
+            return Ok(start..dst.len());
+        }
         self.decode_into(None, src, dst)
     }
 
@@ -346,7 +361,12 @@ impl Decompressor {
                 }
                 return Ok(start..start);
             }
+            // Until the collect path delivers anything, every byte of the
+            // operation lands in `dst[start..]`, which can then serve as the
+            // first member's history: each call resumes after what it holds.
+            let mut linear = true;
             if collect {
+                linear = false;
                 let progress = session
                     .collect(&src[consumed..])
                     .map_err(super::DecodeFailure::into_error)?;
@@ -373,17 +393,42 @@ impl Decompressor {
                 .clamp(256, 1 << 16)
                 .max(session.declared_remaining())
                 .min(1 << 24);
+            // How far past `start` the current reservation reaches.
+            let mut reserved = 0;
             loop {
-                dst.try_reserve(written + chunk)
-                    .map_err(|_| DecodeError::AllocationFailed)?;
-                dst.resize(start + written + chunk, 0);
-                let progress = session
-                    .process(
+                if written >= reserved {
+                    // Grow to what the meta-block declares when that is known,
+                    // otherwise geometrically, so one reservation usually
+                    // covers the rest of a block instead of a chain of copies.
+                    if reserved != 0 {
+                        chunk = chunk
+                            .saturating_mul(2)
+                            .max(session.declared_remaining())
+                            .min(1 << 24);
+                    }
+                    dst.try_reserve(written + chunk)
+                        .map_err(|_| DecodeError::AllocationFailed)?;
+                    reserved = written + chunk;
+                }
+                // Linear output zeroes only a step ahead of the decoder, so
+                // the zeros are still in cache when it overwrites them.
+                let room = reserved - written;
+                let fill = if linear {
+                    room.min(ZERO_AHEAD_STEP)
+                } else {
+                    room
+                };
+                dst.resize(start + written + fill, 0);
+                let progress = if linear {
+                    session.finish_linear(&src[consumed..], &mut dst[start..])
+                } else {
+                    session.process(
                         &src[consumed..],
                         &mut dst[start + written..],
                         DecodeOperation::Finish,
                     )
-                    .map_err(super::DecodeFailure::into_error)?;
+                }
+                .map_err(super::DecodeFailure::into_error)?;
                 consumed += progress.consumed;
                 written += progress.produced;
                 dst.truncate(start + written);
@@ -395,13 +440,6 @@ impl Decompressor {
                     }
                     return Ok(start..dst.len());
                 }
-                // Grow to what the meta-block declares when that is known,
-                // otherwise geometrically, so one reservation usually covers
-                // the rest of a block instead of a chain of copies.
-                chunk = chunk
-                    .saturating_mul(2)
-                    .max(session.declared_remaining())
-                    .min(1 << 24);
             }
         })();
         if result.is_err() {
@@ -467,11 +505,12 @@ impl Decompressor {
     /// zeroing it first. On success exactly `dst[..written]` is initialized
     /// and no byte after it is written.
     ///
-    /// Safe code cannot read back memory it has not initialized, so `dst`
-    /// cannot serve as the first member's history the way it does for
-    /// [`Decompressor::decompress_to_slice`]: output passes through the
-    /// decoder's window and is copied into `dst`, as a streaming session does.
-    /// A complete stored member that fits is copied straight from `src`, as
+    /// Like [`Decompressor::decompress_to_slice`], it decodes the first
+    /// member straight into `dst`, which also serves as its history. Safe code
+    /// may read back only memory it initialized, so `dst` is zeroed just ahead
+    /// of the decoder, at most one meta-block and 32 KiB at a time, and never
+    /// past what the decoded meta-blocks produce. A complete stored member
+    /// that fits is copied straight from `src`, as
     /// [`Decompressor::decompress`] does.
     ///
     /// # Errors
@@ -508,7 +547,7 @@ impl Decompressor {
         }
         let mut session = DecoderSession::start(self, DecodeStreamConfig::default(), None)?;
         let progress = session
-            .process_uninit(src, dst, DecodeOperation::Finish)
+            .finish_linear_uninit(src, dst)
             .map_err(super::DecodeFailure::into_error)?;
         Self::one_shot_outcome(progress, src.len())
     }

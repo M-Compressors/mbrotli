@@ -40,9 +40,7 @@ typedef enum {
  * BROTLI_MODE_GENERIC, ...), including its fallback to an uncompressed stream
  * when compression would exceed mbrotli_compress_bound(input_len).
  *
- * Bytes of output past the ones reported may be overwritten: at qualities 0
- * and 1 a capacity of at most 64 KiB or four times input_len is zeroed first
- * so the encoder can write in place. Other calls write only up to the result.
+ * Bytes of output past the ones reported are never written.
  */
 mbrotli_result mbrotli_compress(
     const uint8_t *input,
@@ -62,10 +60,10 @@ mbrotli_result mbrotli_compress(
  * corrupt only past that point is reported this way too, and MBROTLI_ERROR
  * with a larger buffer. Bytes after the stream are an error.
  *
- * Bytes of output past the ones reported may be overwritten: a capacity that is
- * larger than input_len or at most 1 KiB, and at most 64 KiB or four times
- * input_len, is zeroed first so the decoder can use output as its history.
- * Other capacities are written only up to the result.
+ * output serves as the decoder's history, so no separate window is copied
+ * out of. Bytes of output past the ones reported may be overwritten only when
+ * its capacity is at most 1 KiB, which is zeroed first; larger capacities are
+ * written only up to the result.
  */
 mbrotli_result mbrotli_decompress(
     const uint8_t *input,

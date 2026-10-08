@@ -56,6 +56,7 @@ pub fn decompress(ctx: &Context, data: &[u8]) {
         .build()
         .unwrap();
     let actual = decoder.decompress(data);
+    appended_matches_owned(&mut decoder, data, &actual);
     if let Ok(expected) = &actual {
         // The bounded decode has proven the output size. Replay successful
         // streams without limits to exercise the complete-stored-member path
@@ -79,6 +80,41 @@ pub fn decompress(ctx: &Context, data: &[u8]) {
         crate::decode_oracle::decode(data, MAX_OUTPUT, None),
         data.len(),
     );
+}
+
+/// The same decoder, now holding a workspace, appends to a vector with a
+/// prefix, which decodes the first member into the vector as its history
+/// rather than collecting it in the window. Both must reach the same bytes or
+/// the same error, and a failed append leaves the prefix alone. Workspace
+/// budget failures may differ, since the two paths allocate differently.
+fn appended_matches_owned(
+    decoder: &mut Decompressor,
+    data: &[u8],
+    owned: &Result<Vec<u8>, DecodeError>,
+) {
+    const PREFIX: [u8; 3] = [0xa5; 3];
+    let mut appended = PREFIX.to_vec();
+    let outcome = decoder.decompress_into(data, &mut appended);
+    let budget = |error: Option<&DecodeError>| {
+        matches!(
+            error,
+            Some(DecodeError::MemoryLimitExceeded { .. } | DecodeError::AllocationFailed)
+        )
+    };
+    if budget(owned.as_ref().err()) || budget(outcome.as_ref().err()) {
+        return;
+    }
+    match (owned, outcome) {
+        (Ok(expected), Ok(range)) => {
+            assert!(appended[..3] == PREFIX, "the append changed the prefix");
+            assert!(appended[range] == expected[..], "appended bytes differ");
+        }
+        (Err(expected), Err(error)) => {
+            assert_eq!(format!("{error:?}"), format!("{expected:?}"));
+            assert!(appended == PREFIX, "a failed append was not rolled back");
+        }
+        (owned, appended) => panic!("owned {owned:?} but appended {appended:?}"),
+    }
 }
 
 /// `decompress_to_slice` uses the slice as the member's history; a session
@@ -117,7 +153,8 @@ fn slice_matches_session(ctx: &Context, data: &[u8], size: usize) {
     if matches!(actual, Ok(_) | Err(DecodeError::OutputTooSmall { .. })) {
         assert!(direct == delivered, "slice bytes differ from ring delivery");
     }
-    // The uninitialized one-shot delivers from the ring as the session does;
+    // The uninitialized one-shot decodes into memory it zeroes one meta-block
+    // ahead and reads back as history; it must agree with ring delivery, and
     // on success or a full slice it wrote exactly the bytes it reports.
     let mut uninit = sentinel_output(size);
     let outcome = build().decompress_to_uninit(data, &mut uninit);

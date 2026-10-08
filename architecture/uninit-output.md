@@ -4,7 +4,10 @@ Sessions and one-shot slice APIs have `*_uninit` siblings that write into
 `&mut [MaybeUninit<u8>]`: spare `Vec` capacity, a foreign buffer, or C memory
 that was never initialized. They produce the same bytes, counts, statuses and
 errors as the initialized-slice methods, and the crate stays free of `unsafe`
-(`src/lib.rs` forbids it outside tests).
+(`src/lib.rs` forbids it outside tests). The one place that has to read back
+what it wrote into such memory, the decoder's one-shot history, does it
+through the `borrowed-buf` crate's `BorrowedBuf`, whose filled prefix is safe
+to view as `&mut [u8]`.
 
 ## Public API surface
 
@@ -31,8 +34,10 @@ the destination as uninitialized.
 
 Safe Rust can write a `MaybeUninit<u8>` but can neither read one back nor view
 a range of them as `&mut [u8]`; `write_copy_of_slice` (the only safe view, and
-itself a copy) needs Rust 1.93 and the MSRV is 1.89. Two existing fast paths
-read their destination and so cannot run on uninitialized memory:
+itself a copy) needs Rust 1.93 and the MSRV is 1.89. `BorrowedBuf` (a stable
+port of `core::io::BorrowedBuf`) tracks how much of such a slice was written
+and views exactly that prefix as `&mut [u8]`; its `unsafe` stays inside that
+crate. Two fast paths read their destination:
 
 - the q0/q1 in-place fragment writer (`FastEncoder::encode_block_into`),
   whose bit writer keeps a partial byte, writes 8-byte words read-modify-write,
@@ -40,9 +45,13 @@ read their destination and so cannot run on uninitialized memory:
 - the decoder's linear one-shot delivery (`Delivery::Linear`), which uses the
   caller's slice as the first member's history.
 
-The uninitialized methods take the paths that already exist for small
-destinations instead: encoder scratch followed by one copy, and ring delivery.
-The initialized methods are unchanged and keep both fast paths.
+The encoder's uninitialized methods take the scratch path that already exists
+for small destinations, followed by one copy, which measures as fast as the
+in-place path. Streaming `process_uninit` delivers through the ring, since a
+later call's destination cannot hold the paused member's history. The one-shot
+`decompress_to_uninit` keeps linear delivery: it zeroes the destination one
+meta-block ahead of the decoder (see [Linear one-shot
+history](#linear-one-shot-history)).
 
 ## Compressor
 
@@ -128,7 +137,8 @@ linear slice it took out with `take_history` and hands back with
 `restore_history`. Only the initialized slice can be linear history:
 `history` and `take_history` return an empty slice for the uninitialized one,
 `restore_history` accepts only that empty slice back, and an uninitialized
-sink is only ever run with `Delivery::Slice`, where `linear` is false. Its
+sink is only ever run with `Delivery::Slice` (by `process_uninit`), where
+`linear` is false. Its
 `Sink::LINEAR` constant is false as well, so `Stream::run` never selects the
 linear state machine for it and that instantiation is never generated (see
 [Owned decoder output](decoder-owned-output.md#linear-slice-history)).
@@ -167,25 +177,89 @@ sequenceDiagram
 `Decompressor::decompress` also uses, whether `src` is one complete stored
 member under a configuration without limits or other members; if its payload
 fits in `dst`, it is copied with `copy_to_uninit` and no session or ring is
-created. Otherwise, including a stored payload that does not fit, it runs one
-`process_uninit(.., Finish)` on a fresh session and shares `one_shot_outcome`
-with `decompress_to_slice`, so `OutputTooSmall` and `TrailingData` are
-reported identically.
+created. Otherwise, including a stored payload that does not fit, it runs
+`DecoderSession::finish_linear_uninit` on a fresh session and shares
+`one_shot_outcome` with `decompress_to_slice`, so `OutputTooSmall` and
+`TrailingData` are reported identically.
+
+### Linear one-shot history
+
+`finish_linear_uninit` wraps `dst` in a `BorrowedBuf<u8>` whose filled prefix
+is the decoder's linear history: the bytes decoded so far plus zeros the
+decoder is about to overwrite. Each round passes `filled_mut()` to
+`OperationState::process` with `Delivery::Linear`, which resumes at
+`total_out` with the earlier output in front of it as history (the first call
+starts at an empty prefix). The initialized-slice instantiation of the decode
+loop runs; no uninitialized one is involved.
+
+```mermaid
+sequenceDiagram
+    participant API as decompress_to_uninit
+    participant S as finish_linear_uninit
+    participant B as BorrowedBuf over dst
+    participant Op as OperationState::process (Linear)
+    API->>S: src, dst
+    S->>B: from(dst): empty filled prefix
+    loop until Finished, an error, or dst is full
+        S->>Op: input rest, filled_mut(), Finish
+        Op-->>S: progress (NeedsOutput when the prefix is used up)
+        S->>S: grow = clamp(produced + declared_remaining - filled, 1, 32 KiB)
+        S->>B: zero_extend(grow): cursor.append_fill(grow, 0)
+    end
+    S-->>API: summed consumed, produced, last status
+```
+
+```mermaid
+stateDiagram-v2
+    [*] --> Decode: filled = 0
+    Decode --> Grow: NeedsOutput and room left
+    Grow --> Decode: filled += min(meta-block rest, 32 KiB, room)
+    Decode --> Done: Finished or NeedsInput
+    Decode --> TooSmall: NeedsOutput and dst full
+    Decode --> Failed: decode error
+    Done --> [*]
+    TooSmall --> [*]: OutputTooSmall, dst fully decoded
+    Failed --> [*]
+```
+
+The first call parses the window and meta-block headers and stops at the
+first byte to write; from then on `declared_remaining` is the current
+meta-block's undecoded length. Growing by at most that keeps the zeroed prefix
+inside bytes the stream will produce, so on success nothing past `written` is
+written, as for every uninitialized method. The decode loop already bounds its
+speculative 16- and 32-byte copies by the meta-block end and the slice end.
+A pause outside a meta-block's payload grows by one byte, which guarantees
+progress. After the first member ends, later members (with
+`MemberMode::Concatenated`) are delivered from the ring into the same growing
+prefix at their offset.
+
+`zero_extend` is one `BorrowedCursor::append_fill(len, 0)` (borrowed-buf
+0.1.1), a memset; copying the zeros from a 4 KiB static block, the only way
+before that method existed, took 3-7% longer on highly compressible data.
+The 32 KiB cap (`ZERO_AHEAD_STEP`, shared with the `Vec` path of
+`decompress_into`) keeps the freshly zeroed lines in L1 when the decoder
+overwrites them: on exact-sized destinations (i7-13700KF, one core) caps of
+16, 32 and 64 KiB took 1.023, 1.019 and 1.074 times as long as
+`decompress_to_slice`. The ring path took 1.17 times, so the one-shot takes
+12% less time than before in geometric mean: 15-20% on 1 MiB of text, 3-9%
+on literary texts, 6-13% on binary and 28-41% on data compressed beyond
+100:1; stored members and 1 KiB outputs are unchanged.
 
 ## C ABI
 
-`mbrotli-ffi` views the caller's output as `&mut [MaybeUninit<u8>]`. Where
-zeroing it is cheap next to the work, it zeroes the buffer and calls the
-initialized method instead: `compress_to_slice` at q0/q1, which writes
-fragments in place, and `decompress_to_slice` when the capacity exceeds the
-input or is at most 1 KiB, which uses the destination as history. Otherwise it calls
-`compress_to_uninit` and `decompress_to_uninit`. An uninitialized C buffer is
-never viewed as `&mut [u8]` before it has been zeroed. See [C ABI](c-abi.md).
+`mbrotli-ffi` views the caller's output as `&mut [MaybeUninit<u8>]` and calls
+`compress_to_uninit` and `decompress_to_uninit`. Only a decoding destination
+of at most 1 KiB is zeroed in full (`BorrowedBuf::ensure_init`) and decoded
+with `decompress_to_slice`, which saves the extra decoding call per
+meta-block. An uninitialized C buffer is never viewed as `&mut [u8]` before it
+has been zeroed. See [C ABI](c-abi.md).
 
 ## Invariants
 
-- An uninitialized destination is never read, and the uninitialized methods
-  write no byte past the reported count. The C ABI may zero a whole
+- An uninitialized destination is never read before it is written, and the
+  uninitialized methods write no byte past the reported count. The decoder's
+  linear one-shot reads back only `BorrowedBuf`'s filled prefix, which it
+  wrote itself (decoded bytes or zeros). The C ABI may zero a whole
   destination first, as its header documents.
 - Uninitialized and initialized methods produce identical streams: the fast
   encoder's in-place and scratch paths are already byte-identical, and ring and
@@ -205,28 +279,39 @@ never viewed as `&mut [u8]` before it has been zeroed. See [C ABI](c-abi.md).
 - `tests/decode_uninit.rs`: `process_uninit` against `process` across qualities,
   input chunks and output windows, a corrupt stream's failure progress, owned
   sessions, and `decompress_to_uninit` against `decompress_to_slice` for
-  success, `OutputTooSmall`, trailing and truncated input.
+  success, `OutputTooSmall`, trailing and truncated input; outputs many
+  zeroing steps long, `OutputTooSmall` at every step boundary, concatenated
+  members, output limits and corrupt input, each against
+  `decompress_to_slice` with sentinels past the result.
 - AFL: `encoder_session` and `decoder_session` drive borrowed and owned
   sessions with `process` and `process_uninit` mixed call by call, check that
   nothing is written past `produced`, and restart owned sessions with `reinit`
   from every state; `streaming_equivalence` and `output_capacity` compare
   `compress_to_uninit` with the initialized one-shots, and `decompress`
   compares `decompress_to_uninit` with ring delivery.
-- Unit tests in `shared::uninit` and the `mbrotli-ffi` core tests, which now
-  run on uninitialized destinations.
+- Unit tests in `shared::uninit` (including `zero_extend`), resumable
+  `Delivery::Linear` in `decompressor::core::session`, and the `mbrotli-ffi`
+  core tests, which run on uninitialized destinations.
 
 ## Known gaps
 
 - q0/q1 `process_uninit` and `compress_to_uninit` copy each block once from
   scratch; the initialized methods write it in place when the destination has
   room for a whole fragment.
-- `decompress_to_uninit` decodes compressed members through the ring and
-  copies out, where `decompress_to_slice` uses the destination as history; a
-  complete stored member that fits is copied straight from the input.
-  `mbrotli_compress` and `mbrotli_decompress` avoid these costs only for
-  capacities they can afford to zero (see [C ABI](c-abi.md)).
+- `decompress_to_uninit` writes every output byte twice, zero first: 1.2%
+  slower than `decompress_to_slice` into an initialized slice in geometric
+  mean, most on data compressed beyond 100:1 and on 1 MiB of repetitive text.
+  Safe code cannot view memory as `&mut [u8]` before writing it; avoiding the
+  zeroing would need a decode loop that writes only through the cursor.
+- Each meta-block (each 32 KiB within one) costs `decompress_to_uninit` one
+  more `OperationState::process` call. On 1 KiB outputs this leaves it about
+  7% behind zeroing the whole destination; the C ABI does that below 1 KiB.
+- `process_uninit` still delivers through the ring.
 - No uninitialized variants for dictionary one-shots or framed sessions.
-- A program that calls an uninitialized decoder method links a second
-  instantiation of the decode loop: about 106 KiB more `.text` on x86_64 for
-  a binary using both `decompress` and `decompress_to_uninit`. Programs that
-  use only initialized output do not pay it.
+- A program that calls `process_uninit` links a second instantiation of the
+  decode loop: about 106 KiB more `.text` on x86_64. `decompress_to_uninit`
+  runs the initialized instantiation and does not pay it.
+- In a program that links both `decompress_to_slice` and
+  `decompress_to_uninit`, `OperationState::process` has two one-shot callers
+  and is no longer inlined into `decompress_to_slice`: about 90-116 more
+  instructions per call (6 ns, measurable only on outputs of a few KiB).

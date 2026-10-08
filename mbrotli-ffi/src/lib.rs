@@ -110,10 +110,7 @@ pub enum MbrotliResult {
 /// fit in an output of at least that bound — the input is stored in
 /// uncompressed meta-blocks instead.
 ///
-/// Bytes of `output` past the ones reported may be overwritten: at qualities
-/// 0 and 1 a capacity of at most 64 KiB or four times `input_len` is zeroed
-/// first so the encoder can write each fragment in place. Other calls write
-/// only up to the result.
+/// Bytes of `output` past the ones reported are never written.
 ///
 /// # Errors
 ///
@@ -180,11 +177,10 @@ pub unsafe extern "C" fn mbrotli_compress(
 /// null or misaligned `output_len`, which is left untouched. Brotli does not
 /// record the decompressed size, so the caller must know or bound it.
 ///
-/// Bytes of `output` past the ones reported may be overwritten: a capacity
-/// that is larger than `input_len` or at most 1 KiB, and at most 64 KiB or
-/// four times `input_len`, is zeroed first so the decoder can use `output` as
-/// its history instead of copying out of a separate window. Other capacities
-/// are written only up to the result.
+/// `output` serves as the decoder's history, so no separate window is copied
+/// out of. Bytes of `output` past the ones reported may be overwritten only
+/// when its capacity is at most 1 KiB, which is zeroed first; larger
+/// capacities are written only up to the result.
 ///
 /// Streams with an RFC 9841 large window are accepted as well as ordinary
 /// RFC 7932 ones.
