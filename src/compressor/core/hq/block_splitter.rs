@@ -539,7 +539,8 @@ fn cluster_blocks<const N: usize>(
     arena.remap.fill(0);
     arena.all_histograms.clear();
     arena.cluster_size.clear();
-    arena.batch.clear();
+    // Every batch slot in use is cleared before it is filled, so a kept slot
+    // needs no reset here: only growth creates histograms.
     arena
         .batch
         .resize(num_blocks.min(HISTOGRAMS_PER_BATCH), Histogram::default());

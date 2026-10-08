@@ -13,7 +13,7 @@ use super::split::{BlockSplitter, ContextBlockSplitter};
 use crate::shared::command::Command;
 use crate::shared::constants::{NUM_COMMAND_SYMBOLS, NUM_LITERAL_SYMBOLS};
 use crate::shared::distance::NUM_HISTOGRAM_DISTANCE_SYMBOLS;
-use crate::shared::metablock::{LITERAL_CONTEXT_BITS, MetaBlockSplit};
+use crate::shared::metablock::MetaBlockSplit;
 use crate::shared::ringbuffer::contiguous;
 
 /// Smallest literal block, and the threshold a new literal type has to beat.
@@ -44,19 +44,10 @@ fn map_static_contexts(num_contexts: usize, static_map: &[u32; 64], mb: &mut Met
     mb.literal_context_map.clear();
     // One entry per raw context of every block type.
     mb.literal_context_map
-        .resize(num_types << LITERAL_CONTEXT_BITS, 0);
-    for (block_type, slots) in mb
-        .literal_context_map
-        .as_chunks_mut::<{ 1usize << LITERAL_CONTEXT_BITS }>()
-        .0
-        .iter_mut()
-        .enumerate()
-    {
-        let offset = (block_type * num_contexts) as u32;
-        for (slot, &context) in slots.iter_mut().zip(static_map.iter()) {
-            *slot = offset + context;
-        }
-    }
+        .extend((0..num_types).flat_map(|block_type| {
+            let offset = (block_type * num_contexts) as u32;
+            static_map.iter().map(move |&context| offset + context)
+        }));
 }
 
 /// Splits a meta-block into blocks and gathers their histograms.
@@ -219,7 +210,7 @@ mod tests {
     use super::*;
     use crate::shared::distance::DistanceParams;
     use crate::shared::format::STATIC_CONTEXT_MAP_SIMPLE_UTF8;
-    use crate::shared::metablock::optimize_histograms;
+    use crate::shared::metablock::{LITERAL_CONTEXT_BITS, optimize_histograms};
     use alloc::vec::Vec;
 
     /// Builds commands that just insert `data` with no copies.

@@ -1077,8 +1077,9 @@ pub(crate) fn create_hq_zopfli_backward_references<
     // there; reserving the same up front keeps the peak comparable rather than
     // leaving it to `Vec`'s doubling from empty.
     workspace.arena.reserve(4 * num_bytes);
+    // Filled in position order below, so it is never zeroed first.
     workspace.num_matches.clear();
-    workspace.num_matches.resize(num_bytes, 0);
+    workspace.num_matches.reserve(num_bytes);
 
     let mut i = 0usize;
     while i + HASH_TYPE_LENGTH - 1 < num_bytes {
@@ -1162,7 +1163,7 @@ pub(crate) fn create_hq_zopfli_backward_references<
             );
         }
         let found = workspace.arena.len() - cur_match_pos;
-        workspace.num_matches[i] = found as u32;
+        workspace.num_matches.push(found as u32);
 
         if found > 0 {
             let match_len = workspace.arena[workspace.arena.len() - 1].length();
@@ -1183,12 +1184,14 @@ pub(crate) fn create_hq_zopfli_backward_references<
                     (pos + match_len).min(store_end),
                 );
                 let stop = (i + 1 + skip).min(num_bytes);
-                workspace.num_matches[i + 1..stop].fill(0);
+                workspace.num_matches.resize(stop, 0);
                 i += skip;
             }
         }
         i += 1;
     }
+    // The last positions are too short to hash and have no matches.
+    workspace.num_matches.resize(num_bytes, 0);
 
     // The state the second pass has to start from again.
     let orig_num_literals = state.num_literals;

@@ -341,9 +341,7 @@ impl MetaBlockBuilder {
         );
 
         // Literal contexts: cluster, then spread the result over every context
-        // when modelling is off.
-        mb.literal_context_map
-            .resize(mb.literal_split.num_types << LITERAL_CONTEXT_BITS, 0);
+        // when modelling is off. Clustering rebuilds the map from scratch.
         cluster_histograms(
             &self.literal_histograms,
             NUM_LITERAL_SYMBOLS,

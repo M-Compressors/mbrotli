@@ -67,11 +67,16 @@ impl Artifact {
         &mut self,
         writer: &mut W,
         written: &mut u64,
-        scratch: &mut [u8],
+        scratch: &mut Vec<u8>,
     ) -> io::Result<()> {
         match &mut self.storage {
             Storage::Memory(v) => write_counted(writer, v, written),
             Storage::File(f) => {
+                // Only spooled artifacts need a bounce buffer; memory staging
+                // never pays for zeroing one.
+                if scratch.is_empty() {
+                    scratch.resize(SPOOL_CHUNK, 0);
+                }
                 f.file.seek(SeekFrom::Start(0))?;
                 let mut remaining = self.len;
                 while remaining != 0 {
@@ -85,6 +90,9 @@ impl Artifact {
         }
     }
 }
+/// Bytes read from a spooled artifact per copy step.
+const SPOOL_CHUNK: usize = 128 << 10;
+
 pub(in crate::compressor::parallel) fn write_counted<W: Write>(
     writer: &mut W,
     mut bytes: &[u8],

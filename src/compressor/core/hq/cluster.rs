@@ -360,14 +360,14 @@ fn histogram_reindex<const N: usize>(
         }
     }
 
+    // Indices were assigned in first-appearance order, so the histograms are
+    // appended in index order.
     reindexed.clear();
-    reindexed.resize(next_index as usize, Histogram::default());
-    let mut written = 0u32;
+    reindexed.reserve(next_index as usize);
     for slot in symbols.iter_mut().take(length) {
         let symbol = *slot as usize;
-        if new_index[symbol] == written {
-            reindexed[written as usize] = out[symbol].clone();
-            written += 1;
+        if new_index[symbol] as usize == reindexed.len() {
+            reindexed.push(out[symbol].clone());
         }
         *slot = new_index[symbol];
     }
@@ -402,12 +402,11 @@ pub(crate) fn cluster_histograms<const N: usize>(
     out.clear();
     out.reserve(in_size);
     symbols.clear();
-    symbols.resize(in_size, 0);
-    for (index, histogram) in input.iter().enumerate() {
+    symbols.extend(0..in_size as u32);
+    for histogram in input {
         let mut copy = histogram.clone();
         copy.bit_cost = population_cost(histogram, data_size);
         out.push(copy);
-        symbols[index] = index as u32;
     }
 
     let mut num_clusters = 0usize;

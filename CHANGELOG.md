@@ -39,6 +39,14 @@
   only bytes written past the result are now those of a decoding destination
   of at most 1 KiB, zeroed through `BorrowedBuf::ensure_init` instead of an
   `unsafe` cast.
+- Drop zero-fills whose zeros were never read: greedy block splits and hq
+  match counts are pushed in order instead of zeroed and then overwritten, hq
+  reindexed histograms are pushed, the hq batch is no longer cleared twice,
+  the literal context map is built by `extend` (and no longer resized before
+  clustering rebuilds it), and parallel assembly allocates its 128 KiB spool
+  buffer only for spooled artifacts. Output is unchanged. This is a cleanup,
+  not a speedup: callgrind counts within 0.06% of before at qualities 1-11 on
+  1 KB to 152 KB inputs (q11 -0.03..-0.06%).
 
 ## [v0.5.5](https://github.com/M-Compressors/mbrotli/releases/tag/v0.5.5) - 2026-10-02
 

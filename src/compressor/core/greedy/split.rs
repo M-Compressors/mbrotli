@@ -172,8 +172,8 @@ impl<const N: usize> BlockSplitter<N> {
     pub(crate) fn finish_block(&mut self, is_final: bool) {
         self.block_size = self.block_size.max(self.min_block_size);
         if self.num_blocks == 0 {
-            self.split.lengths[0] = self.block_size as u32;
-            self.split.types[0] = 0;
+            self.split.lengths.push(self.block_size as u32);
+            self.split.types.push(0);
             self.last_entropy[0] = bits_entropy(&self.histograms[0].data[..self.alphabet_size]);
             self.last_entropy[1] = self.last_entropy[0];
             self.num_blocks += 1;
@@ -202,8 +202,8 @@ impl<const N: usize> BlockSplitter<N> {
             {
                 // The block looks nothing like either neighbour: give it a
                 // type of its own.
-                self.split.lengths[self.num_blocks] = self.block_size as u32;
-                self.split.types[self.num_blocks] = self.split.num_types as u8;
+                self.split.lengths.push(self.block_size as u32);
+                self.split.types.push(self.split.num_types as u8);
                 self.last_histogram_ix[1] = self.last_histogram_ix[0];
                 // The reference narrows this to a byte, which only matters at
                 // the very last usable type.
@@ -218,8 +218,8 @@ impl<const N: usize> BlockSplitter<N> {
                 self.target_block_size = self.min_block_size;
             } else if diff[1] < diff[0] - SECOND_LAST_ADVANTAGE {
                 // It looks like the block before last: reuse that type.
-                self.split.lengths[self.num_blocks] = self.block_size as u32;
-                self.split.types[self.num_blocks] = self.split.types[self.num_blocks - 2];
+                self.split.lengths.push(self.block_size as u32);
+                self.split.types.push(self.split.types[self.num_blocks - 2]);
                 self.last_histogram_ix.swap(0, 1);
                 self.merge_current_into(self.last_histogram_ix[0]);
                 self.last_entropy[1] = self.last_entropy[0];
@@ -398,8 +398,8 @@ impl ContextBlockSplitter {
         let contexts = self.num_contexts;
         self.block_size = self.block_size.max(self.min_block_size);
         if self.num_blocks == 0 {
-            self.split.lengths[0] = self.block_size as u32;
-            self.split.types[0] = 0;
+            self.split.lengths.push(self.block_size as u32);
+            self.split.types.push(0);
             for index in 0..contexts {
                 self.last_entropy[index] =
                     bits_entropy(&self.histograms[index].data[..self.alphabet_size]);
@@ -433,8 +433,8 @@ impl ContextBlockSplitter {
                 && diff[0] > self.split_threshold
                 && diff[1] > self.split_threshold
             {
-                self.split.lengths[self.num_blocks] = self.block_size as u32;
-                self.split.types[self.num_blocks] = self.split.num_types as u8;
+                self.split.lengths.push(self.block_size as u32);
+                self.split.types.push(self.split.num_types as u8);
                 self.last_histogram_ix[1] = self.last_histogram_ix[0];
                 self.last_histogram_ix[0] = self.split.num_types * contexts;
                 for (index, &entropy) in entropy.iter().enumerate().take(contexts) {
@@ -448,8 +448,8 @@ impl ContextBlockSplitter {
                 self.merge_last_count = 0;
                 self.target_block_size = self.min_block_size;
             } else if diff[1] < diff[0] - SECOND_LAST_ADVANTAGE {
-                self.split.lengths[self.num_blocks] = self.block_size as u32;
-                self.split.types[self.num_blocks] = self.split.types[self.num_blocks - 2];
+                self.split.lengths.push(self.block_size as u32);
+                self.split.types.push(self.split.types[self.num_blocks - 2]);
                 self.last_histogram_ix.swap(0, 1);
                 for index in 0..contexts {
                     self.merge_current_into(self.last_histogram_ix[0] + index, index);
@@ -645,11 +645,14 @@ mod tests {
     }
 
     #[test]
-    fn a_fresh_split_reserves_room_for_every_block() {
+    fn reserving_empties_the_split_and_keeps_room_for_every_block() {
         let mut split = BlockSplit::default();
+        split.types.push(1);
+        split.lengths.push(9);
+        split.num_blocks = 1;
         split.reserve(5);
-        assert_eq!(split.num_blocks, 5);
-        assert_eq!(split.types.len(), 5);
-        assert_eq!(split.lengths.len(), 5);
+        assert_eq!(split.num_blocks, 0);
+        assert!(split.types.is_empty() && split.lengths.is_empty());
+        assert!(split.types.capacity() >= 5 && split.lengths.capacity() >= 5);
     }
 }

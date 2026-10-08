@@ -345,7 +345,7 @@ impl<'e, 'i> Batch<'e, 'i> {
             .ok_or(ParallelEncodeError::SizeOverflow)
     }
     fn assemble<W: Write>(&mut self, writer: &mut W, written: &mut u64) -> io::Result<()> {
-        let mut scratch = [0u8; 128 << 10];
+        let mut scratch = Vec::new();
         if self.plan.tasks == 0 {
             return artifact::write_counted(writer, &self.empty, written);
         }
