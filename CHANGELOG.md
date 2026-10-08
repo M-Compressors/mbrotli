@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## [v0.5.6](https://github.com/M-Compressors/mbrotli/releases/tag/v0.5.6) - 2026-10-08
 
 - `Decompressor::decompress_to_uninit` decodes compressed members straight
   into the destination and reads it back as history, as
