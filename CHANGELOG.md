@@ -16,8 +16,7 @@ the last item.
   in the reference's order. `alice29.txt` q11 1.479G -> 1.156G instructions
   (-21.8%), q10 544M -> 511M (-6.0%).
 - Qualities 7-9 filter their ten or sixteen cached-distance probes the same
-  way, through the same private module, on the SSE2 token the greedy loops
-  already use. q7 -5.8 to -7.7% and q9 -8.1 to -15.5% instructions on
+  way, through the same private module. q7 -5.8 to -7.7% and q9 -8.1 to -15.5% instructions on
   `alice29.txt`, `lcet10.txt` and `mapsdatazrh`; q8 -0.9% and -4.4%, but
   +0.9% on `lcet10.txt`.
 - Qualities 10 and 11 compare static-dictionary words with one `u8x32`
@@ -28,6 +27,23 @@ the last item.
 - The UTF-8 share test that picks the literal cost model and context mode at
   qualities 10 and 11 stops as soon as its answer is settled. `mapsdatazrh`
   q10 -1.3%, q11 -0.6% instructions; text unchanged.
+- The greedy loops (qualities 2-9) run at the detected SIMD level, like every
+  other encoder kernel, instead of always at SSE2 on x86. The candidate
+  measurements kept out of line on purpose now enter the level's
+  feature-enabled function directly, so their 32-byte comparisons inline into
+  it rather than calling a helper per vector operation. Internally the
+  encoders keep their `Backend` and dispatch it once per block instead of
+  holding a boxed kernel object, and the parallel fragment kernels are a
+  type-level choice, so serial-only builds do not link them. Against the
+  previous tree, callgrind: q4-q9 -1.3 to -6.5% instructions except
+  `alice29.txt` q4 +1.9% and random 64 KiB q4 +5.1%; q0-q3 and q10-q11 within
+  ±0.8%. One idle core of an i7-13700KF, alternating
+  with the previous tree, q2-q9 on Alice, 1 MiB cyclic Alice, structured
+  binary and random 64 KiB: Alice q5/q6/q9 -2.1 to -2.6%, structured binary
+  q6/q8 -7.9/-4.1%, random q7/q8 -7.9/-8.8%; random q4 +3.5% and q6 +4.7%,
+  Alice q4/q8 +0.8/+1.2%; mean -0.9%. The compressor's machine code grows by about 2 MB
+  (a one-shot harness binary's `.text` 2.36 -> 4.38 MB): the greedy loops are
+  now compiled for SSE2, SSE4.2, AVX2 and AVX-512.
 - Together, against v0.5.6: q10 -11.5% (`alice29.txt`), -11.0% (`lcet10.txt`),
   -7.0% (`mapsdatazrh`); q11 -23.8%, -23.3%, -19.4%.
 - Measured with the implementation comparison (`benchmarks/comparison`, cold

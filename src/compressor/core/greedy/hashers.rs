@@ -22,6 +22,7 @@ use alloc::vec::Vec;
 use core::num::NonZeroUsize;
 
 use fearless_simd::{Simd, SimdBase, SimdMask, u8x16, u8x32, u32x16};
+use fearless_simd_macros::simd;
 
 use super::super::cache_probe::ProbeSite;
 use super::params::{BucketShape, ChainShape, HasherPlan};
@@ -1972,13 +1973,15 @@ struct Found {
 /// and score when it beats `best_score`, and `None` otherwise.
 ///
 /// Out of line on purpose, like [`accept_candidate`]: the probe loop that
-/// calls it keeps only its own filter in registers. It returns by value
+/// calls it keeps only its own filter in registers. `#[simd]` is what keeps
+/// it there; see [`accept_candidate`]. It returns by value
 /// rather than writing the result, so the result never has to live in
 /// memory during the search.
 /// A winning score is positive: its nonzero niche keeps the optional pair
 /// in two words. Masked ring positions use at most 31 bits and block lengths
 /// at most 24; narrow arguments expose those bounds to the optimizer.
-#[inline(never)]
+#[inline(always)]
+#[simd]
 fn accept_cached<S: Simd>(
     simd: S,
     data: &[u8],
@@ -2023,12 +2026,17 @@ fn accept_cached<S: Simd>(
 /// it runs in registers only while it holds a dozen values at most. The
 /// measurement brings the scan loop and the current window with it;
 /// inlined, those compete for the loop's registers and the compiler
-/// reloads the loop's own invariants from the stack at every candidate. It
-/// returns by value rather than writing the result, so the result never
+/// reloads the loop's own invariants from the stack at every candidate.
+/// The out-of-line body is the level's feature-enabled `#[simd]` entry: the
+/// wrapper inlines into the loop, which calls that entry directly, and the
+/// vector compares inline into it. An `#[inline(never)]` body without the
+/// level's features would instead call every vector operation above SSE2.
+/// It returns by value rather than writing the result, so the result never
 /// has to live in memory during the search.
 /// Like [`accept_cached`], it uses a positive-score niche and narrow physical
 /// ring indices; logical stream positions are not narrowed here.
-#[inline(never)]
+#[inline(always)]
+#[simd]
 fn accept_candidate<S: Simd, const HASH64: bool>(
     simd: S,
     data: &[u8],

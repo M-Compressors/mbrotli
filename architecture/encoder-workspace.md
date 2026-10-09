@@ -15,9 +15,9 @@ is exposed.
 
 `fearless_simd/force_support_fallback` is enabled only by a dev-dependency.
 Production dispatch compiles the backends supported by the target; targets with
-no supported SIMD retain their required portable fallback. On x86, greedy
-kernels use SSE2 when the selected token supports it and otherwise retain the
-selected token, without naming the optional `Fallback` type. Scalar decisions
+no supported SIMD retain their required portable fallback. Every encoder
+kernel — fast fragments, copy extension, greedy and Zopfli searches, block
+assignment and stitching — runs at the one selected backend. Scalar decisions
 in tag filtering and histogram assignment use `Level::is_fallback()`.
 
 ```mermaid
@@ -27,7 +27,7 @@ flowchart TD
     Native -->|No supported SIMD| Portable[Required portable fallback]
     Native --> Public[Public Backend::available matrix]
     Scalar --> Matrix[Scalar plus host SIMD differential tests]
-    Public --> Select[Select once; retain proof tokens]
+    Public --> Select[Select once; retain Backend]
     Portable --> Select
     Matrix --> Select
 ```
@@ -38,7 +38,7 @@ graph TD
     C --> Staging[undecided input tail]
     C --> Pending[durable encoded suffix and cursor]
     Cache --> Family[Fast / Greedy / HQ]
-    Family --> Kernel[Box dyn Kernels: Selected S]
+    Family --> Kernel[retained Backend: dispatch! per block]
     Family --> Search[retained matcher and ring buffer]
     Family --> Entropy[retained splits, histograms, trees and codes]
     Session[public EncoderSession] --> Owner[private SessionCore: borrows Compressor]
@@ -149,9 +149,9 @@ Slice contents may be partially written on failure, as documented.
 
 ## Extending copies across input blocks
 
-Greedy and HQ encoders pass a borrowed `CommandExtension` to their retained
-`Kernels::extend` entry, which calls the `#[simd]` `extend_last_command`; inside
-the token's feature context it runs the shared exact match-length scan. Each scan is bounded by both physical wrap points and the
+Greedy and HQ encoders dispatch their retained `Backend` and pass a borrowed
+`CommandExtension` to the `#[simd]` `extend_last_command`; inside the token's
+feature context it runs the shared exact match-length scan. Each scan is bounded by both physical wrap points and the
 remaining input; a fully matching chunk advances the command and repeats after
 wrapping either index. The dictionary-prefix branch retains its existing seam
 handling. No public API or error variant changes.
@@ -159,7 +159,7 @@ handling. No public API or error variant changes.
 ```mermaid
 flowchart TD
     Block[Next input block] --> Eligible{Last copy can continue?}
-    Eligible -->|yes| Kernel[Selected S: extend]
+    Eligible -->|yes| Kernel[dispatch Backend: extend_last_command]
     Kernel --> Source{Distance addresses ring?}
     Source -->|yes| Bound[Bound both slices at wrap and input end]
     Bound --> Scan[Exact scalar or SIMD match length]
@@ -320,31 +320,43 @@ through a `MatchRun` view that holds the tables as slices bound once, the way
 the reference keeps `restrict` pointers, so a store never forces the loop to
 reload the table it is about to read.
 
-Selection dispatch runs when an encoder is created. Its `Box<dyn Kernels>` stores
-the selected proof token; current tokens are zero-sized. Each outer kernel call
-enters the selected feature-enabled body and passes the token to generic inner
-loops. There is no per-candidate feature detection or virtual call. Cache reuse
-checks the backend discriminant and resolved parameter shape before reset.
+Each encoder retains the `Backend` it was built with; detection happened once,
+when that `Backend` was created. At every block boundary the encoder matches
+it with `fearless_simd::dispatch!` — the only dispatch point — enters the
+selected feature-enabled body and passes the concrete token to generic inner
+loops. There is no trait object, per-candidate feature detection or virtual
+call. Whether an encoder serves an independent parallel worker is the
+encoder's const parameter `INDEPENDENT` (`Encoder<true>` in the fragment
+adapter, the default `false` elsewhere), so serial builds never link the
+fragment-only kernels. Cache reuse checks the backend and resolved parameter
+shape before reset.
 
 The outer kernels are `#[simd]` functions (`fearless_simd_macros`): each
 enters the token's feature context once, with its arguments passed separately
 to the feature-enabled entry. After matcher specialization, greedy reference
 generation calls the `#[simd]` `search_positions` for its search body, keeping
 tag and match-length operations in the selected feature context. This static
-entry stays outside the loop and uses the existing token. An out-of-line baseline compilation would require a feature-enabled helper
-call per SIMD operation even though the correct token had already been selected.
+entry stays outside the loop and uses the existing token. Helpers kept out of
+line on purpose — the greedy `accept_cached` and `accept_candidate`
+measurements and the `match_len_tail` scan — are `#[simd]` functions with an
+`#[inline(always)]` wrapper: the loop calls the level's feature-enabled entry
+directly and the vector compares inline into it. An `#[inline(never)]` body
+compiled without the level's features would instead call a feature-enabled
+helper per SIMD operation above SSE2 (measured: binary q5–q9 +14–19% time
+with greedy at AVX2).
 
 ```mermaid
 sequenceDiagram
     participant Builder
     participant Cache
-    participant Selected as Selected S / dyn Kernels
+    participant Encoder as Encoder<INDEPENDENT> (retained Backend)
     participant Inner as generic inner loops
     Builder->>Builder: validate opaque Backend
-    Cache->>Selected: dispatch once when constructing encoder
+    Cache->>Encoder: construct with the Backend
     loop blocks and reused streams
-        Cache->>Selected: outer kernel call
-        Selected->>Inner: call #[simd] kernel, pass S
+        Cache->>Encoder: encode block
+        Encoder->>Encoder: dispatch!(backend) once per block
+        Encoder->>Inner: call #[simd] kernel, pass S
         opt greedy reference generation
             Inner->>Inner: specialize matcher, #[simd] search_positions with S
         end
@@ -379,3 +391,8 @@ See [development checks](../docs/development.md) and
 - The cache has one slot; alternating incompatible resolved settings rebuilds it.
 - Retained-byte accounting excludes allocator overhead and is not process RSS.
 - Host-backend tests only exercise instruction sets available on the test host.
+- Every encoder kernel, the greedy loops included, is compiled once per x86
+  level (SSE2, SSE4.2, AVX2, AVX-512): about 1.85x the machine code of the
+  former SSE2-only greedy loops. Running the greedy loops at AVX2 leaves the
+  quality 4 bucket loop with more spills on incompressible input (random
+  64 KiB q4 +3–4% time, +5% instructions).

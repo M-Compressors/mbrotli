@@ -13,7 +13,7 @@ use alloc::boxed::Box;
 use alloc::vec::Vec;
 use core::mem::MaybeUninit;
 
-use fearless_simd::Level;
+use crate::backend::Backend;
 
 use super::fast::FastEncoder;
 use super::greedy::encoder::GreedyEncoder;
@@ -26,16 +26,16 @@ use crate::compressor::shared::SharedBrotliError;
 use crate::compressor::{BrotliCompressError, BrotliResult, CompressParams, QualityLevel};
 
 /// The encoder a quality routes to.
-pub(crate) enum Encoder {
+pub(crate) enum Encoder<const INDEPENDENT: bool = false> {
     /// Quality 0 and 1: one fragment at a time, static or per-fragment codes.
-    Fast(FastEncoder),
+    Fast(FastEncoder<INDEPENDENT>),
     /// Qualities 2 to 9: greedy references over a sliding window.
-    Greedy(Box<GreedyEncoder>),
+    Greedy(Box<GreedyEncoder<INDEPENDENT>>),
     /// Qualities 10 and 11: Zopfli references and high-quality meta-blocks.
-    Hq(Box<HqEncoder>),
+    Hq(Box<HqEncoder<INDEPENDENT>>),
 }
 
-impl Encoder {
+impl<const INDEPENDENT: bool> Encoder<INDEPENDENT> {
     /// Creates the encoder `params` asks for.
     ///
     /// `size_hint` is the total input size when it is known; qualities four
@@ -46,11 +46,11 @@ impl Encoder {
     /// Returns [`BrotliCompressError::UnsupportedQuality`] for a quality no
     /// encoder implements yet.
     pub(crate) fn new(
-        level: Level,
+        backend: Backend,
         params: &CompressParams,
         size_hint: usize,
     ) -> BrotliResult<Self> {
-        match FastEncoder::new(level, params) {
+        match FastEncoder::new(backend, params) {
             Ok(encoder) => return Ok(Self::Fast(encoder)),
             Err(BrotliCompressError::UnsupportedQuality(_)) => {}
             Err(error) => return Err(error),
@@ -58,12 +58,12 @@ impl Encoder {
         // An explicit hint always wins; the fallback is what the one-shot entry
         // points know and the streaming ones do not.
         let size_hint = params.size_hint().unwrap_or(size_hint);
-        match GreedyEncoder::new(level, params, size_hint) {
+        match GreedyEncoder::new(backend, params, size_hint) {
             Ok(encoder) => return Ok(Self::Greedy(Box::new(encoder))),
             Err(BrotliCompressError::UnsupportedQuality(_)) => {}
             Err(error) => return Err(error),
         }
-        Ok(Self::Hq(Box::new(HqEncoder::new(level, params)?)))
+        Ok(Self::Hq(Box::new(HqEncoder::new(backend, params)?)))
     }
 
     /// Returns the largest input one [`Encoder::encode_block`] call accepts.
@@ -131,7 +131,7 @@ impl Encoder {
     /// Propagates what [`GreedyEncoder::expecting`] reports.
     pub(crate) fn retarget_size_hint(
         &mut self,
-        level: Level,
+        backend: Backend,
         params: &CompressParams,
         expected_input: usize,
     ) -> BrotliResult<()> {
@@ -140,7 +140,7 @@ impl Encoder {
         };
         let size_hint = params.size_hint().unwrap_or(0);
         if !encoder.retarget(GreedyParams::new(params, size_hint)?, expected_input) {
-            let mut rebuilt = GreedyEncoder::expecting(level, params, size_hint, expected_input)?;
+            let mut rebuilt = GreedyEncoder::expecting(backend, params, size_hint, expected_input)?;
             rebuilt.adopt_stream_head(encoder);
             **encoder = rebuilt;
         }
@@ -203,8 +203,10 @@ impl Encoder {
     pub(crate) fn retained_bytes(&self) -> usize {
         match self {
             Self::Fast(encoder) => encoder.retained_bytes(),
-            Self::Greedy(encoder) => size_of::<GreedyEncoder>() + encoder.retained_bytes(),
-            Self::Hq(encoder) => size_of::<HqEncoder>() + encoder.retained_bytes(),
+            Self::Greedy(encoder) => {
+                size_of::<GreedyEncoder<INDEPENDENT>>() + encoder.retained_bytes()
+            }
+            Self::Hq(encoder) => size_of::<HqEncoder<INDEPENDENT>>() + encoder.retained_bytes(),
         }
     }
 }
@@ -212,19 +214,16 @@ impl Encoder {
 /// A retained encoder, reused when the next call resolves to the same shape.
 ///
 /// This backs the public `Compressor`. It holds one encoder and
-/// the SIMD level it was built for; a call whose parameters resolve to that
+/// the backend it was built for; a call whose parameters resolve to that
 /// same shape resets it instead of building a new one, and a call that does
 /// not replaces it.
 #[derive(Default)]
 pub(crate) struct EncoderCache {
     /// The retained encoder, absent until the first call fills it.
     encoder: Option<Encoder>,
-    /// The level the retained encoder was built for.
-    ///
-    /// `Level` carries a proof that a target feature is available, so it has
-    /// no equality of its own; the discriminant is what actually selects the
-    /// kernels, and it is what a reuse has to agree on.
-    level: Option<core::mem::Discriminant<Level>>,
+    /// The backend the retained encoder was built for; a reuse has to agree
+    /// on it, since it selects the kernels every block runs.
+    backend: Option<Backend>,
 }
 
 impl core::fmt::Debug for EncoderCache {
@@ -246,19 +245,18 @@ impl EncoderCache {
     #[cfg_attr(all(feature = "hotpath", not(feature = "no_std")), hotpath::measure)]
     pub(crate) fn acquire(
         &mut self,
-        level: Level,
+        backend: Backend,
         params: &CompressParams,
         size_hint: usize,
     ) -> BrotliResult<&mut Encoder> {
-        let level_key = core::mem::discriminant(&level);
-        let reusable = self.level == Some(level_key)
+        let reusable = self.backend == Some(backend)
             && self
                 .encoder
                 .as_mut()
                 .is_some_and(|encoder| encoder.reset_for(params, size_hint));
         if !reusable {
-            self.encoder = Some(Encoder::new(level, params, size_hint)?);
-            self.level = Some(level_key);
+            self.encoder = Some(Encoder::new(backend, params, size_hint)?);
+            self.backend = Some(backend);
         }
         match self.encoder.as_mut() {
             Some(encoder) => Ok(encoder),
@@ -286,7 +284,7 @@ impl EncoderCache {
     /// removes the question.
     pub(crate) fn invalidate(&mut self) {
         self.encoder = None;
-        self.level = None;
+        self.backend = None;
     }
 }
 
@@ -367,7 +365,7 @@ const fn empty_stream(params: &CompressParams) -> ([u8; 2], usize) {
 /// encoder implements.
 pub(crate) fn compress_to_vec_attached(
     cache: &mut EncoderCache,
-    level: Level,
+    backend: Backend,
     params: &CompressParams,
     attached: Option<&SharedContextInner>,
     src: &[u8],
@@ -381,7 +379,7 @@ pub(crate) fn compress_to_vec_attached(
     }
 
     let start = out.len();
-    let encoder = match cache.acquire(level, params, src.len()) {
+    let encoder = match cache.acquire(backend, params, src.len()) {
         Ok(encoder) => encoder,
         Err(error) => {
             cache.invalidate();
@@ -407,13 +405,20 @@ pub(crate) fn compress_to_vec_attached(
 /// whole stream, and propagates quality routing errors.
 pub(crate) fn compress_to_slice_attached(
     cache: &mut EncoderCache,
-    level: Level,
+    backend: Backend,
     params: &CompressParams,
     attached: Option<&SharedContextInner>,
     src: &[u8],
     dst: &mut [u8],
 ) -> BrotliResult<usize> {
-    compress_to_destination(cache, level, params, attached, src, Destination::Slice(dst))
+    compress_to_destination(
+        cache,
+        backend,
+        params,
+        attached,
+        src,
+        Destination::Slice(dst),
+    )
 }
 
 /// Compresses `src` into uninitialized `dst`; initializes exactly the
@@ -424,7 +429,7 @@ pub(crate) fn compress_to_slice_attached(
 /// As [`compress_to_slice_attached`].
 pub(crate) fn compress_to_uninit_attached(
     cache: &mut EncoderCache,
-    level: Level,
+    backend: Backend,
     params: &CompressParams,
     attached: Option<&SharedContextInner>,
     src: &[u8],
@@ -432,7 +437,7 @@ pub(crate) fn compress_to_uninit_attached(
 ) -> BrotliResult<usize> {
     compress_to_destination(
         cache,
-        level,
+        backend,
         params,
         attached,
         src,
@@ -444,7 +449,7 @@ pub(crate) fn compress_to_uninit_attached(
 /// uninitialized slices.
 fn compress_to_destination(
     cache: &mut EncoderCache,
-    level: Level,
+    backend: Backend,
     params: &CompressParams,
     attached: Option<&SharedContextInner>,
     src: &[u8],
@@ -460,7 +465,7 @@ fn compress_to_destination(
         return Ok(length);
     }
 
-    let encoder = match cache.acquire(level, params, src.len()) {
+    let encoder = match cache.acquire(backend, params, src.len()) {
         Ok(encoder) => encoder,
         Err(error) => {
             cache.invalidate();
@@ -487,7 +492,7 @@ mod tests {
         for quality in [QualityLevel::Q0, QualityLevel::Q2, QualityLevel::Q11] {
             let mut params = CompressParams::new(quality, WindowBits::DEFAULT);
             params.stream_offset = 123;
-            let mut encoder = Encoder::new(Level::fallback(), &params, 0).expect("encoder");
+            let mut encoder: Encoder = Encoder::new(Backend::SCALAR, &params, 0).expect("encoder");
             let mut expected = Vec::new();
             finish(&mut encoder, None, &[], Destination::Append(&mut expected)).expect("finish");
             let (bytes, length) = empty_stream(&params);
@@ -514,7 +519,8 @@ mod tests {
             for window in [10, 16, 17, 22] {
                 let params =
                     CompressParams::new(quality, WindowBits::standard(window).expect("window"));
-                let mut encoder = Encoder::new(Level::fallback(), &params, 0).expect("encoder");
+                let mut encoder: Encoder =
+                    Encoder::new(Backend::SCALAR, &params, 0).expect("encoder");
                 let mut expected = Vec::new();
                 finish(&mut encoder, None, &[], Destination::Append(&mut expected))
                     .expect("finish");
@@ -522,7 +528,7 @@ mod tests {
                 let mut actual = b"prefix".to_vec();
                 compress_to_vec_attached(
                     &mut cache,
-                    Level::fallback(),
+                    Backend::SCALAR,
                     &params,
                     None,
                     &[],
@@ -535,7 +541,7 @@ mod tests {
                 let mut destination = [0; 2];
                 let written = compress_to_slice_attached(
                     &mut cache,
-                    Level::fallback(),
+                    Backend::SCALAR,
                     &params,
                     None,
                     &[],
@@ -546,7 +552,7 @@ mod tests {
                 assert!(
                     compress_to_slice_attached(
                         &mut cache,
-                        Level::fallback(),
+                        Backend::SCALAR,
                         &params,
                         None,
                         &[],
@@ -560,22 +566,36 @@ mod tests {
 
     /// Compresses `src` through a throwaway workspace, as the tests need.
     fn compress_to_vec(
-        level: Level,
+        backend: Backend,
         params: &CompressParams,
         src: &[u8],
         out: &mut Vec<u8>,
     ) -> BrotliResult<()> {
-        compress_to_vec_attached(&mut EncoderCache::default(), level, params, None, src, out)
+        compress_to_vec_attached(
+            &mut EncoderCache::default(),
+            backend,
+            params,
+            None,
+            src,
+            out,
+        )
     }
 
     /// Compresses `src` into `dst` through a throwaway workspace.
     fn compress_to_slice(
-        level: Level,
+        backend: Backend,
         params: &CompressParams,
         src: &[u8],
         dst: &mut [u8],
     ) -> BrotliResult<usize> {
-        compress_to_slice_attached(&mut EncoderCache::default(), level, params, None, src, dst)
+        compress_to_slice_attached(
+            &mut EncoderCache::default(),
+            backend,
+            params,
+            None,
+            src,
+            dst,
+        )
     }
 
     fn params(quality: QualityLevel, lgwin: u8) -> CompressParams {
@@ -601,9 +621,9 @@ mod tests {
 
     #[test]
     fn quality_routing_reaches_both_encoders() {
-        let level = Level::try_detect().unwrap_or_else(Level::baseline);
+        let backend = Backend::default();
         for quality in IMPLEMENTED {
-            let encoder = Encoder::new(level, &params(quality, 22), 0).expect("routed");
+            let encoder: Encoder = Encoder::new(backend, &params(quality, 22), 0).expect("routed");
             match (quality, encoder) {
                 (QualityLevel::Q0 | QualityLevel::Q1, Encoder::Fast(_)) => {}
                 (
@@ -625,10 +645,11 @@ mod tests {
 
     #[test]
     fn every_quality_the_format_defines_now_compresses() {
-        let level = Level::try_detect().unwrap_or_else(Level::baseline);
+        let backend = Backend::default();
         for quality in IMPLEMENTED {
             let mut out = Vec::new();
-            let outcome = compress_to_vec(level, &params(quality, 22), b"data data data", &mut out);
+            let outcome =
+                compress_to_vec(backend, &params(quality, 22), b"data data data", &mut out);
             assert!(outcome.is_ok(), "quality {quality:?} failed: {outcome:?}");
             assert!(!out.is_empty(), "quality {quality:?} produced nothing");
         }
@@ -636,12 +657,12 @@ mod tests {
 
     #[test]
     fn slice_output_reports_a_too_small_buffer() {
-        let level = Level::try_detect().unwrap_or_else(Level::baseline);
+        let backend = Backend::default();
         let mut dst = [0u8; 1];
         for quality in IMPLEMENTED {
             assert!(matches!(
                 compress_to_slice(
-                    level,
+                    backend,
                     &params(quality, 22),
                     b"hello world hello world",
                     &mut dst
@@ -653,15 +674,15 @@ mod tests {
 
     #[test]
     fn vector_and_slice_outputs_agree() {
-        let level = Level::try_detect().unwrap_or_else(Level::baseline);
+        let backend = Backend::default();
         for quality in IMPLEMENTED {
             let params = params(quality, 22);
             let input: Vec<u8> = (0..100_000u32).map(|i| (i % 251) as u8).collect();
             let mut expected = Vec::new();
-            compress_to_vec(level, &params, &input, &mut expected).expect("vector output");
+            compress_to_vec(backend, &params, &input, &mut expected).expect("vector output");
             let mut actual = vec![0u8; expected.len()];
             let written =
-                compress_to_slice(level, &params, &input, &mut actual).expect("slice output");
+                compress_to_slice(backend, &params, &input, &mut actual).expect("slice output");
             assert_eq!(written, expected.len(), "quality {quality:?}");
             assert_eq!(actual, expected, "quality {quality:?}");
         }
@@ -669,15 +690,15 @@ mod tests {
 
     #[test]
     fn an_empty_input_preserves_the_configured_stream_header() {
-        let level = Level::try_detect().unwrap_or_else(Level::baseline);
+        let backend = Backend::default();
         for quality in IMPLEMENTED {
             let mut out = Vec::new();
-            compress_to_vec(level, &params(quality, 22), b"", &mut out).expect("empty input");
+            compress_to_vec(backend, &params(quality, 22), b"", &mut out).expect("empty input");
             assert_eq!(out, vec![59]);
 
             let mut dst = [0u8; 4];
             assert_eq!(
-                compress_to_slice(level, &params(quality, 22), b"", &mut dst).ok(),
+                compress_to_slice(backend, &params(quality, 22), b"", &mut dst).ok(),
                 Some(1)
             );
             assert_eq!(dst[0], 59);
@@ -698,18 +719,20 @@ mod tests {
 
     #[test]
     fn the_cache_reuses_an_encoder_of_the_same_shape() {
-        let level = Level::try_detect().unwrap_or_else(Level::baseline);
+        let backend = Backend::default();
         for quality in IMPLEMENTED {
             // The hint is pinned, so two different input lengths still resolve
             // to the same match finder and the same block sizes.
             let params = params(quality, 22).with_size_hint(Some(1 << 20));
             let mut cache = EncoderCache::default();
 
-            cache.acquire(level, &params, 100).expect("first acquire");
+            cache.acquire(backend, &params, 100).expect("first acquire");
             let first = retained(&mut cache);
             assert_ne!(first, 0, "quality {quality:?}: nothing was retained");
 
-            cache.acquire(level, &params, 5000).expect("second acquire");
+            cache
+                .acquire(backend, &params, 5000)
+                .expect("second acquire");
             assert_eq!(
                 retained(&mut cache),
                 first,
@@ -720,17 +743,17 @@ mod tests {
 
     #[test]
     fn the_cache_rebuilds_when_the_shape_changes() {
-        let level = Level::try_detect().unwrap_or_else(Level::baseline);
+        let backend = Backend::default();
         let mut cache = EncoderCache::default();
         // Quality 0 and quality 11 do not even share an encoder core, so a
         // reset could not possibly serve both.
         cache
-            .acquire(level, &params(QualityLevel::Q0, 22), 1000)
+            .acquire(backend, &params(QualityLevel::Q0, 22), 1000)
             .expect("first acquire");
         assert!(matches!(cache.encoder, Some(Encoder::Fast(_))));
 
         cache
-            .acquire(level, &params(QualityLevel::Q11, 22), 1000)
+            .acquire(backend, &params(QualityLevel::Q11, 22), 1000)
             .expect("second acquire");
         assert!(
             matches!(cache.encoder, Some(Encoder::Hq(_))),
@@ -740,15 +763,15 @@ mod tests {
 
     #[test]
     fn the_cache_rebuilds_when_the_size_hint_moves_the_matcher() {
-        let level = Level::try_detect().unwrap_or_else(Level::baseline);
+        let backend = Backend::default();
         // Quality 5 picks a different match finder above one mebibyte, so the
         // resolved parameters differ and the encoder must be rebuilt.
         let small = params(QualityLevel::Q5, 22).with_size_hint(Some(1024));
         let large = params(QualityLevel::Q5, 22).with_size_hint(Some(8 << 20));
         let mut cache = EncoderCache::default();
 
-        cache.acquire(level, &small, 1024).expect("first acquire");
-        assert!(cache.acquire(level, &large, 1024).is_ok());
+        cache.acquire(backend, &small, 1024).expect("first acquire");
+        assert!(cache.acquire(backend, &large, 1024).is_ok());
         assert!(
             !cache
                 .encoder
@@ -761,15 +784,15 @@ mod tests {
 
     #[test]
     fn invalidating_drops_the_retained_encoder() {
-        let level = Level::try_detect().unwrap_or_else(Level::baseline);
+        let backend = Backend::default();
         let mut cache = EncoderCache::default();
         cache
-            .acquire(level, &params(QualityLevel::Q5, 22), 1000)
+            .acquire(backend, &params(QualityLevel::Q5, 22), 1000)
             .expect("acquire");
         assert_ne!(retained(&mut cache), 0);
 
         cache.invalidate();
         assert_eq!(retained(&mut cache), 0, "invalidate kept the encoder");
-        assert!(cache.level.is_none(), "invalidate kept the level");
+        assert!(cache.backend.is_none(), "invalidate kept the backend");
     }
 }

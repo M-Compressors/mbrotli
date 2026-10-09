@@ -15,7 +15,8 @@ pub(crate) struct AlignedFragment<'a> {
 
 /// Retained, exclusively owned codec state, with a preselected fragment policy.
 pub(crate) struct FragmentEncoder {
-    encoder: Option<Encoder>,
+    /// An independent encoder: its fragments decode without the ones before.
+    encoder: Option<Encoder<true>>,
     backend: Backend,
     config: EncoderConfig,
     bytes: Vec<u8>,
@@ -32,7 +33,11 @@ impl FragmentEncoder {
     }
 
     pub(crate) fn retained_bytes(&self) -> usize {
-        self.bytes.capacity() + self.encoder.as_ref().map_or(0, Encoder::retained_bytes)
+        self.bytes.capacity()
+            + self
+                .encoder
+                .as_ref()
+                .map_or(0, Encoder::<true>::retained_bytes)
     }
 
     #[cfg_attr(all(feature = "hotpath", not(feature = "no_std")), hotpath::measure)]
@@ -46,13 +51,7 @@ impl FragmentEncoder {
             .as_mut()
             .is_some_and(|e| e.reset_for(&params, src.len()))
         {
-            let mut encoder = Encoder::new(self.backend.0, &params, src.len())?;
-            match &mut encoder {
-                Encoder::Fast(e) => e.select_fragment_kernels(self.backend.0),
-                Encoder::Greedy(e) => e.select_fragment_kernels(self.backend.0),
-                Encoder::Hq(e) => e.select_fragment_kernels(self.backend.0),
-            }
-            self.encoder = Some(encoder);
+            self.encoder = Some(Encoder::new(self.backend, &params, src.len())?);
         }
         let encoder = self
             .encoder

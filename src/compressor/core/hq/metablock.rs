@@ -268,7 +268,7 @@ impl MetaBlockBuilder {
     )]
     pub(crate) fn build(
         &mut self,
-        kernels: &dyn crate::compressor::core::dispatch::Kernels,
+        backend: crate::backend::Backend,
         data: &[u8],
         pos: usize,
         mask: usize,
@@ -290,7 +290,7 @@ impl MetaBlockBuilder {
         recompute_distance_prefixes(commands, &original, dist);
 
         self.splitter.split(
-            kernels,
+            backend,
             commands,
             data,
             pos,
@@ -529,7 +529,7 @@ mod tests {
         let mut mb = MetaBlockSplit::default();
         let mut dist = params.dist;
         builder.build(
-            &*crate::compressor::core::dispatch::select(fearless_simd::Level::fallback()),
+            crate::backend::Backend::SCALAR,
             data,
             0,
             usize::MAX,
@@ -651,7 +651,7 @@ mod tests {
         let mut mb = MetaBlockSplit::default();
         let mut dist = params.dist;
         builder.build(
-            &*crate::compressor::core::dispatch::select(fearless_simd::Level::fallback()),
+            crate::backend::Backend::SCALAR,
             data,
             0,
             usize::MAX,
@@ -803,7 +803,7 @@ mod tests {
         let mut warm = MetaBlockSplit::default();
         let mut warm_dist = params.dist;
         builder.build(
-            &*crate::compressor::core::dispatch::select(fearless_simd::Level::fallback()),
+            crate::backend::Backend::SCALAR,
             &other,
             0,
             usize::MAX,
@@ -820,7 +820,7 @@ mod tests {
         let mut mb = MetaBlockSplit::default();
         let mut dist = params.dist;
         builder.build(
-            &*crate::compressor::core::dispatch::select(fearless_simd::Level::fallback()),
+            crate::backend::Backend::SCALAR,
             &data,
             0,
             usize::MAX,

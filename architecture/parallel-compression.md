@@ -45,7 +45,7 @@ graph TD
     Worker --> Fragment[compressor::core::fragment]
     Fragment --> Driver[serial core::driver::Encoder]
     Driver --> Families[Fast / Greedy / HQ]
-    Families --> Dispatch[core::dispatch Selected S, INDEPENDENT]
+    Families --> Dispatch[Encoder true: dispatch! retained Backend per block]
     Task --> Artifact[private memory artifact or Spool]
     Artifact --> Spool[parallel::core::spool: File + cleanup guard]
     Task --> Slot[one completion slot per task]
@@ -211,7 +211,7 @@ sequenceDiagram
 | q0/q1 commands | Insert commands copy two bytes; the remaining copy and its distance are explicit. q0's independent starter/adaptive histograms include symbols 17/18 for three/four-byte copy remainders. q1 preserves compact symbol 40 at wire symbol 128 instead of overwriting it with the unused insert-zero alias, preserving the canonical Huffman order. |
 | Literal contexts | Greedy/HQ prefix seeding advances prior-byte state exactly once. Fast codecs use no literal contexts. Prefix data is emitted exactly once by the common writer. |
 | Entropy and splits | Rebuilt locally; q0 adaptive trees never cross a segment reset. |
-| SIMD | Backend detected by the planner once; `Selected<S, true>` installed when a fragment encoder is allocated, retained across reset. Serial `Selected<S, false>` remains separately monomorphized. |
+| SIMD | Backend detected by the planner once; the fragment adapter builds `Encoder<true>` on it and retains it across reset. Serial encoders are `Encoder<false>`, separately monomorphized, so serial-only builds never link the fragment kernels. |
 
 Every segment uses explicit distances throughout; cache-relative coding does
 not resume after a prefix. Dictionary overloads are absent. Parallel Large

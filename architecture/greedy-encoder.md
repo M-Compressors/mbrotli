@@ -1029,12 +1029,11 @@ halves so the "already lapped" property survives the truncation.
 
 ```mermaid
 graph TD
-    A["Compressor::new()"] -->|"Backend::default: detect or no_std baseline"| B["Level stored in the Compressor"]
-    B -->|"new encoder"| C["core::dispatch::select(level)"]
-    C --> D["retained Selected&lt;S, G&gt; kernel:<br/>S for fragment and high-quality kernels,<br/>G for the greedy loops"]
-    D --> E["select concrete matcher and run once per block"]
+    A["Compressor::new()"] -->|"Backend::default: detect or no_std baseline"| B["Backend stored in the Compressor"]
+    B -->|"new encoder"| D["GreedyEncoder&lt;INDEPENDENT&gt; retains the Backend"]
+    D -->|"dispatch!(backend) once per block"| E["select concrete matcher and run once per block"]
     E --> V["SearchLoop::visit&lt;R&gt;"]
-    V -->|"#[simd] search_positions: G feature context"| F["find_longest_match(simd, ...)"]
+    V -->|"#[simd] search_positions: S feature context"| F["find_longest_match(simd, ...)"]
     F --> G1["tag_equality(simd, ...)"]
     F --> G2["match_len_at: first word, then match_len_windows (scalar words)"]
 
@@ -1042,18 +1041,15 @@ graph TD
     class D once;
 ```
 
-The backend is selected once when the retained encoder is created. On x86 the
-kernel holds two tokens: the detected level `S` for the fragment,
-copy-extension and high-quality kernels, and SSE2 (`Level::as_sse2`) for the
-greedy loops, whose vector operations are the byte-equality mask of the tag
-filter and the cached-distance prefilter of §2.4, both 128 bits wide; the scalar backend keeps the greedy loops scalar, as the unfiltered
-oracle, and other architectures keep their own level for both. Compiling the
-greedy loops for every x86 level multiplied their code — a quarter of the crate
-— without a faster instruction to show for it. A virtual call at the outer
-`core::dispatch` boundary matches the `MatchFinder` enum once per scan and
-calls `create_backward_references`, a `#[simd]` function that enters `G`'s
-feature context; the concrete token reaches the tag filter without inner
-dispatch.
+The backend is detected once, when the `Compressor` is built, and the
+encoder retains it. The greedy loops run at that same backend as every other
+encoder kernel; the scalar backend keeps them scalar, as the unfiltered
+oracle. Per block, `create_references` matches the backend with
+`fearless_simd::dispatch!`, then the `MatchFinder` enum, and calls
+`create_backward_references`, a `#[simd]` function that enters `S`'s feature
+context; the concrete token reaches the tag filter without inner dispatch.
+Whether a prefix is attached and whether the encoder serves an independent
+worker (`INDEPENDENT`) are type-level choices made at the same point.
 
 `SearchLoop::visit` specializes the matcher and run, then calls
 `search_positions`, the `#[simd]` function that holds the per-position loop;
@@ -1069,9 +1065,11 @@ specialization also keeps each search body separate, rather than forcing every
 matcher into one large outer dispatch function.
 
 The nested feature entries use the existing token; they perform no detection
-or virtual dispatch, and on x86 the greedy loops' SSE2 entry adds nothing to
-the baseline features, so it inlines. All entries are outside the search
-loop. The macro's `fearless_simd` helper owns the feature proof; no
+or virtual dispatch. All entries are outside the search loop. The candidate
+measurements `accept_cached` and `accept_candidate` stay out of line on
+purpose (§2) and are `#[simd]` with an `#[inline(always)]` wrapper, so the
+search loop calls the level's feature-enabled entry directly and the 32-byte
+compares inline into it; the same holds for `match_len_tail`. The macro's `fearless_simd` helper owns the feature proof; no
 handwritten `target_feature` or unsafe block is needed.
 Scalar and SIMD paths keep the same matcher state, candidate order, score
 arithmetic, and error propagation.
@@ -1170,7 +1168,7 @@ sized by the same `2 * bytes + 503` reservation the reference uses.
 
 ## Independent parallel fragments
 
-The parallel fragment adapter installs `Selected<S, true>` once per worker.
+The parallel fragment adapter builds `GreedyEncoder<true>` once per worker.
 Its command policy emits full distance codes, while `DictionaryStats::DISABLED`
 keeps static-dictionary lookup disabled. `begin_fragment` starts headerless and
 seeds the ring and literal context with the raw prefix; the common fragment

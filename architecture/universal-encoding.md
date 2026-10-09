@@ -57,7 +57,7 @@ graph TD
     Empty --> Bytes
     Driver --> State[private StreamState: one block schedule]
     Session --> State
-    State --> Encoder[retained encoder and pinned Kernels]
+    State --> Encoder[retained encoder and pinned Backend]
     Encoder --> Bytes[identical completed bytes]
     Bytes --> Append[append destination]
     Bytes --> Fixed[fixed slice]

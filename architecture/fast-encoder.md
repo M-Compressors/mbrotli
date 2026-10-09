@@ -74,15 +74,14 @@ The quality 0 arena is not built by the constructor. `FastCore::OnePass`
 holds an `Option<Box<OnePassArena>>` that the first fragment needing a match
 scan fills in; a stream whose only fragment is stored verbatim (§5) never
 allocates it, never clears a hash table, and never touches the Huffman node
-pool. The encoder also records whether its kernels are the fragment-only ones
-of an independent worker (`independent`), because that decides whether the
-verbatim shortcut applies.
+pool. Whether the encoder serves an independent worker is its const parameter
+`INDEPENDENT`, because that decides whether the verbatim shortcut applies; a
+serial build never instantiates the fragment-only kernels.
 
 ```mermaid
 classDiagram
     class FastEncoder {
-        -Box~dyn Kernels~ kernels
-        -bool independent
+        -Backend backend
         -FastCore core
         -usize block_size_limit
         -u16 last_bytes
@@ -327,9 +326,9 @@ Meta-block layout for a compressed fast-path block:
 
 ```mermaid
 graph TD
-    select["core::dispatch::select(level), once on construction"] --> kernel["retained Selected&lt;S&gt;"]
-    A["FastEncoder::encode_block / encode_block_append"] --> kernel
-    kernel -->|"#[simd] entry, no re-selection"| B["encode_fragment&lt;S: Simd&gt;"]
+    select["Backend detected once, retained on construction"] --> A["FastEncoder&lt;INDEPENDENT&gt;::encode_block / encode_block_append"]
+    A --> kernel["dispatch!(backend) once per block"]
+    kernel -->|"#[simd] entry, no re-selection"| B["encode_fragment&lt;S: Simd, INDEPENDENT&gt;"]
     B --> C["q0::compress_fragment&lt;S&gt;"]
     B --> D["q1::compress_fragment&lt;S&gt;"]
     C --> E0["match_len_at: first word settled scalar"]
@@ -480,7 +479,7 @@ smaller blocks and can substantially increase compressed size.
 ## Independent parallel fragments
 
 `begin_fragment` removes the standalone header and `fragment_aligned` checks
-the flush boundary. The preselected `Selected<S, INDEPENDENT>` policy specializes
+the flush boundary. The encoder's const parameter `INDEPENDENT` (`FastEncoder<true>`) specializes
 q0/q1 command generation: independent fragments emit full distances, including
 the remainder after an insert command's two-byte copy. q0 seeds the otherwise
 unused short-copy symbols; q1 preserves the explicit copy-two symbol during

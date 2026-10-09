@@ -20,7 +20,6 @@ use fearless_simd_macros::simd;
 
 use super::cluster::{HistogramPair, combine_batch, move_cost};
 use super::params::HqParams;
-use crate::compressor::core::dispatch::Kernels;
 use crate::shared::bit_cost::population_cost;
 use crate::shared::block_split::{BlockSplit, MAX_NUMBER_OF_BLOCK_TYPES};
 use crate::shared::command::Command;
@@ -404,7 +403,7 @@ pub(crate) fn assign_blocks<S: Simd>(simd: S, input: BlockCosts<'_>) {
 )]
 #[cfg_attr(all(feature = "hotpath", not(feature = "no_std")), hotpath::measure)]
 fn find_blocks<const N: usize>(
-    kernels: &dyn Kernels,
+    backend: crate::backend::Backend,
     data: &[u16],
     block_switch_bitcost: f64,
     num_histograms: usize,
@@ -451,14 +450,15 @@ fn find_blocks<const N: usize>(
     cost[..num_histograms].fill(0.0);
     cost[num_histograms..lanes].fill(f64::NAN);
     switch_signal[..length * bitmap_len].fill(0);
-    kernels.assign_blocks(BlockCosts {
+    let costs = BlockCosts {
         data,
         block_switch_bitcost,
         insert_cost,
         cost: &mut cost[..lanes],
         switch_signal,
         block_id,
-    });
+    };
+    fearless_simd::dispatch!(backend.0, simd => assign_blocks(simd, costs));
 
     {
         // Trace back, switching where the forward pass marked it.
@@ -691,7 +691,7 @@ fn cluster_blocks<const N: usize>(
     reason = "mirrors SplitByteVector, whose parameters are all needed"
 )]
 fn split_byte_vector<const N: usize>(
-    kernels: &dyn Kernels,
+    backend: crate::backend::Backend,
     data: &[u16],
     alphabet_size: usize,
     symbols_per_histogram: usize,
@@ -752,7 +752,7 @@ fn split_byte_vector<const N: usize>(
     let mut num_blocks = 0usize;
     for _ in 0..iterations {
         num_blocks = find_blocks(
-            kernels,
+            backend,
             data,
             block_switch_cost,
             num_histograms,
@@ -808,7 +808,7 @@ impl BlockSplitter {
     )]
     pub(crate) fn split(
         &mut self,
-        kernels: &dyn Kernels,
+        backend: crate::backend::Backend,
         commands: &[Command],
         data: &[u8],
         pos: usize,
@@ -832,7 +832,7 @@ impl BlockSplitter {
             from_pos = (from_pos + insert_len + command.copy_len() as usize) & mask;
         }
         split_byte_vector(
-            kernels,
+            backend,
             &self.literals,
             NUM_LITERAL_SYMBOLS,
             SYMBOLS_PER_LITERAL_HISTOGRAM,
@@ -849,7 +849,7 @@ impl BlockSplitter {
         self.commands
             .extend(commands.iter().map(|command| command.cmd_prefix));
         split_byte_vector(
-            kernels,
+            backend,
             &self.commands,
             NUM_COMMAND_SYMBOLS,
             SYMBOLS_PER_COMMAND_HISTOGRAM,
@@ -870,7 +870,7 @@ impl BlockSplitter {
                 .map(Command::distance_code),
         );
         split_byte_vector(
-            kernels,
+            backend,
             &self.distances,
             NUM_HISTOGRAM_DISTANCE_SYMBOLS,
             SYMBOLS_PER_DISTANCE_HISTOGRAM,
@@ -887,6 +887,11 @@ impl BlockSplitter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Runs the forward pass on `level`, as `find_blocks` dispatches it.
+    fn assign_on(backend: crate::backend::Backend, costs: BlockCosts<'_>) {
+        fearless_simd::dispatch!(backend.0, simd => assign_blocks(simd, costs));
+    }
     use crate::compressor::{CompressParams, QualityLevel, WindowBits};
     use alloc::boxed::Box;
 
@@ -922,7 +927,8 @@ mod tests {
                         let mut cost = initial.clone();
                         let mut signal = vec![0; expected_signal.len()];
                         let mut ids = vec![0; length];
-                        crate::compressor::core::dispatch::select(backend.0).assign_blocks(
+                        assign_on(
+                            backend,
                             BlockCosts {
                                 data: &data,
                                 block_switch_bitcost: 13.5,
@@ -979,14 +985,17 @@ mod tests {
                 cost[..count].fill(0.0);
                 let mut signal = vec![0; expected_signal.len()];
                 let mut ids = vec![0; length];
-                crate::compressor::core::dispatch::select(backend.0).assign_blocks(BlockCosts {
-                    data: &data,
-                    block_switch_bitcost: 13.5,
-                    insert_cost: &padded_prices,
-                    cost: &mut cost,
-                    switch_signal: &mut signal,
-                    block_id: &mut ids,
-                });
+                assign_on(
+                    backend,
+                    BlockCosts {
+                        data: &data,
+                        block_switch_bitcost: 13.5,
+                        insert_cost: &padded_prices,
+                        cost: &mut cost,
+                        switch_signal: &mut signal,
+                        block_id: &mut ids,
+                    },
+                );
                 assert_eq!(
                     cost[..count]
                         .iter()
@@ -1026,14 +1035,17 @@ mod tests {
             cost[11] = 1.0;
             let mut signal = vec![0; 2];
             let mut ids = vec![0; 1];
-            crate::compressor::core::dispatch::select(backend.0).assign_blocks(BlockCosts {
-                data: &[0],
-                block_switch_bitcost: 100.0,
-                insert_cost: &[0.0; 16],
-                cost: &mut cost,
-                switch_signal: &mut signal,
-                block_id: &mut ids,
-            });
+            assign_on(
+                backend,
+                BlockCosts {
+                    data: &[0],
+                    block_switch_bitcost: 100.0,
+                    insert_cost: &[0.0; 16],
+                    cost: &mut cost,
+                    switch_signal: &mut signal,
+                    block_id: &mut ids,
+                },
+            );
             assert_eq!(ids, [5], "backend={backend}");
             assert_eq!(cost[5], 0.0);
             assert_eq!(cost[11], 0.0);
@@ -1051,7 +1063,7 @@ mod tests {
         let mut arena = SplitArena::<NUM_LITERAL_SYMBOLS>::default();
         let mut split = BlockSplit::default();
         split_byte_vector(
-            &*crate::compressor::core::dispatch::select(fearless_simd::Level::fallback()),
+            crate::backend::Backend::SCALAR,
             data,
             NUM_LITERAL_SYMBOLS,
             SYMBOLS_PER_LITERAL_HISTOGRAM,
@@ -1162,7 +1174,7 @@ mod tests {
             crate::compressor::core::hq::params::HqQuality::Q11
         };
         splitter.split(
-            &*crate::compressor::core::dispatch::select(fearless_simd::Level::fallback()),
+            crate::backend::Backend::SCALAR,
             commands,
             data,
             0,
@@ -1329,7 +1341,7 @@ mod tests {
         let mut command = BlockSplit::default();
         let mut distance = BlockSplit::default();
         splitter.split(
-            &*crate::compressor::core::dispatch::select(fearless_simd::Level::fallback()),
+            crate::backend::Backend::SCALAR,
             &commands,
             &data,
             0,
@@ -1432,7 +1444,7 @@ mod tests {
         let mut fresh = BlockSplitter::default();
         let (mut l1, mut c1, mut d1) = Default::default();
         fresh.split(
-            &*crate::compressor::core::dispatch::select(fearless_simd::Level::fallback()),
+            crate::backend::Backend::SCALAR,
             &commands,
             &data,
             0,
@@ -1446,7 +1458,7 @@ mod tests {
         let mut reused = BlockSplitter::default();
         let (mut l0, mut c0, mut d0) = Default::default();
         reused.split(
-            &*crate::compressor::core::dispatch::select(fearless_simd::Level::fallback()),
+            crate::backend::Backend::SCALAR,
             &other,
             &data,
             0,
@@ -1458,7 +1470,7 @@ mod tests {
         );
         let (mut l2, mut c2, mut d2) = Default::default();
         reused.split(
-            &*crate::compressor::core::dispatch::select(fearless_simd::Level::fallback()),
+            crate::backend::Backend::SCALAR,
             &commands,
             &data,
             0,

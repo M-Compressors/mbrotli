@@ -38,23 +38,23 @@ classDiagram
 `Compressor` reserves the one-shot vector bound before entering the driver. For
 non-flush fast blocks, `Delivery::encode` selects `FastEncoder::encode_block_append`
 for append destinations. The encoder seeds its carried bytes after the existing
-prefix and checks conversion of that offset into a bit position. The retained
-`Kernels::fast_append` entry passes its selected token to the `#[simd]`
-`encode_fragment`, which enters the token's feature context and runs the same
-q0/q1 algorithms used by the slice path.
+prefix and checks conversion of that offset into a bit position. The encoder
+dispatches its retained `Backend` and passes the concrete token to the
+`#[simd]` `encode_fragment`, which enters the token's feature context and runs
+the same q0/q1 algorithms used by the slice path.
 
 ```mermaid
 sequenceDiagram
     participant API as Compressor
     participant Driver as driver / Delivery
     participant Fast as FastEncoder
-    participant Kernel as Selected S
+    participant Kernel as encode_fragment S
     participant Bits as BitWriter Vec
     API->>API: reserve output bound
     API->>Driver: append destination and input
     Driver->>Fast: encode_block_append
     Fast->>Fast: seed carried bytes, prepare hash table
-    Fast->>Kernel: fast_append
+    Fast->>Kernel: dispatch!(backend) and call
     Kernel->>Bits: selected fragment and entropy algorithms
     Bits->>Bits: initialize small write windows or append raw bytes
     Bits-->>Fast: completed bit position and partial byte

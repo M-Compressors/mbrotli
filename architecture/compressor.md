@@ -15,7 +15,7 @@ graph TD
     Core --> Stream[private core::stream: scheduling and delivery]
     Driver --> Stream
     Stream --> Encoders[private fast, greedy and hq encoders]
-    Encoders --> Kernels[private core::dispatch: selected SIMD kernels]
+    Encoders --> Dispatch[retained Backend: dispatch! at block boundaries]
     Dict[PreparedDictionary] --> Encoders
 ```
 
@@ -245,9 +245,9 @@ returns the source and unaccepted read-ahead bytes.
 
 ## Dispatch and errors
 
-Backend selection occurs when the compressor is built. The cache selects
-`Selected<S>` kernels when creating an encoder; dispatch at block boundaries
-passes the concrete SIMD token into inner loops. Feature detection and virtual
+Backend selection occurs when the compressor is built. Each encoder retains
+that `Backend`; `fearless_simd::dispatch!` at block boundaries passes the
+concrete SIMD token into inner loops. Feature detection and virtual
 calls stay outside hot loops. `no_std` uses the compile-time backend.
 
 `ConfigError`, `DictionaryError`, `EncodeError` and `SizeOverflow` separate

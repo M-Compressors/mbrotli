@@ -10,15 +10,13 @@
 //! encoder was built, so nothing about the machine can reach a decision that
 //! shows up in the output.
 
-use alloc::boxed::Box;
 use alloc::vec::Vec;
 
-use crate::compressor::core::dispatch::{self, GreedyInput, Kernels};
-use fearless_simd::Level;
+use crate::backend::Backend;
 
-use super::backward_references::ReferenceState;
+use super::backward_references::{ReferenceState, create_backward_references};
 use super::context_model::decide_over_literal_context_modeling;
-use super::hashers::{DistanceCache, MatchFinder, NUM_REMEMBERED_DISTANCES, Sweep};
+use super::hashers::{DistanceCache, MatchFinder, NUM_REMEMBERED_DISTANCES, Sweep, with_matcher};
 use super::metablock::build_meta_block_greedy_into;
 use super::params::{GreedyParams, MAX_NUM_DELAYED_SYMBOLS};
 use crate::compressor::core::rfc9841::context::SharedContextInner;
@@ -26,7 +24,7 @@ use crate::compressor::{BrotliCompressError, BrotliResult, CompressParams};
 use crate::shared::bits::{BYTE_PADDING_SLACK, BitWriter, inject_byte_padding};
 use crate::shared::bitstream::{MetaBlockWriter, store_uncompressed_meta_block};
 use crate::shared::command::Command;
-use crate::shared::command::CommandExtension;
+use crate::shared::command::{CommandExtension, extend_last_command};
 use crate::shared::constants::{OUTPUT_RESERVE_CONST, OUTPUT_SLACK};
 use crate::shared::fixed::grow_zeroed;
 use crate::shared::format::ContextMode;
@@ -58,8 +56,12 @@ enum Cleanup {
 }
 
 /// Streaming encoder for qualities three to five.
-pub(crate) struct GreedyEncoder {
-    kernels: Box<dyn Kernels>,
+///
+/// `INDEPENDENT` selects the fragment-only kernels of an independent worker,
+/// whose fragments must decode without the ones before them.
+pub(crate) struct GreedyEncoder<const INDEPENDENT: bool = false> {
+    /// The host-validated backend every block is dispatched to.
+    backend: Backend,
     params: GreedyParams,
     ringbuffer: RingBuffer,
     matcher: MatchFinder,
@@ -91,13 +93,7 @@ pub(crate) struct GreedyEncoder {
     output_len: usize,
 }
 
-impl GreedyEncoder {
-    /// Installs fragment-only kernels when constructing an independent worker.
-    #[cfg(not(feature = "no_std"))]
-    pub(crate) fn select_fragment_kernels(&mut self, level: Level) {
-        self.kernels = dispatch::select_independent(level);
-    }
-
+impl<const INDEPENDENT: bool> GreedyEncoder<INDEPENDENT> {
     /// Resets the header and seeds only this segment's literal context/history.
     #[cfg(not(feature = "no_std"))]
     pub(crate) fn begin_fragment(&mut self, prefix: &[u8]) -> BrotliResult<()> {
@@ -123,11 +119,11 @@ impl GreedyEncoder {
     /// Returns [`BrotliCompressError::UnsupportedQuality`] when the quality is
     /// outside the range this encoder implements.
     pub(crate) fn new(
-        level: Level,
+        backend: Backend,
         params: &CompressParams,
         size_hint: usize,
     ) -> BrotliResult<Self> {
-        Self::expecting(level, params, size_hint, size_hint)
+        Self::expecting(backend, params, size_hint, size_hint)
     }
 
     /// Creates an encoder whose output follows `size_hint`, as [`Self::new`],
@@ -143,7 +139,7 @@ impl GreedyEncoder {
     ///
     /// As [`Self::new`].
     pub(crate) fn expecting(
-        level: Level,
+        backend: Backend,
         params: &CompressParams,
         size_hint: usize,
         expected_input: usize,
@@ -175,7 +171,7 @@ impl GreedyEncoder {
             references
         };
         Ok(Self {
-            kernels: dispatch::select(level),
+            backend,
             params: resolved,
             ringbuffer,
             matcher,
@@ -399,7 +395,6 @@ impl GreedyEncoder {
     /// Returns the bytes this encoder keeps allocated between blocks.
     pub(crate) fn retained_bytes(&self) -> usize {
         self.ringbuffer.retained_bytes()
-            + size_of_val(&*self.kernels)
             + self.matcher.retained_bytes()
             + self.commands.capacity() * size_of::<Command>()
             + self.storage.capacity()
@@ -465,10 +460,13 @@ impl GreedyEncoder {
 
     /// Runs the match scan over the unprocessed input.
     ///
-    /// The retained kernel passes its already-selected token into the scan.
+    /// The retained backend is dispatched once here; the scan below runs with
+    /// its concrete token, the matcher's concrete type and, as a type-level
+    /// choice, whether a prefix is attached: without one, every probe of it
+    /// folds away.
     fn create_references(&mut self, span: BlockSpan, attached: Option<&SharedContextInner>) {
         let Self {
-            kernels,
+            backend,
             params,
             ringbuffer,
             matcher,
@@ -480,14 +478,23 @@ impl GreedyEncoder {
             data: ringbuffer.buffer(),
             mask: ringbuffer.mask(),
         };
-        kernels.greedy(GreedyInput {
-            matcher,
-            params,
-            window,
-            span,
-            attached,
-            references,
-            commands,
+        fearless_simd::dispatch!(backend.0, simd => match attached {
+            None => with_matcher!(matcher, |finder| create_backward_references::<
+                _,
+                _,
+                false,
+                INDEPENDENT,
+            >(
+                simd, finder, params, window, span, None, references, commands
+            )),
+            Some(_) => with_matcher!(matcher, |finder| create_backward_references::<
+                _,
+                _,
+                true,
+                INDEPENDENT,
+            >(
+                simd, finder, params, window, span, attached, references, commands
+            )),
         });
     }
 
@@ -537,7 +544,7 @@ impl GreedyEncoder {
 
         if !self.commands.is_empty() && self.references.last_insert_len == 0 {
             let Self {
-                kernels,
+                backend,
                 params,
                 ringbuffer,
                 references,
@@ -546,7 +553,7 @@ impl GreedyEncoder {
                 ..
             } = self;
             if let Some(command) = commands.last_mut() {
-                kernels.extend(CommandExtension {
+                let extension = CommandExtension {
                     command,
                     lgwin: params.lgwin,
                     dist: &params.dist,
@@ -558,7 +565,8 @@ impl GreedyEncoder {
                     last_processed_pos: *last_processed_pos,
                     attached,
                     span: &mut span,
-                });
+                };
+                fearless_simd::dispatch!(backend.0, simd => extend_last_command(simd, extension));
             }
         }
 
@@ -867,12 +875,7 @@ mod tests {
 
     fn encoder(quality: QualityLevel, size_hint: usize) -> GreedyEncoder {
         let params = CompressParams::new(quality, WindowBits::DEFAULT);
-        GreedyEncoder::new(
-            Level::try_detect().unwrap_or_else(Level::baseline),
-            &params,
-            size_hint,
-        )
-        .expect("supported quality")
+        GreedyEncoder::new(Backend::default(), &params, size_hint).expect("supported quality")
     }
 
     /// Compresses `data` in blocks and returns the whole stream.
@@ -996,13 +999,13 @@ mod tests {
         for quality in [QualityLevel::Q3, QualityLevel::Q4, QualityLevel::Q5] {
             let params = CompressParams::new(quality, WindowBits::DEFAULT);
             let mut streams = Vec::new();
-            for level in [
-                Level::try_detect().unwrap_or_else(Level::baseline),
-                Level::baseline(),
-                Level::fallback(),
+            for backend in [
+                Backend::default(),
+                Backend(fearless_simd::Level::baseline()),
+                Backend::SCALAR,
             ] {
-                let mut encoder =
-                    GreedyEncoder::new(level, &params, data.len()).expect("supported quality");
+                let mut encoder = GreedyEncoder::<false>::new(backend, &params, data.len())
+                    .expect("supported quality");
                 let limit = encoder.block_size_limit();
                 let mut out = Vec::new();
                 let mut offset = 0usize;

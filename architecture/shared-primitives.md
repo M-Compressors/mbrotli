@@ -30,8 +30,8 @@ under `compressor::core::rfc9841`, but application delegates to the same borrowe
 `Transform` used by decoding. The shared module still contains encoder-only
 primitives: command integration depends on private RFC9841 encoder types. This
 is a crate-private dependency, not a fully independent reusable package. Backend
-selection remains at each public codec's construction boundary; existing encoder
-SIMD dispatch stays in `compressor::core::dispatch`.
+selection remains at each public codec's construction boundary; encoder SIMD
+dispatch stays at the encoders' block boundaries in `compressor::core`.
 
 ```mermaid
 sequenceDiagram

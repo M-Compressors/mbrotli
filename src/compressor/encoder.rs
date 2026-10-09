@@ -14,7 +14,6 @@ use super::internal::{CompressParams, QualityLevel, WindowBits};
 use super::session::{EncoderSession, EncoderSessionOwned, StreamConfig};
 use ::core::mem::MaybeUninit;
 use ::core::ops::Range;
-use fearless_simd::Level;
 
 /// The configuration whose compressed-size bound is the loosest.
 ///
@@ -63,8 +62,8 @@ use crate::RetentionPolicy;
 /// ```
 #[derive(Debug)]
 pub struct Compressor {
-    /// The instruction set, resolved once.
-    level: Level,
+    /// The host-validated backend, resolved once.
+    backend: super::Backend,
     /// The validated configuration every operation runs under.
     config: EncoderConfig,
     /// What to keep between operations.
@@ -136,7 +135,7 @@ impl Compressor {
         CompressorBuilder {
             config,
             retention: RetentionPolicy::Aggressive,
-            level: None,
+            backend: None,
         }
     }
 
@@ -406,7 +405,7 @@ impl Compressor {
         let params = self.config.lower(Some(src.len()));
         let provided = dst.len();
         let outcome =
-            compress_to_uninit_attached(&mut self.workspace, self.level, &params, None, src, dst);
+            compress_to_uninit_attached(&mut self.workspace, self.backend, &params, None, src, dst);
         self.finish_operation();
         outcome.map_err(|error| EncodeError::from_core(error, provided))
     }
@@ -768,7 +767,7 @@ impl Compressor {
     #[must_use]
     pub fn fork_empty(&self) -> Self {
         Self {
-            level: self.level,
+            backend: self.backend,
             config: self.config,
             retention: self.retention,
             workspace: EncoderCache::default(),
@@ -797,8 +796,14 @@ impl Compressor {
             .map_err(|_| EncodeError::AllocationFailed { requested: reserve })?;
 
         let attached = dictionary.map(PreparedDictionary::inner);
-        let outcome =
-            compress_to_vec_attached(&mut self.workspace, self.level, &params, attached, src, dst);
+        let outcome = compress_to_vec_attached(
+            &mut self.workspace,
+            self.backend,
+            &params,
+            attached,
+            src,
+            dst,
+        );
         self.finish_operation();
         match outcome {
             Ok(()) => Ok(start..dst.len()),
@@ -825,7 +830,7 @@ impl Compressor {
         let provided = dst.len();
         let outcome = compress_to_slice_attached(
             &mut self.workspace,
-            self.level,
+            self.backend,
             &params,
             attached,
             src,
@@ -854,7 +859,7 @@ impl Compressor {
         }
 
         let params = self.stream_params(stream, stream.input_size().hint())?;
-        let limit = match self.workspace.acquire(self.level, &params, 0) {
+        let limit = match self.workspace.acquire(self.backend, &params, 0) {
             Ok(encoder) => encoder.block_size_limit(),
             Err(error) => {
                 self.workspace.invalidate();
@@ -891,14 +896,14 @@ impl Compressor {
         expected_input: usize,
     ) -> Result<(), EncodeError> {
         let params = self.stream_params(stream, size_hint)?;
-        let level = self.level;
+        let backend = self.backend;
         let Some(encoder) = self.workspace.encoder() else {
             return Err(EncodeError::InternalInvariant {
                 detail: "a session outlived the encoder it was started with",
             });
         };
         encoder
-            .retarget_size_hint(level, &params, expected_input)
+            .retarget_size_hint(backend, &params, expected_input)
             .map_err(|error| EncodeError::from_core(error, 0))
     }
 
@@ -993,7 +998,7 @@ pub struct CompressorBuilder {
     /// What the compressor will keep between operations.
     retention: RetentionPolicy,
     /// The backend to pin, when the caller chose one.
-    level: Option<Level>,
+    backend: Option<super::Backend>,
 }
 
 impl CompressorBuilder {
@@ -1039,7 +1044,7 @@ impl CompressorBuilder {
     /// ```
     #[must_use]
     pub const fn with_backend(mut self, backend: super::Backend) -> Self {
-        self.level = Some(backend.0);
+        self.backend = Some(backend);
         self
     }
 
@@ -1064,7 +1069,7 @@ impl CompressorBuilder {
     pub fn build(self) -> Result<Compressor, ConfigError> {
         self.config.validate()?;
         Ok(Compressor {
-            level: self.level.unwrap_or_else(|| super::Backend::default().0),
+            backend: self.backend.unwrap_or_default(),
             config: self.config,
             retention: self.retention,
             workspace: EncoderCache::default(),
@@ -1090,8 +1095,8 @@ mod tests {
     fn default_construction_uses_the_compile_time_backend() {
         let encoder = compressor(Quality::Q5);
         assert_eq!(
-            super::super::Backend(encoder.level),
-            super::super::Backend(Level::baseline())
+            encoder.backend,
+            super::super::Backend(fearless_simd::Level::baseline())
         );
     }
 

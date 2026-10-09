@@ -527,9 +527,9 @@ in the Zopfli cost loop.
 
 ## 9. SIMD dispatch
 
-`core::dispatch::select` resolves a token once when `HqEncoder` is constructed.
-The retained `Selected<S, G, INDEPENDENT>` kernel handles stitching, block
-assignment, and Zopfli reference search by calling `#[simd]` functions
+`HqEncoder` retains the `Backend` detected when the `Compressor` was built.
+Stitching, block assignment and Zopfli reference search each match it with
+`fearless_simd::dispatch!` at their block-level call and call `#[simd]` functions
 (`fearless_simd_macros`): `stitch_to_previous_block`, `assign_blocks`,
 `create_zopfli_backward_references` and `create_hq_zopfli_backward_references`.
 Each inner search is monomorphized on that concrete token and on whether a
@@ -568,12 +568,13 @@ flip the uppercase bit of the word's ASCII lowercase letters (all of them, or
 lane 0 alone, which must also be lowercase) before comparing. Fewer than 32
 readable bytes on either side — the dictionary's last words, the end of the
 input — fall back to the scalar comparison. Quality ten on text: -5.6 to -5.8%
-instructions (`alice29.txt`, `lcet10.txt`), quality eleven -2.5%. Copy extension uses the shared retained
-`Kernels::extend` entry described in [encoder workspace](encoder-workspace.md).
+instructions (`alice29.txt`, `lcet10.txt`), quality eleven -2.5%. Copy extension dispatches the retained
+backend into `extend_last_command`, as described in
+[encoder workspace](encoder-workspace.md).
 
 ```mermaid
 graph LR
-    selected[retained Selected S] --> stitch[boundary stitching]
+    selected[retained Backend: dispatch! per call] --> stitch[boundary stitching]
     selected --> search[Zopfli search]
     selected --> assignment[SIMD block-assignment forward pass]
     search --> arena[flat retained match arena]
@@ -593,7 +594,7 @@ histograms survive reset and are included in retained-byte accounting.
 
 Alongside shared `find_match_length`, the block splitter vectorizes its forward
 assignment pass. `MetaBlockBuilder::build`, `BlockSplitter::split`, and
-`find_blocks` borrow the retained `Kernels` boundary. Once insertion costs are
+`find_blocks` take the retained `Backend`; `find_blocks` dispatches it. Once insertion costs are
 prepared, one `assign_blocks` call enters a feature-enabled loop over the entire
 symbol stream. No backend detection or dynamic dispatch occurs per symbol.
 
@@ -738,7 +739,8 @@ The match itself stops at the end of the attachment it was found in, which is
 the reference's `limit`; only `extend_last_command` runs on across seams.
 
 Whether a prefix is attached is a type-level choice, as on the greedy path.
-`Kernels::hq` matches on the quality and on `attached.is_some()`, and calls
+`HqEncoder::create_references` dispatches the backend, matches on the quality
+and on `attached.is_some()`, and calls
 `create_zopfli_backward_references` or `create_hq_zopfli_backward_references`
 with `const ENABLE_PREFIX: bool`. The parameter reaches
 `zopfli_compute_shortest_path`, `zopfli_iterate` and `update_nodes`. With it
@@ -750,7 +752,7 @@ quality eleven, with identical output.
 
 ```mermaid
 flowchart LR
-    hq["Kernels::hq"] --> q{"quality, attached?"}
+    hq["create_references: dispatch!(backend)"] --> q{"quality, attached?"}
     q -->|"Q10, none"| a["create_zopfli_backward_references::&lt;S, false, I&gt;"]
     q -->|"Q10, some"| b["create_zopfli_backward_references::&lt;S, true, I&gt;"]
     q -->|"Q11, none"| c["create_hq_zopfli_backward_references::&lt;S, false, I&gt;"]
@@ -784,7 +786,7 @@ flowchart LR
   sampling or instruction profiling is needed to resolve their costs.
 ## Independent parallel fragments
 
-The parallel fragment adapter installs `Selected<S, true>` once per worker.
+The parallel fragment adapter builds `HqEncoder<true>` once per worker.
 The specialized Zopfli path excludes cache-relative distance edges and dictionary
 candidates. `begin_fragment` starts headerless and seeds the ring and literal
 context from the common raw prefix. The serial specialization retains both

@@ -112,8 +112,11 @@ pub(crate) fn match_len_at_outlined<S: Simd>(
 }
 
 /// [`match_len_windows`] behind a call, back inside `simd`'s feature context.
+///
+/// The wrapper inlines into the caller, which calls the level's
+/// feature-enabled entry directly; that entry is the call.
 #[simd]
-#[inline(never)]
+#[inline(always)]
 fn match_len_tail<S: Simd>(simd: S, left: &[u8], right: &[u8]) -> usize {
     match_len_windows(simd, left, right)
 }
