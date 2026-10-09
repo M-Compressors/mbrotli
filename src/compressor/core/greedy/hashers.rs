@@ -21,8 +21,9 @@ use alloc::boxed::Box;
 use alloc::vec::Vec;
 use core::num::NonZeroUsize;
 
-use fearless_simd::{Simd, SimdBase, SimdMask, u8x16, u8x32};
+use fearless_simd::{Simd, SimdBase, SimdMask, u8x16, u8x32, u32x16};
 
+use super::super::cache_probe::ProbeSite;
 use super::params::{BucketShape, ChainShape, HasherPlan};
 use super::probe::{StoreOutlook, sample_store_outlook};
 use crate::shared::constants::HASH_MUL32;
@@ -2247,6 +2248,89 @@ fn write_back(out: &mut SearchResult, found: Found) {
     }
 }
 
+/// [`probe_last_distances`] for shapes that probe the derived distances.
+///
+/// Every code the scalar filter would admit is in the vector filter's
+/// candidate set, so visiting those codes in order — and filtering the rest
+/// again whenever an accepted copy moves `best_len` — makes the reference's
+/// decisions. The cache must hold [`prepare_distance_cache`]'s derived
+/// entries: the byte runs are read around the two freshest distances.
+#[inline(always)]
+fn probe_derived_distances<S: Simd, const BLOCK: usize>(
+    simd: S,
+    query: &MatchQuery<'_>,
+    best_len: &mut usize,
+    found: &mut Found,
+) {
+    let count = last_distances_for(BLOCK).min(NUM_DISTANCE_SHORT_CODES);
+    let cache = query.cache;
+    let [d0, d1, d2, d3, ..] = *cache;
+    debug_assert!({
+        let mut derived = *cache;
+        prepare_distance_cache(&mut derived, count);
+        derived[..count] == cache[..count]
+    });
+    let remembered = [d0, d1, d2, d3];
+    let window = query.window;
+    let mask = query.mask;
+    let cur_ix = query.cur_ix;
+    let cur_ix_masked = cur_ix & mask;
+    let max_backward = query.max_backward;
+    let site = ProbeSite {
+        window,
+        cur_ix,
+        mask,
+        // The scalar test `prev_ix >= cur_ix || backward > max_backward`
+        // rejects exactly the distances outside `1..=min(cur_ix, max_backward)`.
+        max_distance: cur_ix.min(max_backward),
+    };
+    let distances = u32x16::load_array(simd, cache.map(|distance| distance as u32));
+    let probed = (1u32 << count) - 1;
+    let mut next_index = 0u32;
+    'probes: while let Some(&continuation) = window.get(cur_ix_masked + *best_len) {
+        let candidates = if count > 10 {
+            site.candidates::<S, true>(simd, distances, &remembered, *best_len, continuation)
+        } else {
+            site.candidates::<S, false>(simd, distances, &remembered, *best_len, continuation)
+        };
+        let mut pending =
+            u32::from(candidates.agree & candidates.valid) & probed & (u32::MAX << next_index);
+        while pending != 0 {
+            let index = pending.trailing_zeros() as usize;
+            pending &= pending - 1;
+            let backward = cache[index] as usize;
+            let prev_ix = cur_ix.wrapping_sub(backward);
+            if prev_ix >= cur_ix || backward > max_backward {
+                continue;
+            }
+            let prev_ix = prev_ix & mask;
+            let prev_at = prev_ix + *best_len;
+            if prev_at >= window.len() || window[prev_at] != continuation {
+                continue;
+            }
+            if let Some((len, score)) = accept_cached(
+                simd,
+                query.data,
+                cur_ix_masked as u32,
+                query.max_length as u32,
+                prev_ix as u32,
+                index,
+                found.score,
+            ) {
+                *best_len = len;
+                *found = Found {
+                    len,
+                    distance: backward,
+                    score: score.get(),
+                };
+                next_index = index as u32 + 1;
+                continue 'probes;
+            }
+        }
+        break;
+    }
+}
+
 /// Tries the cached distances before any bucket is consulted.
 ///
 /// Returns the length the bucket scan's compare offset starts from —
@@ -2273,40 +2357,47 @@ fn probe_last_distances<S: Simd, const BLOCK: usize>(
         score: out.score,
     };
 
-    // The probe count is a constant, so this loop unrolls; the cache holds
-    // sixteen entries and no shape probes more.
-    for index in 0..last_distances_for(BLOCK).min(NUM_DISTANCE_SHORT_CODES) {
-        let backward = query.cache[index] as usize;
-        let prev_ix = cur_ix.wrapping_sub(backward);
-        if prev_ix >= cur_ix || backward > max_backward {
-            continue;
-        }
-        let prev_ix = prev_ix & mask;
-        // The reference guards against the mask; the window ends there, so
-        // the same guards prove the two byte reads in bounds.
-        let cur_at = cur_ix_masked + best_len;
-        if cur_at >= window.len() {
-            break;
-        }
-        let prev_at = prev_ix + best_len;
-        if prev_at >= window.len() || window[cur_at] != window[prev_at] {
-            continue;
-        }
-        if let Some((len, score)) = accept_cached(
-            simd,
-            data,
-            cur_ix_masked as u32,
-            max_length as u32,
-            prev_ix as u32,
-            index,
-            found.score,
-        ) {
-            best_len = len;
-            found = Found {
-                len,
-                distance: backward,
-                score: score.get(),
-            };
+    let count = last_distances_for(BLOCK).min(NUM_DISTANCE_SHORT_CODES);
+    // Shapes probing the derived distances filter them all with one vector
+    // compare. The scalar backend keeps the plain loop as the unfiltered
+    // oracle, and four probes are too few to pay for the setup.
+    if count > NUM_REMEMBERED_DISTANCES && !simd.level().is_fallback() {
+        probe_derived_distances::<S, BLOCK>(simd, query, &mut best_len, &mut found);
+    } else {
+        // The probe count is a constant, so this loop unrolls.
+        for index in 0..count {
+            let backward = query.cache[index] as usize;
+            let prev_ix = cur_ix.wrapping_sub(backward);
+            if prev_ix >= cur_ix || backward > max_backward {
+                continue;
+            }
+            let prev_ix = prev_ix & mask;
+            // The reference guards against the mask; the window ends there, so
+            // the same guards prove the two byte reads in bounds.
+            let cur_at = cur_ix_masked + best_len;
+            if cur_at >= window.len() {
+                break;
+            }
+            let prev_at = prev_ix + best_len;
+            if prev_at >= window.len() || window[cur_at] != window[prev_at] {
+                continue;
+            }
+            if let Some((len, score)) = accept_cached(
+                simd,
+                data,
+                cur_ix_masked as u32,
+                max_length as u32,
+                prev_ix as u32,
+                index,
+                found.score,
+            ) {
+                best_len = len;
+                found = Found {
+                    len,
+                    distance: backward,
+                    score: score.get(),
+                };
+            }
         }
     }
     // Raising the floor to three lets the bucket loop compare four bytes
@@ -4214,7 +4305,10 @@ mod tests {
         data: &[u8],
         cur_ix: usize,
     ) -> SearchResult {
-        let cache = INITIAL_DISTANCE_CACHE;
+        // The encoder derives the cache's near-miss entries before any
+        // search, and the filtered probes read them as such.
+        let mut cache = INITIAL_DISTANCE_CACHE;
+        prepare_distance_cache(&mut cache, NUM_DISTANCE_SHORT_CODES);
         let mut out = SearchResult::empty();
         let mut stats = DictionaryStats::default();
         let query = query(data, &cache, cur_ix);
@@ -4319,6 +4413,74 @@ mod tests {
         let mut h42 = primed(ChainMatcher::<512, 9>::new(Q9_CHAIN), &data);
         let found = search_at(&mut h42, &data, REPEAT_AT);
         assert_eq!((found.distance, found.len), (64, 64));
+    }
+
+    fn probe_on<S: Simd, const BLOCK: usize>(
+        simd: S,
+        query: &MatchQuery<'_>,
+        out: &SearchResult,
+    ) -> (usize, usize, usize, usize) {
+        let (best_len, found) = probe_last_distances::<S, BLOCK>(simd, query, out);
+        (best_len, found.len, found.distance, found.score)
+    }
+
+    fn probes_agree<const BLOCK: usize>(
+        data: &[u8],
+        cache: &DistanceCache,
+        cur_ix: usize,
+        out: &SearchResult,
+    ) {
+        let query = query(data, cache, cur_ix);
+        let expected =
+            dispatch!(Level::fallback(), simd => probe_on::<_, BLOCK>(simd, &query, out));
+        let level = Level::try_detect().unwrap_or_else(Level::baseline);
+        let actual = dispatch!(level, simd => probe_on::<_, BLOCK>(simd, &query, out));
+        assert_eq!(
+            actual, expected,
+            "block {BLOCK}, cur_ix {cur_ix}, cache {cache:?}, incoming {}",
+            out.len
+        );
+    }
+
+    #[test]
+    fn filtered_cache_probes_make_the_scalar_probes_decisions() {
+        let mut rng = 0x2545_F491_4F6C_DD1Du64;
+        let mut next = move || {
+            rng ^= rng << 13;
+            rng ^= rng >> 7;
+            rng ^= rng << 17;
+            rng
+        };
+        // Two symbols with short periodic stretches: most cached distances
+        // agree for a while, so a search accepts several copies in turn and
+        // the remaining codes are filtered again at each longer length.
+        let mut data = Vec::new();
+        while data.len() < 4096 {
+            let period = (next() % 9 + 1) as usize;
+            let stretch: Vec<u8> = (0..period).map(|_| b'a' + (next() % 2) as u8).collect();
+            for _ in 0..(next() % 12 + 1) {
+                data.extend_from_slice(&stretch);
+            }
+        }
+        for _ in 0..4000 {
+            let cur_ix = (next() % (data.len() as u64 - 64)) as usize;
+            let mut cache = INITIAL_DISTANCE_CACHE;
+            for entry in &mut cache[..NUM_REMEMBERED_DISTANCES] {
+                *entry = match next() % 8 {
+                    0 => 0,
+                    1 => -((next() % 5) as i32),
+                    2 => (cur_ix + (next() % 8) as usize) as i32,
+                    _ => (next() % 40 + 1) as i32,
+                };
+            }
+            prepare_distance_cache(&mut cache, NUM_DISTANCE_SHORT_CODES);
+            let out = SearchResult {
+                len: (next() % 5) as usize,
+                ..SearchResult::empty()
+            };
+            probes_agree::<64>(&data, &cache, cur_ix, &out);
+            probes_agree::<256>(&data, &cache, cur_ix, &out);
+        }
     }
 
     #[test]

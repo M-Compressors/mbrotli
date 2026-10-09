@@ -1,7 +1,7 @@
 {
-  "date": "2026-10-02",
-  "baseline": "dec-2026-10-02",
-  "source_state": "Working tree based on baseline_commit with uncommitted compressor changes: sessions of unknown length infer C's UpdateSizeHint size hint before their first encode, sizing storage for the inferred total only for a body of at most 4 KiB finished in that call; the full QuickMatcher table (q2-q4, H54) is allocated by MatchFinder::materialize once the size is known; and the q5/q6 tagged bucket matchers that know their input sample the first block (greedy::probe::sample_store_outlook) to choose the dense table from 8/16 KiB for ordinary data and to keep repetitive data on demand. One-shot calls, which these sweeps time, reach the first and last changes. Decoder sources unchanged from baseline_commit.",
+  "date": "2026-10-09",
+  "baseline": "dec-2026-10-09",
+  "source_state": "Working tree based on baseline_commit (v0.5.6) with uncommitted compressor changes: a shared SIMD prefilter of the sixteen distance-cache probes (compressor::core::cache_probe) used by the q10/q11 Zopfli update_nodes loop and by the q7-q9 greedy bucket matchers (probe_derived_distances); dictionary words compared against the input as one u8x32 in all_matches::find_all, now a #[simd] entry point (q10/q11); and an exact early exit in is_mostly_utf8 (q10/q11). Compressed output is byte-identical to baseline_commit. Decoder sources unchanged from baseline_commit.",
   "c_revision": "4508218e7fef90fa4273286f7a415065946f2c43",
   "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)\nbinary: rustc\ncommit-hash: 48a229ceaefd4985c50990b14116b6d856af0985\ncommit-date: 2026-09-01\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.1\nLLVM version: 22.1.8",
   "cargo": "cargo 1.98.1 (797e8a9bc 2026-08-05)",
@@ -39,7 +39,7 @@
   ],
   "versions": {
     "c-brotli": "1.2.0",
-    "mbrotli": "0.5.4 working tree",
+    "mbrotli": "0.5.6 working tree",
     "rust-brotli": "9.0.0",
     "brotli-decompressor": "6.0.1",
     "burli": "0.3.3"
@@ -52,25 +52,31 @@
   },
   "corpus_generation": "Eight inputs: empty, tiny-text, alice29, text-1m, binary-64k, random-64k, random-1m, repeated-1m, from the pinned core.rs generator (xorshift64 seed 0x243f6a8885a308d3; structured binary ((i/16)^i) mod 256; repeated a; cyclic Alice); streams produced by Google C at q0-q11, window 22.",
   "sha256": {
-    "Cargo.toml": "c813149b6f0d2ce669d99d270949eb3f7f17e5bbeb655a0eb95bbdb7c275980c",
-    "Cargo.lock": "5d0e3c2c47f241ae0a80a695eb9722e58e68b6a014f8bef88fafdbb8a9bb6ed4",
+    "Cargo.toml": "d6f545473ad791670aea453652efa9234007d8e34b92e90a66a3bfd36da3c3bc",
+    "Cargo.lock": "ff864b9b27667288631ca670c482c114ed0e4fe84ec7a1906d958d7f976719c9",
     "benchmarks/comparison/Cargo.toml": "71fdca7f059fb42e55b553ac414b98e2ab5fd20ff77e20a47b70d2f1cb97bb5f",
-    "benchmarks/comparison/Cargo.lock": "1b3c78359503c5a076068a40930dec1a9c2114aa0f4653382d9de9ff940d5586",
+    "benchmarks/comparison/Cargo.lock": "a033138ac275fdd85d452683e6381bf69460e6ed487eb94b54b8266e608ba827",
     "benchmarks/comparison/src/core.rs": "4165ffb8a939cb60a150f7f50117f6d0d2303979aeeb782fa220f1e6ebcef7b8",
     "benchmarks/comparison/src/core/decoder.rs": "588da59f1ccf48afc460085bde988b0b3eeabab73266ab9d286b0366521543d7",
     "benchmarks/comparison/src/lib.rs": "fa7ea60a5102ea7708ef45ea31075afb3278ca2cb0967c3bffaf2f7a0862cb08",
     "benchmarks/comparison/benches/decoders.rs": "1eaaa648a7b1f56cd2c2dede47944def165cf14034c833d8b9f46c5e503427e9",
     "benchmarks/comparison/report.py": "b6d32822384481eec23c27fb46c511b2b2162ad66ab9cab0536c441831eba224",
     "benchmarks/comparison/decoder_docs.py": "abbced417cc4a57b4ca5b9f22ccbd131f965f447c9555a79104d0f7da3c4cfc8",
-    "docs/benchmarks/decoder-comparison.csv": "8440c9ce16b6daf09789566e9d1354fb63c55657dd303100641c9b1b22dd2fb4",
+    "docs/benchmarks/decoder-comparison.csv": "ef6cb702aa84c45907ebb65d43369c1cced46078915230ef00dcdbe42a95e788",
     "src/compressor/core/session.rs": "554f2974e22e7751e0d707a9cca64b453277fba4b54a1b8a72151432113d8aea",
     "src/compressor/core/driver.rs": "d578d3816fd533fa697b5b9d1816e6f49e59b4751b493c59bb694d498765d268",
     "src/compressor/core/stream.rs": "2533209f86513772afd1a8c30a945351a13af21f7eef7461690087a24db43435",
     "src/compressor/core/greedy/encoder.rs": "8d60af9a9156b806a9558ecdabc826e2f27ae813009df7faa21b3b8c8289ba98",
-    "src/compressor/core/greedy/hashers.rs": "f1eb478a4712a838bd0d250dc0fe237038891b4696b021fa3be7ad8d244137a4",
+    "src/compressor/core/greedy/hashers.rs": "0596b0db2c7dad1bdcef99cf04592b8ffc4dd20fa15b9b2de8dd873b9f93e310",
     "src/compressor/encoder.rs": "4c5e0b160d8032e254a576048a1e57871afdfd5088b78011d0080eb6e94021e9",
     "src/compressor/session.rs": "c3d85bc7890bf7fe9e86f413f6f31f7d02166755c85b37b44a3e9c043de6260b",
-    "src/compressor/core/greedy/probe.rs": "a56259321448453f1e2c32a713f5ab306f7b5f65cebfd3c129e4dc724a89d502"
+    "src/compressor/core/greedy/probe.rs": "a56259321448453f1e2c32a713f5ab306f7b5f65cebfd3c129e4dc724a89d502",
+    "src/compressor/core/cache_probe.rs": "2512e8f9558f6ff1daab056ef1ec4ec6d08dc8bb222e2de1d3261150f4ac400b",
+    "src/compressor/core/hq/zopfli.rs": "ca22abb912136cca5f7dfef7da539f6cf25dba68b978a5e9f6b0d6e8f7ce50b2",
+    "src/compressor/core/hq/h10.rs": "d94a9700b3da4082babb2351aa53f3e6492a0b2fd750e3b1446dc7ca2a8ccf60",
+    "src/compressor/core/hq/utf8.rs": "e0f75e099644172fc6a4c160f0504b957b8259e732c045151dac7bb334068f23",
+    "src/shared/dictionary/all_matches.rs": "af5c78fec7f02e5068f50bd31b53ab9035d7f08393f7596e3a0406e6797609f8",
+    "src/compressor/core/mod.rs": "74b8452591fdc60eb1eabfa3499fe34b95b6676f1f166d4f509a28dc4445a53c"
   },
   "limitations": [
     "One WSL2 host; frequency, thermals and host scheduling uncontrolled.",
@@ -78,26 +84,28 @@
     "C receives known output capacity; Rust Vec APIs grow output during decode; Rust brotli includes 4 KiB I/O adaptation.",
     "Only cold APIs and C-generated standard-window streams; no streaming, reuse or dictionaries. Historical timings are not paired before/after measurements.",
     "Eight benchmark processes ran at once on separate cores and shared the last-level cache, memory bandwidth and the package's turbo budget; absolute timings are below a single-core sweep and latency cases of tens of nanoseconds (empty input) move most. Ratios to C are the comparable quantity.",
-    "No builds, tests or other benchmark processes ran on the host during the sweep."
+    "Host idle before the sweep: load average 0.13/0.13/0.06 four minutes after a reboot (10:01:59 MSK), no other benchmark, build, test or fuzzing process running.",
+    "Cases whose ratio to C fell more than 5% below the 2026-10-02 run were re-timed on the same lanes (39 cases); the confirmed ones were checked with callgrind against v0.5.6 (dba6a473) and 5f39a1d0: instruction counts and page faults match within 0.7%, so those shifts come from the host, not from the code."
   ],
-  "binary": "benchmarks/comparison/target/release/deps/decoders-35c397f7b4accc35",
-  "binary_sha256": "d816e1d2da68e8347b4ebed3f801552e0aa54a8af312f3db3de15635b12b359d",
+  "binary": "benchmarks/comparison/target/release/deps/decoders-6a9854d962c23ea0",
+  "binary_sha256": "6f6e6defdfc13e6412d4cb78658ebbff48159bfb00898e580571ef01a3d7bf75",
   "validation": {
     "decoder_preflight_cases": 384,
     "exporter": "report.py --decoding rejected no rows"
   },
   "plotting": "Matplotlib 3.10.8",
   "command": [
-    "cd benchmarks/comparison && taskset -c 8 target/release/deps/decoders-35c397f7b4accc35 --bench --save-baseline dec-2026-10-02 '^decoders/cold/(empty|tiny-text)/'",
-    "cd benchmarks/comparison && taskset -c 10 target/release/deps/decoders-35c397f7b4accc35 --bench --save-baseline dec-2026-10-02 '^decoders/cold/(alice29|text-1m)/'",
-    "cd benchmarks/comparison && taskset -c 12 target/release/deps/decoders-35c397f7b4accc35 --bench --save-baseline dec-2026-10-02 '^decoders/cold/(binary-64k|random-64k)/'",
-    "cd benchmarks/comparison && taskset -c 14 target/release/deps/decoders-35c397f7b4accc35 --bench --save-baseline dec-2026-10-02 '^decoders/cold/(random-1m|repeated-1m)/'"
+    "cd benchmarks/comparison && taskset -c 8 target/release/deps/decoders-6a9854d962c23ea0 --bench --save-baseline dec-2026-10-09 '^decoders/cold/(empty|tiny-text)/'",
+    "cd benchmarks/comparison && taskset -c 10 target/release/deps/decoders-6a9854d962c23ea0 --bench --save-baseline dec-2026-10-09 '^decoders/cold/(alice29|text-1m)/'",
+    "cd benchmarks/comparison && taskset -c 12 target/release/deps/decoders-6a9854d962c23ea0 --bench --save-baseline dec-2026-10-09 '^decoders/cold/(binary-64k|random-64k)/'",
+    "cd benchmarks/comparison && taskset -c 14 target/release/deps/decoders-6a9854d962c23ea0 --bench --save-baseline dec-2026-10-09 '^decoders/cold/(random-1m|repeated-1m)/'"
   ],
-  "started_at_utc": "2026-10-01T22:09:30+00:00",
-  "finished_at_utc": "2026-10-01T22:22:43+00:00",
+  "started_at_utc": "2026-10-09T07:02:03+00:00",
+  "finished_at_utc": "2026-10-09T07:15:19+00:00",
   "timed_sweep_exit_code": 0,
   "measured_cases": 384,
-  "baseline_commit": "5f39a1d0e123292de72cc6630515aa46ef7f2216",
-  "size_manifest": "decoder-comparison-2026-10-02/sizes.csv",
-  "timestamps_note": "wall-clock date -u taken immediately before the eight lanes started and after the last one ended (encoder and decoder sweeps ran together)"
+  "baseline_commit": "dba6a473cb2c81725d2b0581c864d907b55ef129",
+  "size_manifest": "decoder-comparison-2026-10-09/sizes.csv",
+  "timestamps_note": "wall-clock date -u taken immediately before the eight lanes started and after the last one ended (encoder and decoder sweeps ran together)",
+  "host_load": "Host idle before the sweep: load average 0.13/0.13/0.06 four minutes after a reboot (10:01:59 MSK), no other benchmark, build, test or fuzzing process running."
 }

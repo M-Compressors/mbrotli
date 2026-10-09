@@ -64,6 +64,32 @@ C-to-native round trip; `decoder-campaign.sh` covers decoder boundaries. Both
 stable and experimental builds are needed. See the [AFL guide](../fuzz/afl/README.md)
 and [target mechanics](../architecture/fuzzing.md).
 
+## Interrupted AFL campaign — 2026-10-09
+
+After the distance-cache prefilter (q7–q11), the `u8x32` dictionary compare and
+the UTF-8 early exit (q10/q11), fresh builds of the uncommitted working tree on
+v0.5.6 ran `campaign.sh` with `CAMPAIGN_PARALLEL=1` (24 stable and 26
+experimental compression-side targets) and `decoder-campaign.sh` (7 stable and
+8 experimental decoder targets): **65 AFL++ workers** on the i7-13700KF/WSL2
+host's 24 threads, fixed 30 s and 5 s timeouts. The run was planned for 4.5
+hours and stopped by hand after **1 h 40 min** (5,988–6,066 s per worker) to
+free the host for benchmarks.
+
+| Group | Workers | Executions |
+| --- | ---: | ---: |
+| Encoder, stable | 24 | 9,825,192 |
+| Encoder, experimental | 26 | 13,365,353 |
+| Decoder, stable | 7 | 59,577,320 |
+| Decoder, experimental | 8 | 106,854,256 |
+| **Total** | **65** | **189,622,121** |
+
+No crashes, hangs or correctness-oracle failures were recorded; stability
+stayed at or above 99.39%. The changed boundaries are slow under
+instrumentation on this oversubscribed host: `q11_roundtrip` and
+`q10_roundtrip` reached 10,067–14,330 executions, `encoder_session` 16,578, so
+this run is shallow for q10/q11. The committed regression corpus replayed
+cleanly through `cargo afl test` in both builds before the campaign.
+
 ## Four-hour AFL campaign — 2026-10-01
 
 After the greedy-encoder changes of 2026-10-01 (slice-fed range stores for the

@@ -5,6 +5,7 @@
 //! [`crate::compressor`] owns the ergonomic surface built on top of them.
 
 pub(crate) mod bound;
+mod cache_probe;
 pub(crate) mod dispatch;
 pub(crate) mod driver;
 pub(crate) mod fast;

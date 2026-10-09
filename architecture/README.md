@@ -20,6 +20,7 @@ graph TD
     Framing --> Wire[codec-neutral framing types]
     FDecode --> Seek[framed seek reader and resource Read: std]
     FDecode --> Wire
+    ECore --> Probe[private cache_probe: SIMD distance-cache filter for qualities 7-11]
     ECore --> Shared[private shared primitives]
     DCore --> Shared
     ECore --> SIMD[fearless_simd: selected backend]
@@ -53,8 +54,8 @@ FFI do not appear in public signatures. Each codec compiles independently.
 | [Bit output](bit-output.md) | Initialized destinations, bit operations and overflow. |
 | [Serial output identity](universal-encoding.md) | Shared scheduling, empty finalization and C compatibility. |
 | [Fast encoder](fast-encoder.md) | Qualities 0–1: fragments, entropy coding and SIMD scans. |
-| [Greedy encoder](greedy-encoder.md) | Qualities 2–9: fixed boxed tables, in-place compact-map rehashing and buffer migration, first-block sampling for the q5/q6 dense-table choice, store-rate-driven mid-stream sparse-to-dense promotion, bounded pool growth, dense stores and slice-fed range stores, match scoring and meta-blocks with slice-fed literal splitting. |
-| [High-quality encoder](hq-encoder.md) | Qualities 10–11: tree search, command-price rows, ordered starts and clustering. |
+| [Greedy encoder](greedy-encoder.md) | Qualities 2–9: fixed boxed tables, in-place compact-map rehashing and buffer migration, first-block sampling for the q5/q6 dense-table choice, store-rate-driven mid-stream sparse-to-dense promotion, bounded pool growth, dense stores and slice-fed range stores, match scoring, the SIMD cached-distance prefilter shared with qualities 10–11, and meta-blocks with slice-fed literal splitting. |
+| [High-quality encoder](hq-encoder.md) | Qualities 10–11: tree search, SIMD distance-cache and dictionary-word filters, command-price rows, ordered starts and clustering. |
 | [Owned sessions](owned-sessions.md) | Lifetime-free raw and framed sessions sharing the borrowed state machines and release paths; `reinit` and input-free `flush`/`finish`. |
 | [Parallel compression](parallel-compression.md) | Planning, encoder reconfiguration, caller-run tasks, staging and assembly. |
 

@@ -255,6 +255,31 @@ the reference's decisions:
 
 - `CACHE_PROBES` packs `kDistanceCacheIndex` and `kDistanceCacheOffset` into
   one byte pair per code, so a probe is one load.
+- Most probes fail on one byte: the copy would have to agree with the
+  continuation byte at `cur_ix + best_len`. `ProbeSite::candidates`, in the
+  private `compressor::core::cache_probe` module shared with the greedy
+  matchers ([greedy-encoder.md](greedy-encoder.md) §2.4), tests all sixteen
+  codes of one start at once. The codes are not sixteen scattered
+  distances: codes 0 and 4–9 are the freshest distance nudged by `+3..=-3`,
+  seven adjacent ring bytes, and codes 1 and 10–15 are seven more around the
+  second freshest. Two eight-byte reads, with their eighth byte replaced by the
+  third and fourth distances' bytes, fill one `u8x16` in lane order
+  (`LANE_CODES`); one `simd_eq` against the continuation, turned into code
+  order by two 256-entry tables (`LANE_CODE_BITS`), and one `u32x16` range test
+  over the sixteen distances `derived_distances` builds from the cache
+  (`distance - 1 < max_distance`, the scalar admission below) give the
+  candidate mask.
+- The mask is a superset of what the scalar filter admits, never a
+  replacement for it: each admitted code still runs the exact scalar body,
+  including its own byte compare. A run whose seven positions wrap around the
+  ring mask, or whose eight-byte word would read past the bytes the ring holds,
+  is admitted whole (`RUN_LANES`), and with an attached prefix every distance
+  outside the window is admitted for `prefix_copy_length` to decide. When a
+  copy extends `best_len`, the codes after it are filtered again against the
+  new continuation byte — exactly the codes, and the order, the reference's
+  sequential loop tries next. On `alice29.txt` this cut quality eleven from
+  1.479 to 1.156 billion instructions and `mapsdatazrh` from 3.396 to 2.743
+  billion (callgrind, one compression), with identical output.
 - `backward.wrapping_sub(1) < max_distance` admits exactly the distances the
   reference's three tests admit — `backward > dictionary_start + gap`,
   `backward <= max_distance`, and `prev_ix >= cur_ix` — because a zero distance
@@ -269,7 +294,23 @@ the reference's decisions:
   `pos + best_len + 1 ..= pos + len` and calling `ZopfliNode::record` on each
   node, instead of indexing `nodes[pos + l]` per length; the tree-match loop
   does the same over `pos + len ..= pos + max_match_len`.
-- A counted `while` walks the probe table with the loop state held by value.
+- Admitted codes are visited lowest first by clearing the mask's lowest set
+  bit, with the loop state held by value.
+
+```mermaid
+flowchart TD
+    Start[Start position k: cache, base cost] --> Stop{best_len >= max_len, or no continuation byte?}
+    Stop -->|yes| Done[Next start or tree matches]
+    Stop -->|no| Mask["ProbeSite::candidates: two 8-byte runs + 2 bytes -> u8x16 eq; u32x16 range test; tables -> code order"]
+    Mask --> Floor[Drop codes below next_code]
+    Floor --> Any{Admitted code left?}
+    Any -->|no| Done
+    Any -->|lowest code| Exact[Exact scalar filter: range, byte compare or prefix arm]
+    Exact -->|rejected or no longer copy| Any
+    Exact -->|copy longer than best_len| Price[Price newly reached lengths]
+    Price --> Extend[best_len = len; next_code = code + 1]
+    Extend --> Stop
+```
 - `ZopfliCostModel` rearranges command-symbol prices into rows indexed by insert
   code, last-distance policy, and copy code whenever either initializer rebuilds
   a model for at least 128 bytes. Only insert codes reachable within the block
@@ -371,7 +412,11 @@ flowchart TD
   `is_mostly_utf8` scans a contiguous run in place, counting eight ASCII
   bytes at a time when a word has no high bit and no NUL — each parses as a
   one-byte sequence — and falls back to the per-byte masked decoder only for
-  a run that wraps.
+  a run that wraps. The reference's `size_utf8 > 0.75 * length` is exact in
+  an `f64`, so it becomes an integer target, the next integer above the
+  product, and either scan stops as soon as the count reaches it or an invalid
+  byte leaves too few bytes for it to be reached. Binary input settles after
+  about a quarter of the run: `mapsdatazrh` q10 -1.3% instructions.
 
 ## 6. The high-quality meta-block
 
@@ -513,7 +558,17 @@ sequenceDiagram
 ``` The tree traversal is always inlined into
 `find_all_matches` or the feature-enabled `store` body, and `scan_recent_positions`
 takes the same token for its `u8x32` prefilter, which every backend implements
-(the fallback lane by lane). Copy extension uses the shared retained
+(the fallback lane by lane). `update_nodes` uses the token the same way for its
+`u8x16`/`u32x16` distance-cache prefilter (§4), inlined into its body.
+`dictionary::all_matches::find_all` is `#[simd]` too: `find_all_matches`
+crosses into its feature entry once per position, and its four word families
+are inlined there, so each candidate word — at most 24 bytes — is compared
+with one `u8x32` `simd_eq` and the mask's trailing ones. The case transforms
+flip the uppercase bit of the word's ASCII lowercase letters (all of them, or
+lane 0 alone, which must also be lowercase) before comparing. Fewer than 32
+readable bytes on either side — the dictionary's last words, the end of the
+input — fall back to the scalar comparison. Quality ten on text: -5.6 to -5.8%
+instructions (`alice29.txt`, `lcet10.txt`), quality eleven -2.5%. Copy extension uses the shared retained
 `Kernels::extend` entry described in [encoder workspace](encoder-workspace.md).
 
 ```mermaid
@@ -608,7 +663,8 @@ flowchart LR
 
 | Layer | How it is checked |
 | --- | --- |
-| Static dictionary all-match search | Every word × every transform × every prefix, plus 3000 random inputs and a sliding window over `alice29.txt`, compared against `BrotliFindAllStaticDictionaryMatches` through the workspace shim |
+| Static dictionary all-match search | Every word × every transform × every prefix, plus 3000 random inputs and a sliding window over `alice29.txt`, compared against `BrotliFindAllStaticDictionaryMatches` through the workspace shim, each on the host's SIMD level and the scalar fallback and again padded past `max_length` so the `u8x32` comparison engages |
+| Distance-cache prefilter | `cache_probe` module tests: lane tables against the probe table, `derived_distances` against `prepare_distance_cache`, the candidate mask as a superset of a scalar oracle over 20 000 random sites per level (short rings, wraps, extreme distances), exactness on contiguous runs, forced runs |
 | `H10` | Brute-force oracle over 4000 positions: every reported match is real, lengths strictly increase, and the longest is at least what a full scan finds |
 | Zopfli search | Command stream, distance cache, literal count and trailing literals compared against `BrotliCreate{,Hq}ZopfliBackwardReferences` through the shim, over nine fixtures and 343 prefixes |
 | Block splitter | All three partitions compared against `BrotliSplitBlock`, six fixtures × both qualities |
@@ -720,6 +776,8 @@ flowchart LR
   `#[simd]` region, so on x86-64 their autovectorized loops use SSE2
   `xmm` registers even on AVX2 hosts (about 1.6% of quality 10 on
   `mapsdatazrh`). Only the block-assignment pass enters the selected backend.
+  Building the whole program for `x86-64-v3` sped qualities 10 and 11 up by
+  at most 2% (i7-13700KF, 2026-10-08), so moving them is not pursued.
 - **`hotpath` instrumentation.** Encoder block operations, Zopfli search passes,
   literal-cost estimation, and `find_blocks` have timing hooks. Individual
   per-candidate updates and clustering do not have separate timing hooks;

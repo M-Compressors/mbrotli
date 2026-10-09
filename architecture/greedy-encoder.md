@@ -619,6 +619,50 @@ three either side — which `prepare_distance_cache` fills whenever the remember
 four change. Only those four survive a meta-block; the rest are rebuilt before
 any search reads them, which is why `saved_dist_cache` is four wide.
 
+Most cached probes fail on one byte, the byte at `cur_ix + best_len` that a
+longer copy would have to repeat. For the shapes that probe the derived
+distances (blocks above 32 slots: ten probes at qualities seven and eight,
+sixteen at nine), `probe_derived_distances` tests them all at once through the
+private `compressor::core::cache_probe` module the high-quality search shares
+(see [hq-encoder.md](hq-encoder.md) §4). The derived near misses are seven
+adjacent ring bytes around each of the two freshest distances, so two
+eight-byte reads and the two single bytes of the third and fourth distances fill
+one `u8x16`; one `simd_eq` against the continuation byte and one `u32x16` range
+test over the cache give a candidate mask in index order. Each candidate still
+runs the exact scalar filter and `accept_cached`, lowest index first; when a
+copy is accepted, the indices after it are filtered again at the new length,
+which is the order and the information the reference's loop uses. A run that
+would wrap around the ring mask, or read past the bytes the ring holds, is let
+through whole. Without the second run (ten probes), code 1's byte is read on its
+own. The mask is a superset of the scalar filter's admissions only when the
+cache holds `prepare_distance_cache`'s entries; a debug assertion checks that,
+and the search tests prepare their caches as the encoder does. Four-probe shapes
+and the scalar backend keep the plain loop.
+
+```mermaid
+flowchart TD
+    Q[find_longest_match] --> Count{"probes > 4 and SIMD backend?"}
+    Count -->|no| Plain[scalar loop over the probes]
+    Count -->|yes| Cont{continuation byte in the window?}
+    Cont -->|no| Bucket[bucket scan]
+    Cont -->|yes| Mask["cache_probe: u8x16 byte compare + u32x16 range test -> index mask"]
+    Mask --> Next{candidate at or after next_index?}
+    Next -->|no| Bucket
+    Next -->|lowest| Exact[exact scalar filter]
+    Exact -->|rejected| Next
+    Exact -->|passes| Accept{accept_cached scores it higher?}
+    Accept -->|no| Next
+    Accept -->|yes| Raise["best_len = len; next_index = index + 1"]
+    Raise --> Cont
+    Plain --> Bucket
+```
+
+Instructions for one compression (callgrind, default release profile) against
+the plain loop: q7 -5.8 to -7.7%, q9 -8.1 to -15.5% on `alice29.txt`,
+`lcet10.txt` and `mapsdatazrh`; q8 -0.9% and -4.4% on two of them and +0.9% on
+`lcet10.txt`, where inlining the filter costs the bucket loop more register
+pressure than the probes save. Outlining it was worse on every case.
+
 The distance alphabet is resolved in the same pass: font mode asks for one
 postfix bit and twelve direct codes, every other mode uses what the caller
 configured, and qualities below four always use neither.
@@ -1001,8 +1045,8 @@ graph TD
 The backend is selected once when the retained encoder is created. On x86 the
 kernel holds two tokens: the detected level `S` for the fragment,
 copy-extension and high-quality kernels, and SSE2 (`Level::as_sse2`) for the
-greedy loops, whose only vector operation is the byte-equality mask of the tag
-filter; the scalar backend keeps the greedy loops scalar, as the unfiltered
+greedy loops, whose vector operations are the byte-equality mask of the tag
+filter and the cached-distance prefilter of §2.4, both 128 bits wide; the scalar backend keeps the greedy loops scalar, as the unfiltered
 oracle, and other architectures keep their own level for both. Compiling the
 greedy loops for every x86 level multiplied their code — a quarter of the crate
 — without a faster instruction to show for it. A virtual call at the outer
@@ -1033,7 +1077,8 @@ Scalar and SIMD paths keep the same matcher state, candidate order, score
 arithmetic, and error propagation.
 
 Everything else — match-length scans in the greedy matchers, bucket stores,
-distance-cache transitions, the greedy and lazy decisions, Huffman
+the exact check behind each cached-distance candidate, distance-cache
+transitions, the greedy and lazy decisions, Huffman
 construction, bit writing — is scalar, because the reference's decision order
 is not reorderable and a vector unit cannot help without changing it.
 

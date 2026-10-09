@@ -1,5 +1,46 @@
 # Changelog
 
+## Unreleased
+
+Output is byte-identical to v0.5.6 at every quality (vendored corpus plus
+synthetic inputs, qualities 0-11). Instruction counts below are callgrind
+totals for one compression with the default release profile; timings are in
+the last item.
+
+- Qualities 10 and 11 filter the sixteen distance-cache probes of each
+  command start with one SIMD comparison instead of sixteen scalar ones. The
+  two freshest cached distances nudged by up to three either way address two
+  runs of seven adjacent ring bytes, so two eight-byte reads plus the third
+  and fourth distances' bytes fill one `u8x16` that is compared against the
+  continuation byte at once; only admitted codes run the exact scalar check,
+  in the reference's order. `alice29.txt` q11 1.479G -> 1.156G instructions
+  (-21.8%), q10 544M -> 511M (-6.0%).
+- Qualities 7-9 filter their ten or sixteen cached-distance probes the same
+  way, through the same private module, on the SSE2 token the greedy loops
+  already use. q7 -5.8 to -7.7% and q9 -8.1 to -15.5% instructions on
+  `alice29.txt`, `lcet10.txt` and `mapsdatazrh`; q8 -0.9% and -4.4%, but
+  +0.9% on `lcet10.txt`.
+- Qualities 10 and 11 compare static-dictionary words with one `u8x32`
+  comparison, case transforms included, instead of word-at-a-time and
+  byte-at-a-time loops: the all-match search now enters the selected SIMD
+  level once per position. q10 -5.6 to -5.8% and q11 -2.5% instructions on
+  `alice29.txt` and `lcet10.txt`.
+- The UTF-8 share test that picks the literal cost model and context mode at
+  qualities 10 and 11 stops as soon as its answer is settled. `mapsdatazrh`
+  q10 -1.3%, q11 -0.6% instructions; text unchanged.
+- Together, against v0.5.6: q10 -11.5% (`alice29.txt`), -11.0% (`lcet10.txt`),
+  -7.0% (`mapsdatazrh`); q11 -23.8%, -23.3%, -19.4%.
+- Measured with the implementation comparison (`benchmarks/comparison`, cold
+  one-shot `compress`, eight corpora, i7-13700KF under WSL2, eight parallel
+  single-core lanes, `enc-2026-10-09` against `enc-2026-10-02`): the median
+  speed relative to Google C rose from 1.172x to 1.330x at q10 and from
+  1.299x to 1.589x at q11; Alice at q11 1.29 -> 1.66 MiB/s (C 1.04 MiB/s),
+  cyclic Alice at q10 21.7 -> 25.4 MiB/s. Output sizes are unchanged in all
+  432 cases. A one-shot harness alternating this tree and v0.5.6 on one idle
+  core: random 1 MiB q10 -13%, structured binary q10/q11 -4/-5%, Alice q8
+  -2%, structured binary q7/q8 0.0/+0.6%. The 2026-10-09 decoder sweep
+  (`dec-2026-10-09`) times unchanged decoder sources.
+
 ## [v0.5.6](https://github.com/M-Compressors/mbrotli/releases/tag/v0.5.6) - 2026-10-08
 
 - `Decompressor::decompress_to_uninit` decodes compressed members straight

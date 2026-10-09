@@ -51,7 +51,7 @@ slower than the GCC 15 of the independent table, and the gaps differ from it.
 
 | Compare | Results | Data |
 | --- | --- | --- |
-| Compression speed and size | [Qualities 0–11](encoders/README.md) | [CSV](encoder-comparison.csv), [conditions](encoder-comparison.md), [size manifest](encoder-comparison-2026-10-02/sizes.csv) |
+| Compression speed and size | [Qualities 0–11](encoders/README.md) | [CSV](encoder-comparison.csv), [conditions](encoder-comparison.md), [size manifest](encoder-comparison-2026-10-09/sizes.csv) |
 | Decompression speed on identical streams | [Source qualities 0–11](decoders/README.md) | [CSV](decoder-comparison.csv), [conditions](decoder-comparison.md) |
 
 ### Compression
@@ -70,13 +70,13 @@ output size. [Exact results and confidence bounds](encoders/README.md).
 Four decoders restore the same C-produced streams in 384 cases. Quality is the
 source encoder's setting. Each bar is the median of eight C-time/decoder-time
 ratios; higher is faster. Burli decodes every quality. SIMD Brotli re-exports the
-Rust brotli decoder project and is omitted. [Exact results](decoders/README.md), [size manifest](decoder-comparison-2026-10-02/sizes.csv).
+Rust brotli decoder project and is omitted. [Exact results](decoders/README.md), [size manifest](decoder-comparison-2026-10-09/sizes.csv).
 
 ### How to interpret the results
 
 Published measurements use an Intel Core i7-13700KF under WSL2, generic mode,
 window 22, and cold native APIs including construction, allocation and disposal.
-Compression and decompression are dated 2026-10-02 and ran as parallel corpus
+Compression and decompression are dated 2026-10-09 and ran as parallel corpus
 shards, one benchmark process per core: absolute timings are a few percent
 below a single-core run, while ratios to C are comparable. See each
 report for provenance and limits; these are measurements of recorded builds.
