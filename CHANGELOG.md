@@ -56,6 +56,19 @@ the last item.
   core: random 1 MiB q10 -13%, structured binary q10/q11 -4/-5%, Alice q8
   -2%, structured binary q7/q8 0.0/+0.6%. The 2026-10-09 decoder sweep
   (`dec-2026-10-09`) times unchanged decoder sources.
+- Refresh the published encoder comparison at `38a3c10` (`enc-2026-10-09c`,
+  432 cases, one pinned core, nothing else running); it replaces the
+  eight-lane `enc-2026-10-09` and its size manifest. Median speed relative to
+  Google C: q7 0.850x -> 1.039x, q5 0.960x -> 1.002x, q1 1.123x -> 1.196x;
+  q0, q2-q4, q8, q9 -3.7 to +0.6%; q6, q10 and q11 -5 to -7%, because C gains
+  more than mbrotli from an idle host (Alice q10: C 51.6 -> 45.0 ms, mbrotli
+  37.7 -> 35.4 ms). mbrotli has the lower mean against C in 67 of 96 cases
+  (was 66) and its 95% interval lies below every competitor's in 51 (was 39).
+  Output sizes are unchanged in all 432 cases. The 36 cases that fell more
+  than 3% in an exploratory four-lane sweep were timed against `270e6f2`
+  alternating on one idle core: mean -0.19%, 33 within +-2%; the three slower
+  ones execute -4.3%, -4.1% and +0.02% instructions (callgrind). The decoder
+  comparison is not rerun; decoder sources are unchanged.
 
 ## [v0.5.6](https://github.com/M-Compressors/mbrotli/releases/tag/v0.5.6) - 2026-10-08
 

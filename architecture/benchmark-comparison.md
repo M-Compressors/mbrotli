@@ -82,7 +82,7 @@ Each codec has its own `encoders/` or `decoders/` directory containing an index,
 `quality_docs.py` generates encoder quality pages; `plot.py` writes their shared
 overview, throughput and size charts. `decoder_docs.py` generates decoder pages
 and charts together. Generators compute links relative to their output directory.
-The published CSVs are the `enc-2026-10-09` and `dec-2026-10-09`
+The published CSVs are the `enc-2026-10-09c` and `dec-2026-10-09`
 sweeps. Each environment record links the source hashes and the measured
 executable; all encoder charts and quality pages use that same recorded sweep.
 Encoder SVG writers omit timestamps and strip trailing whitespace so generated

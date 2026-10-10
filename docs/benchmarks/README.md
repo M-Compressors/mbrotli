@@ -51,7 +51,7 @@ slower than the GCC 15 of the independent table, and the gaps differ from it.
 
 | Compare | Results | Data |
 | --- | --- | --- |
-| Compression speed and size | [Qualities 0–11](encoders/README.md) | [CSV](encoder-comparison.csv), [conditions](encoder-comparison.md), [size manifest](encoder-comparison-2026-10-09/sizes.csv) |
+| Compression speed and size | [Qualities 0–11](encoders/README.md) | [CSV](encoder-comparison.csv), [conditions](encoder-comparison.md), [size manifest](encoder-comparison-2026-10-09c/sizes.csv) |
 | Decompression speed on identical streams | [Source qualities 0–11](decoders/README.md) | [CSV](decoder-comparison.csv), [conditions](decoder-comparison.md) |
 
 ### Compression
@@ -76,9 +76,11 @@ Rust brotli decoder project and is omitted. [Exact results](decoders/README.md),
 
 Published measurements use an Intel Core i7-13700KF under WSL2, generic mode,
 window 22, and cold native APIs including construction, allocation and disposal.
-Compression and decompression are dated 2026-10-09 and ran as parallel corpus
-shards, one benchmark process per core: absolute timings are a few percent
-below a single-core run, while ratios to C are comparable. See each
+Compression (`enc-2026-10-09c`, commit `38a3c10`) ran serially on one
+otherwise idle core. Decompression (`dec-2026-10-09`) ran as parallel corpus
+shards, one benchmark process per core, so its absolute timings are a few
+percent below a single-core run, while ratios to C are comparable. Both are
+dated 2026-10-09. See each
 report for provenance and limits; these are measurements of recorded builds.
 
 Empty and tiny inputs have equal weight with large inputs. Medians describe this

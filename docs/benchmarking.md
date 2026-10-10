@@ -96,17 +96,17 @@ python3 benchmarks/comparison/quality_docs.py \
 python3 benchmarks/comparison/plot.py \
   --csv docs/benchmarks/encoder-comparison.csv \
   --output docs/benchmarks/encoders/charts \
-  --subtitle 'i7-13700KF; working tree; 20 samples; 8 parallel lanes; 2026-10-09'
+  --subtitle 'i7-13700KF; 38a3c10; 20 samples; 1 core; 2026-10-09'
 ```
 
 `quality_docs.py` writes the index, twelve quality pages and their detailed
 charts. `plot.py` writes `overview.svg`, `throughput.svg` and `size.svg` into
 the same charts directory. All eight corpora contribute to the medians.
-The published encoder CSV is `enc-2026-10-09`, with its
-[size manifest](benchmarks/encoder-comparison-2026-10-09/sizes.csv); the decoder
+The published encoder CSV is `enc-2026-10-09c`, a single-core sweep, with its
+[size manifest](benchmarks/encoder-comparison-2026-10-09c/sizes.csv); the decoder
 CSV is `dec-2026-10-09`, with its
-[size manifest](benchmarks/decoder-comparison-2026-10-09/sizes.csv). Both ran as
-[sharded runs](#sharded-runs). Each environment record identifies the measured
+[size manifest](benchmarks/decoder-comparison-2026-10-09/sizes.csv), recorded as a
+[sharded run](#sharded-runs). Each environment record identifies the measured
 source and binary; regenerating charts reuses those measurements and does not
 rerun the benchmark.
 
@@ -201,7 +201,11 @@ python3 benchmarks/comparison/report.py --decoding --baseline my-dec --csv /tmp/
 ```
 
 Choose one logical CPU per physical core (`lscpu -e=CPU,CORE`). With the four
-lanes above both sweeps take about 25 minutes. The exporter accepts the result
+lanes above both sweeps take about 25 minutes. Do not give each corpus its own
+lane: with eight encoder lanes the three 1 MiB corpora run at once, and on the
+i7-13700KF individual ratios to C moved by up to 50% against the same case
+timed alone (cyclic Alice at q4: 0.82× in such a sweep, 1.22× alone). Publish a
+single-core sweep when the ratios themselves are the result. The exporter accepts the result
 because all shards save the same baseline name and together cover the matrix.
 The root API benchmarks can share the host the same way: run each side of an
 A/B comparison on its own lane at the same time, so both see the same load,
