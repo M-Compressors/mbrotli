@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## [v0.5.7](https://github.com/M-Compressors/mbrotli/releases/tag/v0.5.7) - 2026-10-10
 
 Output is byte-identical to v0.5.6 at every quality (vendored corpus plus
 synthetic inputs, qualities 0-11). Instruction counts below are callgrind
