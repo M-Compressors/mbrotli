@@ -1,5 +1,42 @@
 # Changelog
 
+## [v0.5.8](https://github.com/M-Compressors/mbrotli/releases/tag/v0.5.8) - 2026-10-11
+
+- A reused `Compressor` keeps its encoder across a change of window, block
+  size or size hint at qualities 0-9. A pooled compressor that serves inputs
+  of different sizes declares a different window for each; that used to
+  rebuild the encoder every time. Qualities 0 and 1 now only update the
+  fragment limit and the stream header. Qualities 2-9 keep the ring buffer's
+  allocation under the new geometry and keep the match finder as long as the
+  window still resolves to the same one. Quality, mode, distance layout and
+  context modeling still decide whether the encoder can be reused.
+- When the size hint or window selects a different match finder at qualities
+  5-9 (chain finders below a 16-bit window and bucket finders above it, H5/H6
+  at the one-mebibyte hint, or quick storage for short inputs), only the
+  finder is replaced. The old finder's dense bucket tables and chain slots are
+  parked and handed to the next finder of the same kind without zeroing.
+  Parked storage counts towards `Compressor::retained_bytes`.
+  `RetentionPolicy::Bounded` drops it first and releases the workspace only
+  if the compressor is still over the ceiling. A bucket finder that is still
+  on its sparse layout rebuilds its index after such a switch.
+- The chain match finders H40, H41 and H42 make the number of cached
+  distances they check a compile-time parameter, so the probe loops have a
+  fixed trip count. H40 and H41 allocate their single bank when they are
+  created. The hop loop takes the bank as a fixed-length slice, rereads the
+  current position's comparison bytes only when the best length changes, and
+  bounds its reads by the masked window. Results are unchanged.
+- Small encoder paths drop redundant work: the static-dictionary word test
+  rejects most entries with one 8-byte XOR, Huffman literal emission walks a
+  contiguous slice when the insert does not wrap the ring buffer, and the
+  Huffman RLE count optimizer fills runs with slice writes instead of indexed
+  loops.
+- New differential tests against Google C cover reused small-window
+  compressors, compressors reconfigured across windows, alternating short and
+  long inputs, and inputs on both sides of the large-input hint. A regression
+  test checks that `Bounded` trimming drops parked storage before it drops the
+  encoder. The RLE optimizer is checked against a line-by-line transcription
+  of the C reference on 4000 random histograms.
+
 ## [v0.5.7](https://github.com/M-Compressors/mbrotli/releases/tag/v0.5.7) - 2026-10-10
 
 Output is byte-identical to v0.5.6 at every quality (vendored corpus plus
