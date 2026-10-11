@@ -277,23 +277,24 @@ impl<const INDEPENDENT: bool> FastEncoder<INDEPENDENT> {
         self.block_size_limit
     }
 
-    /// Returns whether `params` would build an encoder of exactly this shape.
+    /// Re-aims the encoder at `params` for a new stream, which [`Self::reset`]
+    /// must start next. Returns `false`, touching nothing, when `params` asks
+    /// for another quality or a large window.
     ///
-    /// A workspace uses this to decide whether resetting is equivalent to
-    /// rebuilding. Nothing is allocated: the three things that shape a fast
-    /// encoder — the quality, the fragment limit and the stream header — are
-    /// all recomputed from `params` directly.
-    pub(crate) fn matches(&self, params: &CompressParams) -> bool {
+    /// The window only decides the fragment limit and the stream header; the
+    /// table and the scratch buffer are sized per fragment anyway, so a pooled
+    /// encoder serving responses of different sizes keeps both.
+    pub(crate) fn retarget(&mut self, params: &CompressParams) -> bool {
         let Ok(quality) = FastQuality::try_from(params.quality()) else {
             return false;
         };
-        if params.lgwin().is_large() {
+        if params.lgwin().is_large() || self.core.quality() != quality {
             return false;
         }
         let window = ResolvedWindow::new(params);
-        self.core.quality() == quality
-            && self.block_size_limit == 1usize << window.encoder_bits()
-            && self.header == window.at_least(WINDOW_BITS_FAST).header()
+        self.block_size_limit = 1usize << window.encoder_bits();
+        self.header = window.at_least(WINDOW_BITS_FAST).header();
+        true
     }
 
     /// Restores the encoder to the state its constructor left it in.

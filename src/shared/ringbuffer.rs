@@ -147,6 +147,24 @@ impl RingBuffer {
         self.pos = 0;
     }
 
+    /// Re-aims the window at another geometry for a new stream, keeping its
+    /// allocation.
+    ///
+    /// The result is the window [`Self::new`] would build, except that the
+    /// storage kept from earlier streams is reused. That is safe for the same
+    /// reason [`Self::reset`] is: no stream reads bytes it has not written,
+    /// and `write` and `clear_margin` re-establish the head, the tail mirror,
+    /// the sentinel and the margin wherever the new geometry puts them.
+    pub(crate) fn reshape(&mut self, rb_bits: usize, lgblock: usize) {
+        let size = 1usize << rb_bits;
+        let tail_size = 1usize << lgblock;
+        self.size = size;
+        self.mask = size - 1;
+        self.tail_size = tail_size;
+        self.total_size = size + tail_size;
+        self.reset();
+    }
+
     /// Grows the backing storage to `buflen` bytes (`RingBufferInitBuffer`).
     #[cfg_attr(all(feature = "hotpath", not(feature = "no_std")), hotpath::measure)]
     fn init_buffer(&mut self, buflen: usize) {

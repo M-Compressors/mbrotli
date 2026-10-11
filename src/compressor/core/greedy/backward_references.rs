@@ -783,6 +783,10 @@ mod tests {
             self.inner.store(data, mask, ix);
         }
 
+        fn store_range(&mut self, data: &[u8], mask: usize, start: usize, end: usize) {
+            self.inner.store_range(data, mask, start, end);
+        }
+
         fn find_longest_match<S: Simd>(
             &mut self,
             simd: S,
@@ -877,6 +881,7 @@ mod tests {
         };
         yielding.prepare(true, data.len(), &data, true);
         yielding.store(&data, usize::MAX, 0);
+        yielding.store_range(&data, usize::MAX, 1, 4);
         let cache = INITIAL_DISTANCE_CACHE;
         let query = MatchQuery {
             #[cfg(feature = "experimental")]

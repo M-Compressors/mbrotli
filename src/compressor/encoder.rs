@@ -705,7 +705,15 @@ impl Compressor {
     pub fn trim(&mut self, policy: RetentionPolicy) {
         let release = match policy {
             RetentionPolicy::Aggressive | RetentionPolicy::CurrentConfig => false,
-            RetentionPolicy::Bounded { max_bytes } => self.retained_bytes() > max_bytes,
+            RetentionPolicy::Bounded { max_bytes } => {
+                // Storage kept for match finders of other plans goes first: it
+                // only speeds up a plan switch, and dropping it may keep the
+                // rest of the workspace within the bound.
+                if self.retained_bytes() > max_bytes {
+                    self.workspace.release_parked();
+                }
+                self.retained_bytes() > max_bytes
+            }
             RetentionPolicy::ReleaseAll => true,
         };
         if release {

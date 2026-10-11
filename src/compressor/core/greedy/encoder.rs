@@ -16,7 +16,9 @@ use crate::backend::Backend;
 
 use super::backward_references::{ReferenceState, create_backward_references};
 use super::context_model::decide_over_literal_context_modeling;
-use super::hashers::{DistanceCache, MatchFinder, NUM_REMEMBERED_DISTANCES, Sweep, with_matcher};
+use super::hashers::{
+    DistanceCache, MatchFinder, NUM_REMEMBERED_DISTANCES, ParkedTables, Sweep, with_matcher,
+};
 use super::metablock::build_meta_block_greedy_into;
 use super::params::{GreedyParams, MAX_NUM_DELAYED_SYMBOLS};
 use crate::compressor::core::rfc9841::context::SharedContextInner;
@@ -53,6 +55,9 @@ enum Cleanup {
     Wipe,
     /// The finder empties itself on every prepare; nothing to do.
     Nothing,
+    /// Already applied, before the window changed shape; `matcher_dirty`
+    /// holds the outcome.
+    Applied,
 }
 
 /// Streaming encoder for qualities three to five.
@@ -65,6 +70,8 @@ pub(crate) struct GreedyEncoder<const INDEPENDENT: bool = false> {
     params: GreedyParams,
     ringbuffer: RingBuffer,
     matcher: MatchFinder,
+    /// Storage of finders of other plans, for the next one of their kind.
+    parked: ParkedTables,
     is_prepared: bool,
     /// Whether the match finder holds entries from a stream already written.
     ///
@@ -175,6 +182,7 @@ impl<const INDEPENDENT: bool> GreedyEncoder<INDEPENDENT> {
             params: resolved,
             ringbuffer,
             matcher,
+            parked: ParkedTables::default(),
             is_prepared: false,
             matcher_dirty: false,
             cleanup: Cleanup::Nothing,
@@ -234,6 +242,79 @@ impl<const INDEPENDENT: bool> GreedyEncoder<INDEPENDENT> {
         true
     }
 
+    /// Re-aims a finished encoder at `fresh` for a new stream, which
+    /// [`Self::reset`] must start next.
+    ///
+    /// Unlike [`Self::retarget`], the window may change: a pooled compressor
+    /// serving responses of different sizes declares a different window for
+    /// each, and rebuilding the match finder and the window for every one of
+    /// them costs more than a short stream's compression. The match finder is
+    /// kept when `fresh` resolves to the same plan, and the window keeps its
+    /// allocation under the new geometry.
+    pub(crate) fn retarget_for_new_stream(
+        &mut self,
+        fresh: GreedyParams,
+        expected_input: usize,
+    ) -> bool {
+        if self.params.same_shape(&fresh) && self.retarget(fresh, expected_input) {
+            return true;
+        }
+        if self.params.same_but_window(&fresh)
+            && self.matcher.retarget(fresh.hasher, expected_input)
+        {
+            // The cleanup replays the previous stream's sweep over the bytes
+            // it stored, so it has to run while the window still has their
+            // layout.
+            self.clean_matcher();
+            self.matcher.forget_sparse();
+        } else if self.params.same_but_window_and_plan(&fresh) {
+            // Another plan, or another variant of the same one: only the
+            // match finder changes. The old one's contents go with it, so its
+            // cleanup is moot; its large tables are parked for the next
+            // finder of their kind, which reuses them without zeroing.
+            let finder = MatchFinder::rebuilt(fresh.hasher, expected_input, &mut self.parked);
+            ::core::mem::replace(&mut self.matcher, finder).park(&mut self.parked);
+            if fresh.size_hint != 0 {
+                self.matcher.materialize();
+            }
+            self.cleanup = Cleanup::Nothing;
+            self.matcher_dirty = false;
+        } else {
+            return false;
+        }
+        self.ringbuffer.reshape(fresh.rb_bits(), fresh.lgblock);
+        self.ringbuffer.expect_input(expected_input);
+        self.params = fresh;
+        true
+    }
+
+    /// Drops the storage kept for finders of other plans, both the parked
+    /// tables and any the current finder has not taken up yet.
+    pub(crate) fn release_parked(&mut self) {
+        self.parked = ParkedTables::default();
+        self.matcher.release_recycled();
+    }
+
+    /// Leaves the match finder clean for the next stream, or marks it for a
+    /// wipe, according to how the previous stream prepared it.
+    ///
+    /// It runs before the window it read from is dropped or reshaped: the
+    /// sweep hashes the very bytes the previous stream stored, and they are
+    /// still where that stream left them. Running it twice is harmless; the
+    /// second call keeps the first one's outcome.
+    fn clean_matcher(&mut self) {
+        match ::core::mem::replace(&mut self.cleanup, Cleanup::Applied) {
+            Cleanup::Replay(input_size) => {
+                self.matcher
+                    .prepare(true, input_size, self.ringbuffer.buffer(), true);
+                self.matcher_dirty = false;
+            }
+            Cleanup::Wipe => self.matcher_dirty = true,
+            Cleanup::Nothing => self.matcher_dirty = false,
+            Cleanup::Applied => {}
+        }
+    }
+
     /// Allocates the match finder's tables, for a stream whose size has just
     /// been inferred and which has not yet encoded any input.
     pub(crate) fn materialize(&mut self) {
@@ -267,18 +348,8 @@ impl<const INDEPENDENT: bool> GreedyEncoder<INDEPENDENT> {
         } else {
             (last_bytes, last_bytes_bits)
         };
-        // Clean the match finder before the window it read from is dropped:
-        // the sweep hashes the very bytes the previous stream stored, and they
-        // are still where that stream left them.
-        match ::core::mem::replace(&mut self.cleanup, Cleanup::Nothing) {
-            Cleanup::Replay(input_size) => {
-                self.matcher
-                    .prepare(true, input_size, self.ringbuffer.buffer(), true);
-                self.matcher_dirty = false;
-            }
-            Cleanup::Wipe => self.matcher_dirty = true,
-            Cleanup::Nothing => self.matcher_dirty = false,
-        }
+        self.clean_matcher();
+        self.cleanup = Cleanup::Nothing;
         self.ringbuffer.reset();
         self.is_prepared = false;
         self.input_pos = 0;
@@ -396,6 +467,7 @@ impl<const INDEPENDENT: bool> GreedyEncoder<INDEPENDENT> {
     pub(crate) fn retained_bytes(&self) -> usize {
         self.ringbuffer.retained_bytes()
             + self.matcher.retained_bytes()
+            + self.parked.retained_bytes()
             + self.commands.capacity() * size_of::<Command>()
             + self.storage.capacity()
             + self.writer.retained_bytes()

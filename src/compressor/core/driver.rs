@@ -80,14 +80,15 @@ impl<const INDEPENDENT: bool> Encoder<INDEPENDENT> {
     /// Returns `false` when `params` and `size_hint` would not resolve to this
     /// encoder's shape, in which case nothing is touched and the caller has to
     /// build a new one. A greedy encoder keeps its shape across size hints
-    /// unless the hint selects another match finder. A `true` return leaves
+    /// and windows unless they select another match finder; a new window only
+    /// reshapes the ring buffer, keeping its allocation. A `true` return leaves
     /// the encoder exactly as [`Encoder::new`] would have: every allocation
     /// is kept, but no state from the previous stream survives.
     pub(crate) fn reset_for(&mut self, params: &CompressParams, size_hint: usize) -> bool {
         let size_hint = params.size_hint().unwrap_or(size_hint);
         match self {
             Self::Fast(encoder) => {
-                if !encoder.matches(params) {
+                if !encoder.retarget(params) {
                     return false;
                 }
                 encoder.reset();
@@ -97,7 +98,7 @@ impl<const INDEPENDENT: bool> Encoder<INDEPENDENT> {
                 let Ok(fresh) = GreedyParams::new(params, size_hint) else {
                     return false;
                 };
-                if !encoder.retarget(fresh, size_hint) {
+                if !encoder.retarget_for_new_stream(fresh, size_hint) {
                     return false;
                 }
                 encoder.reset();
@@ -269,6 +270,14 @@ impl EncoderCache {
     /// Returns the bytes the retained encoder keeps allocated.
     pub(crate) fn retained_bytes(&self) -> usize {
         self.encoder.as_ref().map_or(0, Encoder::retained_bytes)
+    }
+
+    /// Drops what the retained encoder keeps only for match finders of other
+    /// plans, keeping the encoder itself.
+    pub(crate) fn release_parked(&mut self) {
+        if let Some(Encoder::Greedy(encoder)) = &mut self.encoder {
+            encoder.release_parked();
+        }
     }
 
     /// Returns the retained encoder, if a call has already built one.
@@ -762,24 +771,24 @@ mod tests {
     }
 
     #[test]
-    fn the_cache_rebuilds_when_the_size_hint_moves_the_matcher() {
+    fn the_cache_keeps_the_encoder_when_the_size_hint_moves_the_matcher() {
         let backend = Backend::default();
-        // Quality 5 picks a different match finder above one mebibyte, so the
-        // resolved parameters differ and the encoder must be rebuilt.
+        // Quality 5 picks a different match finder above one mebibyte. Only
+        // the finder is replaced; the encoder, and the finder storage it
+        // parks, carry over.
         let small = params(QualityLevel::Q5, 22).with_size_hint(Some(1024));
         let large = params(QualityLevel::Q5, 22).with_size_hint(Some(8 << 20));
         let mut cache = EncoderCache::default();
 
         cache.acquire(backend, &small, 1024).expect("first acquire");
         assert!(cache.acquire(backend, &large, 1024).is_ok());
+        let encoder = cache.encoder.as_mut().expect("retained");
         assert!(
-            !cache
-                .encoder
-                .as_mut()
-                .expect("retained")
-                .reset_for(&small, 1024),
-            "the encoder built for a large hint accepted a small one"
+            encoder.reset_for(&small, 1024),
+            "the encoder built for a large hint refused a small one"
         );
+        // Another quality is still another encoder.
+        assert!(!encoder.reset_for(&params(QualityLevel::Q6, 22), 1024));
     }
 
     #[test]
