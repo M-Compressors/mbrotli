@@ -31,7 +31,7 @@ use crate::shared::constants::HASH_MUL32;
 use crate::shared::dictionary::{self, DictionaryStats};
 use crate::shared::fixed::{fixed_table, fixed_table_from_vec};
 use crate::shared::match_len::{
-    current_window, match_len_at, match_len_at_outlined, match_len_windows,
+    current_window, match_len_at, match_len_at_current, match_len_at_outlined, match_len_windows,
 };
 use crate::shared::ringbuffer::contiguous;
 use crate::shared::score::{
@@ -706,8 +706,17 @@ impl<
         let slots = &mut self.slots;
         let cur_ix_masked = query.cur_ix & query.mask;
         // The window a candidate is measured against, cut only when one
-        // passes the byte compare; most positions never get that far.
+        // passes the byte compare; most positions never get that far. The
+        // four-slot matchers cut it behind the measuring call instead; see
+        // `match_len_at_current`.
         let cur = || current_window(data, cur_ix_masked, query.max_length);
+        let measure = |prev_ix: usize| {
+            if QuickShape::<BUCKETS, SWEEP_BITS, HASH_LEN, USE_DICTIONARY>::SWEEP >= 4 {
+                match_len_at_current(simd, data, prev_ix, cur_ix_masked, query.max_length)
+            } else {
+                match_len_at_outlined(simd, data, prev_ix, cur())
+            }
+        };
         let best_len_in = out.len;
         let mut compare_char = read_u8(data, cur_ix_masked + best_len_in);
         let key =
@@ -723,7 +732,7 @@ impl<
         if prev_ix < query.cur_ix {
             let prev_ix = prev_ix & query.mask;
             if compare_char == read_u8(data, prev_ix + best_len) {
-                let len = match_len_at_outlined(simd, data, prev_ix, cur());
+                let len = measure(prev_ix);
                 if len >= 4 {
                     let score = backward_reference_score_using_last_distance(len);
                     if best_score < score {
@@ -754,7 +763,7 @@ impl<
             if backward == 0 || backward > query.max_backward {
                 return;
             }
-            let len = match_len_at_outlined(simd, data, prev_ix, cur());
+            let len = measure(prev_ix);
             if len >= 4 {
                 let score = backward_reference_score(len, backward);
                 if best_score < score {
@@ -782,7 +791,7 @@ impl<
                 if backward == 0 || backward > query.max_backward {
                     continue;
                 }
-                let len = match_len_at_outlined(simd, data, prev_ix, cur());
+                let len = measure(prev_ix);
                 if len >= 4 {
                     let score = backward_reference_score(len, backward);
                     if best_score < score {

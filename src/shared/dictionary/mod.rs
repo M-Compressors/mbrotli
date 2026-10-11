@@ -239,17 +239,18 @@ pub(crate) fn search<const SHALLOW: bool>(
     if !stats.is_worth_probing() {
         return;
     }
-    let mut probed = *out;
     if SHALLOW {
         // Most shallow probes land on an empty bucket. Answering those here
         // spares the out-of-line call its prologue and the spill of the
         // caller's live registers; the count is what the probe would have
-        // added, so the give-up test sees the same statistics.
+        // added, so the give-up test sees the same statistics. The result is
+        // copied only past this test, so an empty bucket stores nothing.
         let key = hash14(data) << 1;
         if HASH_LENGTHS.get(key).is_none_or(|&len| len == 0) {
             stats.lookups += 1;
             return;
         }
+        let mut probed = *out;
         probe_shallow(
             stats,
             key,
@@ -259,7 +260,9 @@ pub(crate) fn search<const SHALLOW: bool>(
             max_distance,
             &mut probed,
         );
+        *out = probed;
     } else {
+        let mut probed = *out;
         probe_deep(
             stats,
             data,
@@ -268,8 +271,8 @@ pub(crate) fn search<const SHALLOW: bool>(
             max_distance,
             &mut probed,
         );
+        *out = probed;
     }
-    *out = probed;
 }
 
 /// Probes the shorter-word bucket `key`, which is known to hold a word.

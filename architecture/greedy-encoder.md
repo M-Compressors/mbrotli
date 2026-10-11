@@ -775,20 +775,28 @@ about a dozen values. The greedy matchers measure a match with
 and a trailing-zero count before cutting any window, and only then continues
 with `match_len_windows`, a whole-word scan with one overlapping word at the
 tail (§8.1) — together the reference's `FindMatchLengthWithLimit` without its
-byte loop. The quick matchers (`H2`, `H3`, `H4`, `H54`) use
-`match_len_at_outlined`, the same scan with everything past the first word
-behind an out-of-line call that re-enters the SIMD feature context: inlined,
-that scan's setup does not depend on the slot, so it was hoisted in front of
-the slot loop and paid, with its spills, at every position, although only
-about a quarter of the candidates get past the first word. `current_window`
-and the candidate cut mask their index and length to 32 bits, which proves
-the slice end neither overflows nor precedes the start and leaves one compare.
+byte loop. The quick matchers measure behind an out-of-line call that
+re-enters the SIMD feature context. `H2` and `H3` use `match_len_at_outlined`,
+which settles the first word inline and calls `match_len_tail` for the rest:
+inlined, that scan's setup does not depend on the slot, so it was hoisted in
+front of the slot loop and paid, with its spills, at every position, although
+only about a quarter of the candidates get past the first word. The
+four-slot `H4` and `H54` use `match_len_at_current`, which also cuts the
+current window behind the call: with four slots the compiler cut that window
+in front of the slot loop and kept it across all four, at every position,
+although only the few candidates that pass the first-byte compare are
+measured (measured on `H4` text: about 2.5% fewer instructions per stream).
+The one- and two-slot matchers measured 1-4% slower that way, so the choice
+is made per matcher at compile time. `current_window` and the candidate cut
+mask their index and length to 32 bits, which proves the slice end neither
+overflows nor precedes the start and leaves one compare.
 
 The static-dictionary probe is chosen at compile time
 (`search_dictionary::<SHALLOW>`). A shallow probe (the quick matchers) hashes
 the four bytes inline and answers an empty bucket — about three quarters of
 the probes on text — without a call, counting the lookup exactly as the
-out-of-line probe would; only a filled bucket calls `probe_shallow`. The deep
+out-of-line probe would; only a filled bucket copies the search result and
+calls `probe_shallow`, so an empty bucket stores nothing. The deep
 probe of the bucket matchers keeps its hash inside `probe_deep`, so their
 search loop is unchanged. None of this changes a decision: the sequence below
 is the same as the reference's.
@@ -1095,7 +1103,8 @@ or virtual dispatch. All entries are outside the search loop. The candidate
 measurements `accept_cached` and `accept_candidate` stay out of line on
 purpose (§2) and are `#[simd]` with an `#[inline(always)]` wrapper, so the
 search loop calls the level's feature-enabled entry directly and the 32-byte
-compares inline into it; the same holds for `match_len_tail`. The macro's `fearless_simd` helper owns the feature proof; no
+compares inline into it; the same holds for `match_len_tail` and
+`match_len_at_current`. The macro's `fearless_simd` helper owns the feature proof; no
 handwritten `target_feature` or unsafe block is needed.
 Scalar and SIMD paths keep the same matcher state, candidate order, score
 arithmetic, and error propagation.
