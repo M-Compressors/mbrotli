@@ -402,3 +402,56 @@ fn reuse_survives_a_streaming_session_in_the_middle() {
         );
     }
 }
+
+#[test]
+fn a_bounded_trim_drops_parked_finder_storage_before_the_encoder() {
+    // A window of sixteen bits uses a chain finder at quality six, a wider
+    // one the bucket finder; switching parks the chain finder's slots.
+    let text = b"the quick brown fox jumps over the lazy dog, again and again. ".repeat(1600);
+    let mut encoder = Compressor::new(
+        EncoderConfig::default()
+            .with_quality(Quality::Q6)
+            .with_window(Window::standard(16).expect("window")),
+    )
+    .expect("compressor");
+    let small = encoder
+        .compress(&text[..60_000])
+        .expect("compression failed");
+    encoder
+        .reconfigure(
+            EncoderConfig::default()
+                .with_quality(Quality::Q6)
+                .with_window(Window::standard(18).expect("window")),
+        )
+        .expect("a legal configuration");
+    encoder.compress(&text).expect("compression failed");
+    let with_parked = encoder.retained_bytes();
+
+    // A ceiling just below what is kept is met by dropping the parked slots
+    // alone: the encoder, and its window and tables, stay.
+    encoder.trim(RetentionPolicy::Bounded {
+        max_bytes: with_parked - 1,
+    });
+    let without_parked = encoder.retained_bytes();
+    assert!(without_parked < with_parked);
+    assert!(without_parked > with_parked / 2, "the encoder was released");
+
+    // It still produces what a fresh compressor does.
+    encoder
+        .reconfigure(
+            EncoderConfig::default()
+                .with_quality(Quality::Q6)
+                .with_window(Window::standard(16).expect("window")),
+        )
+        .expect("a legal configuration");
+    assert_eq!(
+        encoder
+            .compress(&text[..60_000])
+            .expect("compression failed"),
+        small
+    );
+
+    // A ceiling the encoder itself exceeds still releases everything.
+    encoder.trim(RetentionPolicy::Bounded { max_bytes: 1 });
+    assert!(encoder.retained_bytes() <= 1);
+}

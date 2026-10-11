@@ -41,9 +41,16 @@ cache resets a compatible encoder and rebuilds it when its resolved shape change
 
 | Family | Compatibility key |
 | --- | --- |
-| Fast | Quality, fragment limit and stream header |
-| Greedy | Resolved parameters and match-finder variant; the size hint is retargeted |
+| Fast | Quality; the fragment limit and stream header follow the new window |
+| Greedy | Quality, mode, distance layout and context modeling; a new window or block size reshapes the ring buffer, and a new match-finder plan or variant replaces only the finder, reusing parked tables |
 | HQ | Resolved `HqParams` |
+
+A pooled compressor serving inputs of different sizes typically declares a
+different window for each. Reshaping in place keeps the match finder and the
+window's allocation, so alternating windows costs nothing over a steady
+stream as long as the match-finder plan stays the same. Greedy reuse first
+applies the previous stream's match-finder cleanup, which reads that stream's
+bytes, and only then reshapes the ring buffer.
 
 Reset clears logical stream state; retained bytes cannot authorize references
 before the new stream's start. An encoding failure discards partial encoder state.

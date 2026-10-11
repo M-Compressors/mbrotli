@@ -33,6 +33,7 @@ use crate::shared::fixed::{fixed_table, fixed_table_from_vec};
 use crate::shared::match_len::{
     current_window, match_len_at, match_len_at_outlined, match_len_windows,
 };
+use crate::shared::ringbuffer::contiguous;
 use crate::shared::score::{
     SearchResult, backward_reference_penalty_using_last_distance, backward_reference_score,
     backward_reference_score_using_last_distance,
@@ -347,11 +348,7 @@ pub(crate) trait Matcher {
     fn store(&mut self, data: &[u8], mask: usize, ix: usize);
 
     /// Records every position in `start..end` (`StoreRange`).
-    fn store_range(&mut self, data: &[u8], mask: usize, start: usize, end: usize) {
-        for ix in start..end {
-            self.store(data, mask, ix);
-        }
-    }
+    fn store_range(&mut self, data: &[u8], mask: usize, start: usize, end: usize);
 
     /// Records the three positions that span the previous block boundary.
     ///
@@ -1223,6 +1220,9 @@ pub(crate) struct BucketMatcher<
     const SLOTS: usize,
 > {
     layout: Layout<BUCKETS, BLOCK, SLOTS>,
+    /// Dense storage another finder left behind, taken by the first dense
+    /// layout instead of a zeroed allocation.
+    recycled: Option<(Vec<u32>, Vec<u8>)>,
     /// Total input the matcher was built for; zero when unknown.
     size_hint: usize,
     /// Streams prepared so far, saturating; the layout choice for a deep
@@ -1257,26 +1257,31 @@ impl<const HASH64: bool, const BUCKETS: usize, const BLOCK: usize, const SLOTS: 
 
     /// Returns the bytes this match finder keeps allocated.
     pub(crate) const fn retained_bytes(&self) -> usize {
-        match &self.layout {
-            Layout::Compact(layout) => {
-                (layout.compact.entries.capacity() + layout.chain.capacity()) * size_of::<u64>()
+        let recycled = match &self.recycled {
+            Some((words, tags)) => words.capacity() * size_of::<u32>() + tags.capacity(),
+            None => 0,
+        };
+        recycled
+            + match &self.layout {
+                Layout::Compact(layout) => {
+                    (layout.compact.entries.capacity() + layout.chain.capacity()) * size_of::<u64>()
+                }
+                Layout::Sparse(layout) => {
+                    BUCKETS * size_of::<u64>()
+                        + layout.blocks.capacity() * size_of::<[u32; BLOCK]>()
+                        + layout.block_tags.capacity() * size_of::<[u8; BLOCK]>()
+                        + layout.starters.capacity() * size_of::<[u32; STARTER_SLOTS]>()
+                        + layout.starter_tags.capacity() * size_of::<[u8; STARTER_SLOTS]>()
+                }
+                Layout::Dense(layout) => {
+                    layout.num.len() * size_of::<u16>()
+                        + layout.dense.len() * size_of::<u32>()
+                        + match layout.dense_tags {
+                            Some(ref dense) => dense.len(),
+                            None => 0,
+                        }
+                }
             }
-            Layout::Sparse(layout) => {
-                BUCKETS * size_of::<u64>()
-                    + layout.blocks.capacity() * size_of::<[u32; BLOCK]>()
-                    + layout.block_tags.capacity() * size_of::<[u8; BLOCK]>()
-                    + layout.starters.capacity() * size_of::<[u32; STARTER_SLOTS]>()
-                    + layout.starter_tags.capacity() * size_of::<[u8; STARTER_SLOTS]>()
-            }
-            Layout::Dense(layout) => {
-                layout.num.len() * size_of::<u16>()
-                    + layout.dense.len() * size_of::<u32>()
-                    + match layout.dense_tags {
-                        Some(ref dense) => dense.len(),
-                        None => 0,
-                    }
-            }
-        }
     }
 
     /// Creates an empty matcher expecting `size_hint` bytes (zero if unknown).
@@ -1290,8 +1295,56 @@ impl<const HASH64: bool, const BUCKETS: usize, const BLOCK: usize, const SLOTS: 
         };
         Self {
             layout: Layout::Compact(CompactLayout::default()),
+            recycled: None,
             size_hint,
             streams: 0,
+        }
+    }
+
+    /// Drops an on-demand layout, so the next stream starts from the compact
+    /// one as a fresh matcher would.
+    ///
+    /// A reused sparse layout keeps every bucket earlier streams populated,
+    /// which is what makes it fast on similar input; on input from another
+    /// size class it holds the union of both streams' buckets. A deep shape's
+    /// union of a long response with the next outgrows the default retention
+    /// bound and is released every time, so for a new window the matcher
+    /// starts over instead.
+    fn forget_sparse(&mut self) {
+        if matches!(self.layout, Layout::Sparse(_)) {
+            self.layout = Layout::Compact(CompactLayout::default());
+        }
+    }
+
+    /// Takes over dense storage another finder left behind.
+    ///
+    /// A dense table is read only below its bucket counters, which a dense
+    /// layout clears before every stream, so the positions and tags can keep
+    /// whatever they held.
+    fn recycle(&mut self, parked: &mut ParkedTables) {
+        if self.recycled.is_none() {
+            self.recycled = parked.dense.take();
+        }
+    }
+
+    /// Hands the dense storage over for a finder of another plan.
+    fn park(self, parked: &mut ParkedTables) {
+        let dense = match self.layout {
+            Layout::Dense(layout) => Some((
+                Vec::from(layout.dense as Box<[u32]>),
+                layout
+                    .dense_tags
+                    .map_or_else(Vec::new, |tags| Vec::from(tags as Box<[u8]>)),
+            )),
+            _ => self.recycled,
+        };
+        if let Some(dense) = dense
+            && parked
+                .dense
+                .as_ref()
+                .is_none_or(|(words, _)| words.capacity() < dense.0.capacity())
+        {
+            parked.dense = Some(dense);
         }
     }
 
@@ -1458,7 +1511,10 @@ impl<const HASH64: bool, const BUCKETS: usize, const BLOCK: usize, const SLOTS: 
                         };
                         DenseLayout::from((dense, dense_tags))
                     }
-                    Layout::Compact(_) => DenseLayout::default(),
+                    Layout::Compact(_) => match self.recycled.take() {
+                        Some(storage) => DenseLayout::from(storage),
+                        None => DenseLayout::default(),
+                    },
                 };
                 layout.prepare();
                 Layout::Dense(layout)
@@ -2778,6 +2834,39 @@ const CHAIN_EMPTY_ADDR: u32 = 0xCCCC_CCCC;
 /// Head value the partial preparation seeds a bucket with.
 const CHAIN_EMPTY_HEAD: u16 = 0xCCCC;
 
+/// Storage a match finder leaves behind when its encoder switches plans.
+///
+/// A pooled encoder serving responses on both sides of a plan boundary —
+/// short and long inputs at qualities five to nine, or inputs of known and
+/// unknown length — switches between the chain finders and the bucket
+/// finders at every response. Built from scratch, either zeroes its largest
+/// table, which costs more than compressing a short response. Neither needs
+/// it zeroed when reused: a dense table is read only below its bucket
+/// counters and chain slots only through their addresses, and a new finder
+/// clears both. So the buffers wait here for the next finder of their kind.
+#[derive(Default)]
+pub(crate) struct ParkedTables {
+    /// Positions and tags of a dense bucket table.
+    dense: Option<(Vec<u32>, Vec<u8>)>,
+    /// Slot storage of a chain finder.
+    chain_slots: Vec<ChainSlot>,
+}
+
+impl ParkedTables {
+    /// Returns the bytes kept for a finder of another plan.
+    pub(crate) fn retained_bytes(&self) -> usize {
+        self.dense.as_ref().map_or(0, |(words, tags)| {
+            words.capacity() * size_of::<u32>() + tags.capacity()
+        }) + self.chain_slots.capacity() * size_of::<ChainSlot>()
+    }
+}
+
+/// Returns the forgetful-chain bucket of a four-byte word (`HashBytes`).
+#[inline(always)]
+const fn hash_chain_word(word: u32) -> usize {
+    (word.wrapping_mul(HASH_MUL32) >> (32 - CHAIN_BUCKET_BITS)) as usize
+}
+
 /// One node of a forgetful chain.
 #[derive(Copy, Clone, Debug, Default)]
 struct ChainSlot {
@@ -2794,7 +2883,7 @@ struct ChainSlot {
 /// `NUM_BANKS` and `BANK_BITS` are compile-time because they decide the bank
 /// index arithmetic in the inner hop loop: H40 and H41 keep one bank of
 /// 65,536 slots, H42 five hundred and twelve banks of 512.
-pub(crate) struct ChainMatcher<const NUM_BANKS: usize, const BANK_BITS: u32> {
+pub(crate) struct ChainMatcher<const NUM_BANKS: usize, const BANK_BITS: u32, const LAST: usize> {
     addr: Box<[u32; CHAIN_BUCKET_SIZE]>,
     head: Box<[u16; CHAIN_BUCKET_SIZE]>,
     tiny_hash: Box<[u8; 1 << 16]>,
@@ -2805,11 +2894,12 @@ pub(crate) struct ChainMatcher<const NUM_BANKS: usize, const BANK_BITS: u32> {
     // hundred and twelve of these, and inlining a kibibyte would make every
     // other `MatchFinder` variant carry the same footprint.
     free_slot_idx: Box<[u16; NUM_BANKS]>,
-    last_distances: usize,
     max_hops: usize,
 }
 
-impl<const NUM_BANKS: usize, const BANK_BITS: u32> ChainMatcher<NUM_BANKS, BANK_BITS> {
+impl<const NUM_BANKS: usize, const BANK_BITS: u32, const LAST: usize>
+    ChainMatcher<NUM_BANKS, BANK_BITS, LAST>
+{
     /// Slots one bank holds (`BANK_SIZE`).
     const BANK_SIZE: usize = 1usize << BANK_BITS;
 
@@ -2831,33 +2921,115 @@ impl<const NUM_BANKS: usize, const BANK_BITS: u32> ChainMatcher<NUM_BANKS, BANK_
     }
 
     pub(crate) fn new(shape: ChainShape) -> Self {
+        Self::with_slots(shape, Vec::new())
+    }
+
+    /// Creates an empty chain table that takes over `slots`, the slot storage
+    /// a finder of another plan left behind.
+    ///
+    /// The slots keep whatever they held: a chain is only entered through
+    /// `addr`, which starts empty, so no slot is read before this matcher
+    /// has written it. Reusing them spares the zeroing a fresh bank costs.
+    fn with_slots(shape: ChainShape, mut slots: Vec<ChainSlot>) -> Self {
         debug_assert_eq!(shape.num_banks, NUM_BANKS);
         debug_assert_eq!(shape.bank_bits, BANK_BITS);
-        Self {
+        debug_assert_eq!(shape.last_distances, LAST);
+        let reuse_bank = NUM_BANKS == 1 && slots.len() >= Self::BANK_SIZE;
+        if reuse_bank {
+            slots.truncate(Self::BANK_SIZE);
+        } else {
+            // Lazily activated banks are appended from the start; their
+            // positions decide nothing but where a bank lives.
+            slots.clear();
+        }
+        let mut matcher = Self {
             addr: fixed_table(CHAIN_EMPTY_ADDR),
             head: fixed_table(0),
             tiny_hash: fixed_table(0),
-            slots: Vec::new(),
+            slots,
             bank_offsets: fixed_table(0),
             free_slot_idx: fixed_table(0),
-            last_distances: shape.last_distances,
             max_hops: shape.max_hops,
+        };
+        if reuse_bank {
+            matcher.bank_offsets[0] = 1;
+        } else if NUM_BANKS == 1 {
+            // Every store reaches the only bank, so it is materialized up
+            // front and `activate_bank` needs no growth path for it.
+            matcher.activate_new_bank(0);
+        }
+        matcher
+    }
+
+    /// Records position `ix`, whose four bytes hash to `key` (`Store` after
+    /// its `HashBytes`).
+    #[inline(always)]
+    fn store_key(&mut self, key: usize, ix: usize) {
+        let bank = key & Self::BANK_SELECT;
+        let bank_base = self.activate_bank(bank);
+        let free = self.free_slot_idx.get_mut(bank).map_or(0u16, |slot| {
+            let current = *slot;
+            *slot = current.wrapping_add(1);
+            current
+        });
+        let idx = usize::from(free) & Self::BANK_MASK;
+        let previous = self.addr.get(key).copied().unwrap_or(CHAIN_EMPTY_ADDR);
+        let delta = ix.wrapping_sub(previous as usize);
+        if let Some(slot) = self.tiny_hash.get_mut(ix as u16 as usize) {
+            *slot = key as u8;
+        }
+        let delta = if delta > 0xFFFF { 0xFFFF } else { delta as u16 };
+        let head = self.head.get(key).copied().unwrap_or(0);
+        if let Some(slot) = self.slots.get_mut(bank_base + idx) {
+            slot.delta = delta;
+            slot.next = head;
+        }
+        if let Some(slot) = self.addr.get_mut(key) {
+            *slot = ix as u32;
+        }
+        if let Some(slot) = self.head.get_mut(key) {
+            *slot = idx as u16;
+        }
+    }
+
+    /// Hands the slot storage over for a finder of another plan.
+    fn park(self, parked: &mut ParkedTables) {
+        if self.slots.capacity() > parked.chain_slots.capacity() {
+            parked.chain_slots = self.slots;
         }
     }
 
     /// Returns the bucket of the bytes at `offset` (`HashBytes`).
     #[inline(always)]
     fn hash(data: &[u8], offset: usize) -> usize {
-        (read_u32(data, offset).wrapping_mul(HASH_MUL32) >> (32 - CHAIN_BUCKET_BITS)) as usize
+        hash_chain_word(read_u32(data, offset))
     }
 
-    /// Materializes a bank without changing its circular slot numbering.
+    /// Returns where `bank` starts in `slots`, materializing it on first use
+    /// without changing its circular slot numbering.
+    ///
+    /// The growth path lives out of line: a call that may reallocate the
+    /// slots, reachable from inside the search and store loops, would make
+    /// the compiler reload every table pointer after each store. A single
+    /// bank is materialized by [`Self::new`], so for H40 and H41 there is no
+    /// such call at all.
     #[inline(always)]
     fn activate_bank(&mut self, bank: usize) -> usize {
+        if NUM_BANKS == 1 {
+            debug_assert_eq!(self.bank_offsets[0], 1);
+            return 0;
+        }
         let offset = self.bank_offsets[bank];
         if offset != 0 {
             return (offset - 1) as usize;
         }
+        self.activate_new_bank(bank)
+    }
+
+    /// Appends the storage of a bank used for the first time.
+    #[cold]
+    #[inline(never)]
+    fn activate_new_bank(&mut self, bank: usize) -> usize {
         let start = self.slots.len();
         self.slots
             .resize(start + Self::BANK_SIZE, ChainSlot::default());
@@ -2866,7 +3038,9 @@ impl<const NUM_BANKS: usize, const BANK_BITS: u32> ChainMatcher<NUM_BANKS, BANK_
     }
 }
 
-impl<const NUM_BANKS: usize, const BANK_BITS: u32> Matcher for ChainMatcher<NUM_BANKS, BANK_BITS> {
+impl<const NUM_BANKS: usize, const BANK_BITS: u32, const LAST: usize> Matcher
+    for ChainMatcher<NUM_BANKS, BANK_BITS, LAST>
+{
     const HASH_TYPE_LENGTH: usize = 4;
     const STORE_LOOKAHEAD: usize = 4;
 
@@ -2875,7 +3049,7 @@ impl<const NUM_BANKS: usize, const BANK_BITS: u32> Matcher for ChainMatcher<NUM_
     }
 
     fn last_distances_to_check(&self) -> usize {
-        self.last_distances
+        LAST
     }
 
     fn prepare(&mut self, one_shot: bool, input_size: usize, data: &[u8], clear: bool) -> Sweep {
@@ -2911,31 +3085,30 @@ impl<const NUM_BANKS: usize, const BANK_BITS: u32> Matcher for ChainMatcher<NUM_
 
     #[inline(always)]
     fn store(&mut self, data: &[u8], mask: usize, ix: usize) {
-        let key = Self::hash(data, ix & mask);
-        let bank = key & Self::BANK_SELECT;
-        let bank_base = self.activate_bank(bank);
-        let free = self.free_slot_idx.get_mut(bank).map_or(0u16, |slot| {
-            let current = *slot;
-            *slot = current.wrapping_add(1);
-            current
-        });
-        let idx = usize::from(free) & Self::BANK_MASK;
-        let previous = self.addr.get(key).copied().unwrap_or(CHAIN_EMPTY_ADDR);
-        let delta = ix.wrapping_sub(previous as usize);
-        if let Some(slot) = self.tiny_hash.get_mut(ix as u16 as usize) {
-            *slot = key as u8;
-        }
-        let delta = if delta > 0xFFFF { 0xFFFF } else { delta as u16 };
-        let head = self.head.get(key).copied().unwrap_or(0);
-        if let Some(slot) = self.slots.get_mut(bank_base + idx) {
-            slot.delta = delta;
-            slot.next = head;
-        }
-        if let Some(slot) = self.addr.get_mut(key) {
-            *slot = ix as u32;
-        }
-        if let Some(slot) = self.head.get_mut(key) {
-            *slot = idx as u16;
+        self.store_key(Self::hash(data, ix & mask), ix);
+    }
+
+    /// Records every position in `start..end` (`StoreRange`).
+    ///
+    /// A match's positions usually lie in one stretch of the window, so the
+    /// words they hash are read from one slice: its bounds are checked once,
+    /// rather than once per position as [`Self::store`] has to.
+    #[inline(always)]
+    fn store_range(&mut self, data: &[u8], mask: usize, start: usize, end: usize) {
+        let len = end.saturating_sub(start);
+        let words = contiguous(data, start, mask, len)
+            .and_then(|_| data.get(start & mask..(start & mask) + len + 3));
+        let Some(words) = words else {
+            for ix in start..end {
+                self.store(data, mask, ix);
+            }
+            return;
+        };
+        for (ix, word) in (start..end).zip(words.windows(4)) {
+            let Ok(word) = <[u8; 4]>::try_from(word) else {
+                continue;
+            };
+            self.store_key(hash_chain_word(u32::from_le_bytes(word)), ix);
         }
     }
 
@@ -2960,7 +3133,7 @@ impl<const NUM_BANKS: usize, const BANK_BITS: u32> Matcher for ChainMatcher<NUM_
         out.len = 0;
         out.len_code_delta = 0;
 
-        for index in 0..self.last_distances {
+        for index in 0..LAST {
             let backward = query.cache[index] as usize;
             let prev_ix = query.cur_ix.wrapping_sub(backward);
             // Distance code zero is worth trying even for a two-byte match, so
@@ -3002,41 +3175,80 @@ impl<const NUM_BANKS: usize, const BANK_BITS: u32> Matcher for ChainMatcher<NUM_
 
         let bank = key & Self::BANK_SELECT;
         let bank_base = self.activate_bank(bank);
-        let mut backward = 0usize;
-        let mut delta = query
-            .cur_ix
-            .wrapping_sub(self.addr.get(key).copied().unwrap_or(CHAIN_EMPTY_ADDR) as usize);
-        let mut slot = usize::from(self.head.get(key).copied().unwrap_or(0));
-        for _ in 0..self.max_hops {
-            let last = slot;
-            backward = backward.wrapping_add(delta);
-            if backward > query.max_backward {
-                break;
-            }
-            let prev_ix = (query.cur_ix.wrapping_sub(backward)) & mask;
-            let node = self
-                .slots
-                .get(bank_base + (last & Self::BANK_MASK))
-                .copied()
-                .unwrap_or_default();
-            slot = usize::from(node.next);
-            delta = usize::from(node.delta);
-            if cur_ix_masked + best_len > mask
-                || prev_ix + best_len > mask
-                || read_u32(data, cur_ix_masked + best_len - 3)
-                    != read_u32(data, prev_ix + best_len - 3)
-            {
-                continue;
-            }
-            let len = match_len_at(simd, data, prev_ix, cur());
-            if len >= 4 {
-                let score = backward_reference_score(len, backward);
-                if best_score < score {
-                    best_score = score;
-                    best_len = len;
-                    out.len = best_len;
-                    out.distance = backward;
-                    out.score = best_score;
+        // A candidate beats `best_len` only if it agrees with the current
+        // position on the four bytes that end at offset `best_len`. The
+        // current side of that test only changes with `best_len`, so it is
+        // read here rather than at every hop. `None` means offset `best_len`
+        // lies outside the window: no candidate can be longer from then on,
+        // so the walk can stop.
+        //
+        // Both sides are read from `window`, the ring buffer cut to the mask:
+        // `at < window.len()` is the reference's `at <= ring_buffer_mask`
+        // test, and also proves the four-byte read in bounds. A position the
+        // mask admits but the buffer does not hold yet cannot be matched past
+        // `best_len` either, so skipping it changes nothing.
+        let window = query.window;
+        // `tail` is the window from offset `best_len - 3` on, so a candidate
+        // at `prev_ix` agrees on those four bytes exactly when
+        // `tail[prev_ix..prev_ix + 4]` equals the current position's word,
+        // and that read is in bounds exactly when `prev_ix + best_len` is
+        // inside the window. Holding the slice instead of `best_len` and the
+        // whole window keeps the hop loop to fewer live values.
+        let tail_of = |best_len: usize| window.get(best_len - 3..).unwrap_or_default();
+        let word_at = |tail: &[u8], at: usize| {
+            tail.get(at..at + 4)
+                .and_then(<[u8]>::first_chunk::<4>)
+                .map(|word| u32::from_le_bytes(*word))
+        };
+        let mut tail = tail_of(best_len);
+        // A bank is materialized whole, so this slice always has `BANK_SIZE`
+        // entries; with that length known, the masked hop index needs no
+        // bounds check.
+        if let (Some(bank_slots), Some(mut word)) = (
+            self.slots.get(bank_base..bank_base + Self::BANK_SIZE),
+            word_at(tail, cur_ix_masked),
+        ) {
+            let mut backward = 0usize;
+            let mut delta = query
+                .cur_ix
+                .wrapping_sub(self.addr.get(key).copied().unwrap_or(CHAIN_EMPTY_ADDR) as usize);
+            let mut slot = usize::from(self.head.get(key).copied().unwrap_or(0));
+            // Counted down, as the reference's `while (hops--)`: one register
+            // instead of a counter and its bound.
+            let mut hops = self.max_hops;
+            while hops != 0 {
+                hops -= 1;
+                let last = slot;
+                backward = backward.wrapping_add(delta);
+                if backward > query.max_backward {
+                    break;
+                }
+                let prev_ix = (query.cur_ix.wrapping_sub(backward)) & mask;
+                let node = bank_slots
+                    .get(last & Self::BANK_MASK)
+                    .copied()
+                    .unwrap_or_default();
+                slot = usize::from(node.next);
+                delta = usize::from(node.delta);
+                if word_at(tail, prev_ix) != Some(word) {
+                    continue;
+                }
+                let len = match_len_at(simd, data, prev_ix, cur());
+                if len >= 4 {
+                    let score = backward_reference_score(len, backward);
+                    if best_score < score {
+                        best_score = score;
+                        best_len = len;
+                        out.len = best_len;
+                        out.distance = backward;
+                        out.score = best_score;
+                        tail = tail_of(best_len);
+                        // Past the window, no later candidate can be longer.
+                        let Some(next) = word_at(tail, cur_ix_masked) else {
+                            break;
+                        };
+                        word = next;
+                    }
                 }
             }
         }
@@ -3069,10 +3281,12 @@ pub(crate) enum MatchFinder {
     H4(QuickMatcher<{ 1 << 17 }, 2, 5, true>),
     /// Quality 4, large inputs.
     H54(QuickMatcher<{ 1 << 20 }, 2, 7, false>),
-    /// Qualities 5 to 8, small windows: `H40` and `H41`.
-    H40(ChainMatcher<1, 16>),
+    /// Qualities 5 and 6, small windows: `H40`.
+    H40(ChainMatcher<1, 16, 4>),
+    /// Qualities 7 and 8, small windows: `H41`.
+    H41(ChainMatcher<1, 16, 10>),
     /// Quality 9, small windows: `H42`.
-    H42(ChainMatcher<512, 9>),
+    H42(ChainMatcher<512, 9, 16>),
     /// Quality 5, ordinary inputs: fourteen bucket bits, sixteen slots.
     H5Q5(BucketMatcher<false, { 1 << 14 }, 16, { (1 << 14) * 16 }>),
     /// Quality 6, ordinary inputs: fourteen bucket bits, thirty-two slots.
@@ -3126,13 +3340,13 @@ impl From<HasherPlan> for MatchFinder {
             HasherPlan::H3 => Self::H3(QuickMatcher::new()),
             HasherPlan::H4 => Self::H4(QuickMatcher::new()),
             HasherPlan::H54 => Self::H54(QuickMatcher::new()),
-            HasherPlan::Chain(shape) => {
-                if shape.num_banks == 1 {
-                    Self::H40(ChainMatcher::new(shape))
-                } else {
-                    Self::H42(ChainMatcher::new(shape))
-                }
-            }
+            // As in the reference, the number of cached distances is part of
+            // the hasher's type, so each probe loop has a constant trip count.
+            HasherPlan::Chain(shape) => match (shape.num_banks, shape.last_distances) {
+                (1, 4) => Self::H40(ChainMatcher::new(shape)),
+                (1, _) => Self::H41(ChainMatcher::new(shape)),
+                _ => Self::H42(ChainMatcher::new(shape)),
+            },
             HasherPlan::H5(shape) => Self::bucket(false, shape, 0),
             HasherPlan::H6(shape) => Self::bucket(true, shape, 0),
         }
@@ -3154,6 +3368,7 @@ macro_rules! with_matcher {
             MatchFinder::H4($matcher) => $body,
             MatchFinder::H54($matcher) => $body,
             MatchFinder::H40($matcher) => $body,
+            MatchFinder::H41($matcher) => $body,
             MatchFinder::H42($matcher) => $body,
             MatchFinder::H5Q5($matcher) => $body,
             MatchFinder::H5Q6($matcher) => $body,
@@ -3190,6 +3405,94 @@ impl MatchFinder {
         }
     }
 
+    /// Builds the finder `for_input` would, taking over whatever storage of
+    /// its kind `parked` holds.
+    pub(crate) fn rebuilt(plan: HasherPlan, size_hint: usize, parked: &mut ParkedTables) -> Self {
+        let slots = ::core::mem::take(&mut parked.chain_slots);
+        let mut finder = match plan {
+            HasherPlan::Chain(shape) => match (shape.num_banks, shape.last_distances) {
+                (1, 4) => Self::H40(ChainMatcher::with_slots(shape, slots)),
+                (1, _) => Self::H41(ChainMatcher::with_slots(shape, slots)),
+                _ => Self::H42(ChainMatcher::with_slots(shape, slots)),
+            },
+            _ => {
+                parked.chain_slots = slots;
+                Self::for_input(plan, size_hint)
+            }
+        };
+        match &mut finder {
+            Self::H5Q5(matcher) => matcher.recycle(parked),
+            Self::H5Q6(matcher) => matcher.recycle(parked),
+            Self::H5Q7(matcher) => matcher.recycle(parked),
+            Self::H5Q8(matcher) => matcher.recycle(parked),
+            Self::H5Q9(matcher) => matcher.recycle(parked),
+            Self::H6Q5(matcher) => matcher.recycle(parked),
+            Self::H6Q6(matcher) => matcher.recycle(parked),
+            Self::H6Q7(matcher) => matcher.recycle(parked),
+            Self::H6Q8(matcher) => matcher.recycle(parked),
+            Self::H6Q9(matcher) => matcher.recycle(parked),
+            _ => {}
+        }
+        finder
+    }
+
+    /// Starts a bucket finder's next stream from its compact layout when it
+    /// holds an on-demand one; see `BucketMatcher::forget_sparse`.
+    pub(crate) fn forget_sparse(&mut self) {
+        match self {
+            Self::H5Q5(matcher) => matcher.forget_sparse(),
+            Self::H5Q6(matcher) => matcher.forget_sparse(),
+            Self::H5Q7(matcher) => matcher.forget_sparse(),
+            Self::H5Q8(matcher) => matcher.forget_sparse(),
+            Self::H5Q9(matcher) => matcher.forget_sparse(),
+            Self::H6Q5(matcher) => matcher.forget_sparse(),
+            Self::H6Q6(matcher) => matcher.forget_sparse(),
+            Self::H6Q7(matcher) => matcher.forget_sparse(),
+            Self::H6Q8(matcher) => matcher.forget_sparse(),
+            Self::H6Q9(matcher) => matcher.forget_sparse(),
+            _ => {}
+        }
+    }
+
+    /// Drops dense storage this finder took over but has not used yet.
+    pub(crate) fn release_recycled(&mut self) {
+        match self {
+            Self::H5Q5(matcher) => matcher.recycled = None,
+            Self::H5Q6(matcher) => matcher.recycled = None,
+            Self::H5Q7(matcher) => matcher.recycled = None,
+            Self::H5Q8(matcher) => matcher.recycled = None,
+            Self::H5Q9(matcher) => matcher.recycled = None,
+            Self::H6Q5(matcher) => matcher.recycled = None,
+            Self::H6Q6(matcher) => matcher.recycled = None,
+            Self::H6Q7(matcher) => matcher.recycled = None,
+            Self::H6Q8(matcher) => matcher.recycled = None,
+            Self::H6Q9(matcher) => matcher.recycled = None,
+            _ => {}
+        }
+    }
+
+    /// Leaves this finder's reusable storage in `parked` for the next finder
+    /// of its kind; the quick finders have none worth keeping, since a
+    /// reused quick table has to be wiped anyway.
+    pub(crate) fn park(self, parked: &mut ParkedTables) {
+        match self {
+            Self::H40(matcher) => matcher.park(parked),
+            Self::H41(matcher) => matcher.park(parked),
+            Self::H42(matcher) => matcher.park(parked),
+            Self::H5Q5(matcher) => matcher.park(parked),
+            Self::H5Q6(matcher) => matcher.park(parked),
+            Self::H5Q7(matcher) => matcher.park(parked),
+            Self::H5Q8(matcher) => matcher.park(parked),
+            Self::H5Q9(matcher) => matcher.park(parked),
+            Self::H6Q5(matcher) => matcher.park(parked),
+            Self::H6Q6(matcher) => matcher.park(parked),
+            Self::H6Q7(matcher) => matcher.park(parked),
+            Self::H6Q8(matcher) => matcher.park(parked),
+            Self::H6Q9(matcher) => matcher.park(parked),
+            _ => {}
+        }
+    }
+
     /// Allocates the full quick tables now; other finders allocate on their
     /// own schedule. See `QuickMatcher::materialize`.
     pub(crate) fn materialize(&mut self) {
@@ -3209,6 +3512,10 @@ impl MatchFinder {
     /// full table — in which case the caller has to rebuild; otherwise the
     /// bucket matchers take the hint for their next layout choice and the
     /// rest, whose shape the hint never reached, are unchanged.
+    ///
+    /// Rebuilding is the cheaper side of that trade for a pooled encoder:
+    /// after a long input the full table needs a complete wipe, which costs
+    /// more than a fresh short-input map.
     pub(crate) fn retarget(&mut self, plan: HasherPlan, size_hint: usize) -> bool {
         let wants_small = size_hint > 0
             && size_hint <= 2048
@@ -3422,8 +3729,60 @@ mod tests {
     }
 
     #[test]
+    fn a_parked_dense_table_and_its_tags_go_to_the_next_bucket_finder() {
+        type Q6 = BucketMatcher<false, { 1 << 14 }, 32, { (1 << 14) * 32 }>;
+        const SLOTS: usize = (1 << 14) * 32;
+        let mut parked = ParkedTables::default();
+        assert_eq!(parked.retained_bytes(), 0);
+
+        // A tagged shape's dense layout parks its positions and its tags.
+        let mut dense = Q6::new(0);
+        dense.select_layout(false, 0, &[]);
+        assert!(matches!(dense.layout, Layout::Dense(_)));
+        let Layout::Dense(layout) = &dense.layout else {
+            unreachable!()
+        };
+        let positions = layout.dense.as_ptr();
+        dense.park(&mut parked);
+        assert_eq!(parked.retained_bytes(), SLOTS * size_of::<u32>() + SLOTS);
+
+        // A table no larger than the parked one does not displace it.
+        let mut twin = Q6::new(0);
+        twin.select_layout(false, 0, &[]);
+        twin.park(&mut parked);
+        assert_eq!(parked.retained_bytes(), SLOTS * size_of::<u32>() + SLOTS);
+
+        // The next bucket finder's first dense layout takes them over, at
+        // the same address, instead of allocating its own.
+        let mut next = Q6::new(0);
+        next.recycle(&mut parked);
+        assert_eq!(parked.retained_bytes(), 0);
+        assert!(next.retained_bytes() >= SLOTS * size_of::<u32>() + SLOTS);
+        next.select_layout(false, 0, &[]);
+        let Layout::Dense(layout) = &next.layout else {
+            panic!("a stream of unknown length takes the dense table");
+        };
+        assert_eq!(layout.dense.as_ptr(), positions);
+        assert!(layout.dense_tags.is_some());
+        assert!(next.recycled.is_none());
+    }
+
+    #[test]
+    fn a_single_bank_chain_materializes_its_bank_up_front() {
+        let mut matcher = ChainMatcher::<1, 16, 4>::new(Q5_CHAIN);
+        assert_eq!(matcher.slots.len(), 1 << 16);
+        assert_eq!(matcher.bank_offsets[0], 1);
+        let retained = matcher.retained_bytes();
+        let data = [b'a'; 64];
+        matcher.store(&data, usize::MAX, 0);
+        matcher.store_range(&data, usize::MAX, 1, 32);
+        assert_eq!(matcher.slots.len(), 1 << 16);
+        assert_eq!(matcher.retained_bytes(), retained);
+    }
+
+    #[test]
     fn a_cold_q9_chain_allocates_only_the_bank_it_uses() {
-        let mut matcher = ChainMatcher::<512, 9>::new(Q9_CHAIN);
+        let mut matcher = ChainMatcher::<512, 9, 16>::new(Q9_CHAIN);
         assert!(matcher.slots.is_empty());
         let data = [b'a'; 64];
         matcher.store(&data, usize::MAX, 0);
@@ -4354,6 +4713,13 @@ mod tests {
     };
 
     /// The chain shape quality nine resolves to.
+    const Q7_CHAIN: ChainShape = ChainShape {
+        num_banks: 1,
+        bank_bits: 16,
+        last_distances: 10,
+        max_hops: 56,
+    };
+
     const Q9_CHAIN: ChainShape = ChainShape {
         num_banks: 512,
         bank_bits: 9,
@@ -4413,12 +4779,12 @@ mod tests {
     #[test]
     fn the_chain_matchers_find_a_repeat_they_have_stored() {
         let data = repeated();
-        let mut h40 = primed(ChainMatcher::<1, 16>::new(Q5_CHAIN), &data);
+        let mut h40 = primed(ChainMatcher::<1, 16, 4>::new(Q5_CHAIN), &data);
         let found = search_at(&mut h40, &data, REPEAT_AT);
         assert_eq!((found.distance, found.len), (64, 64));
 
         // H42 spreads the same chains over five hundred and twelve banks.
-        let mut h42 = primed(ChainMatcher::<512, 9>::new(Q9_CHAIN), &data);
+        let mut h42 = primed(ChainMatcher::<512, 9, 16>::new(Q9_CHAIN), &data);
         let found = search_at(&mut h42, &data, REPEAT_AT);
         assert_eq!((found.distance, found.len), (64, 64));
     }
@@ -4543,7 +4909,7 @@ mod tests {
         matcher.prepare(true, data.len(), &data, true);
         assert!(!search_at(&mut matcher, &data, REPEAT_AT).is_match());
 
-        let mut chain = ChainMatcher::<1, 16>::new(Q5_CHAIN);
+        let mut chain = ChainMatcher::<1, 16, 4>::new(Q5_CHAIN);
         chain.prepare(true, data.len(), &data, true);
         assert!(!search_at(&mut chain, &data, REPEAT_AT).is_match());
 
@@ -4560,7 +4926,7 @@ mod tests {
         matcher.prepare(false, 0, &data, true);
         assert!(!search_at(&mut matcher, &data, REPEAT_AT).is_match());
 
-        let mut chain = primed(ChainMatcher::<1, 16>::new(Q5_CHAIN), &data);
+        let mut chain = primed(ChainMatcher::<1, 16, 4>::new(Q5_CHAIN), &data);
         assert!(search_at(&mut chain, &data, REPEAT_AT).is_match());
         chain.prepare(false, 0, &data, true);
         assert!(!search_at(&mut chain, &data, REPEAT_AT).is_match());
@@ -4656,6 +5022,10 @@ mod tests {
             MatchFinder::H40(_)
         ));
         assert!(matches!(
+            MatchFinder::from(HasherPlan::Chain(Q7_CHAIN)),
+            MatchFinder::H41(_)
+        ));
+        assert!(matches!(
             MatchFinder::from(HasherPlan::Chain(Q9_CHAIN)),
             MatchFinder::H42(_)
         ));
@@ -4681,11 +5051,15 @@ mod tests {
             16
         );
         assert_eq!(
-            ChainMatcher::<1, 16>::new(Q5_CHAIN).last_distances_to_check(),
+            ChainMatcher::<1, 16, 4>::new(Q5_CHAIN).last_distances_to_check(),
             4
         );
         assert_eq!(
-            ChainMatcher::<512, 9>::new(Q9_CHAIN).last_distances_to_check(),
+            ChainMatcher::<1, 16, 10>::new(Q7_CHAIN).last_distances_to_check(),
+            10
+        );
+        assert_eq!(
+            ChainMatcher::<512, 9, 16>::new(Q9_CHAIN).last_distances_to_check(),
             16
         );
         // The quick matchers always use the plain four.

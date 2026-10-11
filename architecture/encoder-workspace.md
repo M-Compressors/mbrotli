@@ -72,8 +72,10 @@ flowchart LR
 
 The configured retention policy applies after one-shot completion and when a
 session drops, including through readers/writers. A finished session can retain
-its resettable encoder; abandonment invalidates it first. `Bounded` releases the
-workspace when its full accounting exceeds the ceiling. Session staging and
+its resettable encoder; abandonment invalidates it first. `Bounded` first drops
+the storage a greedy encoder parks for match finders of other plans (see
+[Parked match-finder storage](#parked-match-finder-storage)); if the full
+accounting still exceeds the ceiling, it releases the workspace. Session staging and
 pending buffers obey the same policy. A forgotten session still requires
 explicit `recover`; the exclusive borrow alone cannot detect `mem::forget`.
 
@@ -237,7 +239,45 @@ flowchart LR
     Codes --> Output[emit completed bytes]
     Output --> Policy{retention policy}
     Policy -->|keep| Reset
-    Policy -->|release or exceed ceiling| Drop[drop all owned storage]
+    Policy -->|exceed ceiling| Parked[drop parked finder storage]
+    Parked -->|within ceiling| Reset
+    Parked -->|still over| Drop[drop all owned storage]
+    Policy -->|release| Drop
+```
+
+## Parked match-finder storage
+
+A greedy encoder reused for a stream whose parameters differ only in the
+window, the block size, the size hint or the match-finder plan keeps
+everything but the finder. When the plan changes — the chain finders below a
+sixteen-bit window and the bucket finders above it at qualities five to nine,
+the bucket finders' H5 and H6 at the one-mebibyte hint, or quick storage for
+short inputs — `GreedyEncoder::retarget_for_new_stream` builds the new finder
+and parks the old one's large tables in `ParkedTables`:
+
+| Parked | From | Taken by | Why no zeroing is needed |
+| --- | --- | --- | --- |
+| Dense positions and tags | a bucket finder's dense layout, or the storage it had not used yet | the next bucket finder's first dense layout (`BucketMatcher::recycle`) | a dense table is read only below its bucket counters, which every dense preparation clears |
+| Chain slots | a chain finder | the next chain finder (`ChainMatcher::with_slots`) | a chain is only entered through `addr`, which a new finder fills with the empty address |
+
+A plan change therefore costs what a steady reuse costs — clearing counters
+and chain heads — instead of zeroing a fresh table of up to several
+mebibytes. Parked storage counts in `retained_bytes`; the `Bounded` policy
+drops it before it would release the workspace, so parking never turns a
+retained encoder into a released one. The quick finders park nothing: a reused
+quick table needs a full wipe anyway.
+
+```mermaid
+sequenceDiagram
+    participant Driver as EncoderCache::acquire
+    participant Encoder as GreedyEncoder
+    participant Parked as ParkedTables
+    Driver->>Encoder: reset_for(params, hint)
+    Encoder->>Encoder: same plan? clean finder, reshape window
+    Encoder->>Parked: another plan: MatchFinder::rebuilt(plan, parked)
+    Parked-->>Encoder: dense storage / chain slots of that kind
+    Encoder->>Parked: old finder.park()
+    Encoder->>Encoder: reshape window, reset
 ```
 
 ## Cold matcher allocation and SIMD
@@ -388,7 +428,14 @@ See [development checks](../docs/development.md) and
 
 ## Known gaps
 
-- The cache has one slot; alternating incompatible resolved settings rebuilds it.
+- The cache has one slot; alternating incompatible resolved settings (another
+  quality, mode or distance layout) rebuilds it. Windows, size hints and
+  match-finder plans are compatible: see [compressor](compressor.md#ownership-and-reuse)
+  and [parked storage](#parked-match-finder-storage).
+- Only the dense bucket tables and the chain slots are parked. A bucket finder
+  on its sparse layout (deep qualities seven to nine below their promotion
+  point) rebuilds its index after a plan switch, which still costs about 1%
+  at quality seven and 6% at quality nine on 60–85 KiB inputs.
 - Retained-byte accounting excludes allocator overhead and is not process RSS.
 - Host-backend tests only exercise instruction sets available on the test host.
 - Every encoder kernel, the greedy loops included, is compiled once per x86

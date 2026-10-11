@@ -169,14 +169,18 @@ matchers take `block_bits = quality - 1`, and the chain matchers take
 
 Each plan is a distinct Rust type — `QuickMatcher<BUCKETS, SWEEP_BITS,
 HASH_LEN, USE_DICTIONARY, COMPACT>`, `BucketMatcher<HASH64, BUCKETS, BLOCK, SLOTS>`
-or `ChainMatcher<NUM_BANKS, BANK_BITS>` — so the hash width, the table size
-and, for the bucket matchers, the block depth are compile-time constants
+or `ChainMatcher<NUM_BANKS, BANK_BITS, LAST>` — so the hash width, the table
+size and, for the bucket matchers, the block depth are compile-time constants
 inside the probe loop; each bucket quality is its own `MatchFinder` variant
 (§2.3). The `MatchFinder` enum that selects between them is matched once per
 input block, never per candidate.
 
-The chain depth is an ordinary field used as a loop bound; the bucket
-matchers derive their cached-distance count from the block depth.
+The chain depth is an ordinary field used as a loop bound. The cached-distance
+count is not: as the reference's `NUM_LAST_DISTANCES_TO_CHECK`, it is the
+chain matcher's `LAST` parameter, so `H40` (four), `H41` (ten) and `H42`
+(sixteen) are separate `MatchFinder` variants and each probe loop has a
+constant trip count with no bounds check on the cache. The bucket matchers
+derive their cached-distance count from the block depth.
 
 `H2` and `H3` share a shape but not a path: with one slot per bucket the probe
 has no loop to leave, so the reference returns as soon as it has a match and
@@ -190,6 +194,28 @@ indices are boxed arrays with compile-time lengths, allocated when the matcher
 is created.
 Its `slots` remain a `Vec<ChainSlot>`: activating a previously unused bank grows
 that pool. Logical resets retain both fixed tables and activated banks.
+
+`H40` and `H41` have a single bank, which every store reaches, so the matcher
+materializes it when it is created and `activate_bank` folds to offset zero.
+`H42` keeps lazy activation, so a cold call on a short input still allocates
+only the banks it touches; the growth path is a separate `#[cold]` function.
+Keeping that call out of the search and store loops matters: a call that may
+reallocate `slots`, reachable from inside the loop, makes the compiler reload
+every table pointer from the matcher after each store.
+
+The hop loop mirrors the reference's walk with three changes that leave every
+result identical:
+
+- the bank is borrowed once per search as a slice of exactly `BANK_SIZE`
+  entries, so the masked slot index needs no bounds check;
+- the candidate filter compares the four bytes that end at offset `best_len`,
+  and the current position's side of that compare is read only when
+  `best_len` changes;
+- both sides are read from `MatchQuery::window`, the ring buffer cut to the
+  mask, so `at < window.len()` is both the reference's
+  `at <= ring_buffer_mask` test and the bounds proof for the read. When the
+  current side falls outside the window, no later candidate can be longer, and
+  the walk stops.
 
 ### 2.2. The tagged matchers
 
@@ -297,7 +323,7 @@ graph TD
     DenseLayout --> Positions["Box of u32 array: SLOTS positions"]
     DenseLayout --> Tags["Optional box of u8 array: SLOTS tags"]
     ChainMatcher --> Tables["Fixed boxed tables: addresses, heads, hashes, bank metadata"]
-    ChainMatcher --> Slots["Vec of ChainSlot: grows when a bank is activated"]
+    ChainMatcher --> Slots["Vec of ChainSlot: H40/H41 bank at creation, H42 banks on first use"]
 ```
 
 ### Dense stores
@@ -1165,6 +1191,15 @@ sized by the same `2 * bytes + 503` reservation the reference uses.
   most a kibibyte indexes the compact map and allocates and zeroes its
   scratch per call. See the [benchmark guide](../docs/benchmarking.md) for
   separate cold and reused measurements.
+- **Small-window chain matchers trail the reference even when reused.**
+  Windows of at most sixteen bits send qualities five to nine through
+  `H40`/`H41`/`H42`. With a reused compressor and identical output, q5–q8 on
+  2–64 KiB inputs run at roughly 0.84–0.91 of the reference and q9 at
+  0.94–0.99 (Intel i7-13700KF, x86-64 AVX2, against C 1.1.0). Under callgrind
+  the hop loop costs about as many instructions per hop as the reference;
+  what is left is per-position work around it — the distance-cache probes,
+  the query, the stores — compiled into one large function whose loops spill
+  table pointers and limits to the stack.
 
 ## Independent parallel fragments
 

@@ -50,7 +50,7 @@ FFI do not appear in public signatures. Each codec compiles independently.
 | Specification | Scope |
 | --- | --- |
 | [Compressor](compressor.md) | Public API, sessions, C-compatible size hint inference for streams of unknown length, I/O, dispatch and errors. |
-| [Encoder workspace](encoder-workspace.md) | Retained storage, reset, accounting and backpressure. |
+| [Encoder workspace](encoder-workspace.md) | Retained storage, reset, parked match-finder tables, accounting and backpressure. |
 | [Bit output](bit-output.md) | Initialized destinations, bit operations and overflow. |
 | [Serial output identity](universal-encoding.md) | Shared scheduling, empty finalization and C compatibility. |
 | [Fast encoder](fast-encoder.md) | Qualities 0–1: fragments, entropy coding and SIMD scans. |

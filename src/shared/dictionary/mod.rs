@@ -178,7 +178,22 @@ fn test_item(
         return false;
     };
 
-    let matchlen = common_prefix_len(data, word, len);
+    // Most entries differ from the data within their first word: one XOR
+    // settles those, and only a longer agreement takes the general scan.
+    // Reading the word may run into the next dictionary word; the length is
+    // capped at `len` either way.
+    let first = data.first_chunk::<8>().zip(
+        BUILTIN_WORDS
+            .get(offset..)
+            .and_then(<[u8]>::first_chunk::<8>),
+    );
+    let matchlen = match first {
+        Some((left, right)) if u64::from_le_bytes(*left) != u64::from_le_bytes(*right) => {
+            let diff = u64::from_le_bytes(*left) ^ u64::from_le_bytes(*right);
+            ((diff.trailing_zeros() >> 3) as usize).min(len)
+        }
+        _ => common_prefix_len(data, word, len),
+    };
     if matchlen + CUTOFF_TRANSFORMS_COUNT <= len || matchlen == 0 {
         return false;
     }
