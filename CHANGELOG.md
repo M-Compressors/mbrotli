@@ -1,5 +1,16 @@
 # Changelog
 
+## [v0.5.9](https://github.com/M-Compressors/mbrotli/releases/tag/v0.5.9) - 2026-10-11
+
+- The four-slot quick match finders (`H4` and `H54`, quality 4) measure a
+  candidate through one out-of-line call that also cuts the current window,
+  instead of cutting it in front of the slot loop at every position. The
+  shallow static-dictionary probe (qualities 2 and 4) copies the search result
+  only when its bucket holds a word. Output is unchanged. Quality 4 runs
+  1-3.5% faster on 2-170 KB web assets streamed in 32 KiB chunks, and the
+  quality 4 criterion cases improve by a median of 2.3%; qualities 2 and 3 move
+  by at most 3% on individual cases, with a median change below 1%.
+
 ## [v0.5.8](https://github.com/M-Compressors/mbrotli/releases/tag/v0.5.8) - 2026-10-11
 
 - A reused `Compressor` keeps its encoder across a change of window, block

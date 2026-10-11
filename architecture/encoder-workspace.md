@@ -378,7 +378,8 @@ generation calls the `#[simd]` `search_positions` for its search body, keeping
 tag and match-length operations in the selected feature context. This static
 entry stays outside the loop and uses the existing token. Helpers kept out of
 line on purpose — the greedy `accept_cached` and `accept_candidate`
-measurements and the `match_len_tail` scan — are `#[simd]` functions with an
+measurements, the `match_len_tail` scan and the four-slot matchers'
+`match_len_at_current` — are `#[simd]` functions with an
 `#[inline(always)]` wrapper: the loop calls the level's feature-enabled entry
 directly and the vector compares inline into it. An `#[inline(never)]` body
 compiled without the level's features would instead call a feature-enabled
