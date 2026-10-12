@@ -44,6 +44,71 @@ so its completion can be reported. Finalization collects task results, validates
 artifacts, and assembles them in input order. A blocking wait requires the
 caller's executor to remain runnable.
 
+## Streaming input
+
+When input arrives in chunks, `start(window)` returns a session and a task
+queue. Each full segment the session accepts becomes a task on that queue;
+clone the queue for each executor and run `for task in queue { task.run() }`.
+The session delivers finished parts in input order while later segments are
+still encoding, and closes the queue when the stream finishes, fails, or is
+dropped.
+
+```rust
+use mbrotli::compressor::parallel::{
+    ParallelCompressor, ParallelConfig, ParallelEncoderStatus, TaskCount,
+};
+use mbrotli::{EncoderConfig, Operation, Quality};
+use std::io::{Read, Write};
+
+fn compress(
+    mut reader: impl Read,
+    mut writer: impl Write,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut encoder = ParallelCompressor::new(
+        EncoderConfig::default().with_quality(Quality::Q5),
+        ParallelConfig::default(),
+    )?;
+    std::thread::scope(|scope| {
+        let (mut session, queue) = encoder.start(TaskCount::try_from(4)?)?;
+        for _ in 0..4 {
+            let queue = queue.clone();
+            scope.spawn(move || queue.into_iter().for_each(|task| task.run()));
+        }
+        drop(queue);
+        let mut chunk = vec![0; 1 << 16];
+        let mut output = vec![0; 1 << 16];
+        loop {
+            let read = reader.read(&mut chunk)?;
+            let operation = if read == 0 { Operation::Finish } else { Operation::Process };
+            let mut input = &chunk[..read];
+            loop {
+                let progress = session.process(input, &mut output, operation)?;
+                input = &input[progress.consumed..];
+                writer.write_all(&output[..progress.produced])?;
+                match progress.status {
+                    ParallelEncoderStatus::Finished => return Ok(()),
+                    ParallelEncoderStatus::Pending => session.wait()?,
+                    ParallelEncoderStatus::NeedsInput if input.is_empty() => break,
+                    _ => {}
+                }
+            }
+        }
+    })
+}
+```
+
+- `process` never blocks. `Pending` means the window is full or a flush or
+  finish waits for queued tasks; call `wait`, which blocks until one completes.
+- `window` bounds the segments queued, running or awaiting delivery, and so the
+  session's memory. A full window stops input from being consumed.
+- Without a flush, the output is byte-identical to `prepare_slice` over the same
+  bytes, however the input was chunked. `Operation::Flush` ends the current
+  segment early, which moves later segment boundaries.
+- On a single thread, run `queue.try_recv()` tasks before `wait`; nothing else
+  will. Dropping every queue handle fails the stream instead of hanging.
+- `into_session(window)` returns an owned session without a lifetime;
+  `into_compressor` returns the compressor.
+
 ## Segments and compressed size
 
 Segment size defaults to 4 MiB and accepts 64 KiB–16 MiB. Effective task count

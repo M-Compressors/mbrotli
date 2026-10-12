@@ -3,7 +3,9 @@
 This subsystem is omitted when `no_std` is enabled. See
 [feature boundaries](no-std.md) for the alloc-backed API that remains available.
 
-The caller schedules tasks that encode fixed independent segments. Private
+The caller schedules tasks that encode fixed independent segments. Input that
+arrives in chunks uses the [streaming session](parallel-stream.md) over the
+same tasks and workers. Private
 fragment encoders produce aligned non-final blocks, and the batch assembles them
 in source order into one stream. The API supports qualities 0–11 with standard
 windows; dictionary, Large Window, and framing extensions are unsupported.
@@ -52,6 +54,10 @@ graph TD
     Slot --> Batch
     Batch --> Destination[Vec / Write]
 ```
+
+A task's `Job` is either `Planned` (a batch task's contiguous segments, read from
+its input) or `Streamed` (one segment a stream session already moved into the
+worker); both run through the same `Task::run` and per-segment `encode` helper.
 
 Each `ScopedParallelTask<'input>` owns its worker, artifact, immutable input
 handle, cancellation observer and completion capability. It never borrows the
@@ -236,10 +242,10 @@ stateDiagram-v2
     Published --> [*]: one slot and one completion ID
 ```
 
-A bounded channel holds exactly one small ID per task. Payloads and workers move
-through single-assignment slots, protected only during ownership transfer. Codec
-execution holds no mutex. Channel capacity equals task count, so tasks do not
-need a coordinator to drain their payload or another task to progress.
+An unbounded channel carries exactly one small ID per task. Payloads and workers
+move through single-assignment slots, protected only during ownership transfer.
+Codec execution holds no mutex. Sending never blocks, so tasks do not need a
+coordinator to drain their payload or another task to progress.
 
 Each task catches unwinding panics and discards the affected worker. Ordinary
 errors return resettable workers. The drop guard reports abandonment once.

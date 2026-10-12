@@ -56,6 +56,20 @@ impl Artifact {
         self.len = len;
         Ok(())
     }
+    /// Returns the payload of a memory artifact holding exactly one segment.
+    pub(in crate::compressor::parallel) fn into_segment(self) -> Option<Vec<u8>> {
+        match (self.storage, self.descriptors.as_slice()) {
+            (Storage::Memory(bytes), [descriptor])
+                if descriptor.offset == 0
+                    && descriptor.len != 0
+                    && descriptor.len == self.len
+                    && bytes.len() as u64 == self.len =>
+            {
+                Some(bytes)
+            }
+            _ => None,
+        }
+    }
     pub(in crate::compressor::parallel) fn validate_len(&self) -> io::Result<bool> {
         let actual = match &self.storage {
             Storage::Memory(v) => v.len() as u64,
@@ -135,5 +149,31 @@ mod tests {
         assert_eq!(artifact.len, 2);
         let mut count = u64::MAX;
         assert!(write_counted(&mut Vec::new(), b"a", &mut count).is_err());
+    }
+
+    fn memory(bytes: &[u8], segments: usize) -> Artifact {
+        let staging = Staging::Memory(MemoryStaging::from(usize::MAX));
+        let mut artifact = Artifact::new(&staging, segments, 1 << 20).unwrap();
+        for segment in 0..segments {
+            let offset = artifact.len;
+            artifact.append(bytes).unwrap();
+            artifact.descriptors.push(Descriptor {
+                segment: segment as u64,
+                source: 0..1,
+                offset,
+                len: bytes.len() as u64,
+            });
+        }
+        artifact
+    }
+
+    #[test]
+    fn only_a_single_nonempty_memory_segment_is_extracted() {
+        assert_eq!(memory(b"part", 1).into_segment().unwrap(), b"part");
+        assert!(memory(b"part", 2).into_segment().is_none());
+        assert!(memory(b"", 1).into_segment().is_none());
+        let mut grown = memory(b"part", 1);
+        grown.len += 1;
+        assert!(grown.into_segment().is_none());
     }
 }

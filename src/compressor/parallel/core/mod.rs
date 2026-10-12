@@ -3,11 +3,15 @@ mod artifact;
 mod batch;
 pub(in crate::compressor::parallel) mod source;
 mod spool;
+mod stream;
 mod task;
 use super::*;
 use crate::compressor::core::fragment::FragmentEncoder;
 use crate::compressor::{Compressor as SerialCompressor, WindowEncoding};
 pub(in crate::compressor::parallel) use batch::Batch;
+pub(in crate::compressor::parallel) use stream::{
+    BorrowedStream, OwnedStream, QueueHandle, Stream,
+};
 pub(in crate::compressor::parallel) use task::Task;
 
 pub(in crate::compressor::parallel) const fn staging_memory_bound(
@@ -121,6 +125,22 @@ impl Compressor {
             }
         }
     }
+    /// Conservative workspace ceiling of one worker for the current settings.
+    fn worker_estimate(&self) -> Result<usize, ParallelEncodeError> {
+        // Deliberately conservative, including the q9 bucket payload and HQ
+        // candidate/DP arenas. These are ceilings, not expected resident usage.
+        let (base, scale) = match self.encoder.quality().get() {
+            0..=1 => (4 << 20, 16),
+            2..=4 => (64 << 20, 128),
+            _ => (256 << 20, 256),
+        };
+        self.parallel
+            .segment_size
+            .get()
+            .checked_mul(scale)
+            .and_then(|n| n.checked_add(base))
+            .ok_or(ParallelEncodeError::SizeOverflow)
+    }
     pub(in crate::compressor::parallel) fn plan(
         &self,
         len: u64,
@@ -146,17 +166,7 @@ impl Compressor {
             .checked_mul(size_of::<artifact::Descriptor>() as u64)
             .ok_or(ParallelEncodeError::SizeOverflow)?;
         let segment = self.parallel.segment_size.get();
-        // Deliberately conservative, including the q9 bucket payload and HQ
-        // candidate/DP arenas. These are ceilings, not expected resident usage.
-        let (base, scale) = match self.encoder.quality().get() {
-            0..=1 => (4 << 20, 16),
-            2..=4 => (64 << 20, 128),
-            _ => (256 << 20, 256),
-        };
-        let per_worker = segment
-            .checked_mul(scale)
-            .and_then(|n| n.checked_add(base))
-            .ok_or(ParallelEncodeError::SizeOverflow)?;
+        let per_worker = self.worker_estimate()?;
         let metadata =
             usize::try_from(descriptors).map_err(|_| ParallelEncodeError::SizeOverflow)?;
         let active = per_worker

@@ -130,8 +130,10 @@ Set the quality explicitly for your workload. `EncoderConfig::default()` uses
 ## Choose your API
 
 Compression and decompression expose the same core I/O shapes. Pick the shape that
-matches how your application already moves bytes; parallel compression is a separate
-execution strategy, not another streaming API.
+matches how your application already moves bytes. `ParallelCompressor` is a separate
+execution strategy for compression: it splits the input into independent segments and
+hands them to your executor as tasks, either for a whole input at once or for input
+that arrives in chunks. It requires `std`.
 
 | I/O shape | Compression | Decompression |
 | --- | --- | --- |
@@ -141,6 +143,10 @@ execution strategy, not another streaming API.
 | Pull output through `std::io::Read` | `Compressor::reader` | `Decompressor::reader` |
 | Push input through `std::io::Write` | `Compressor::writer` | `Decompressor::writer` |
 | Drive input/output incrementally | `start` → `EncoderSession` | `start` → `DecoderSession` |
+| Same, with the session owning the codec | `into_session` → `EncoderSessionOwned` | `into_session` → `DecoderSessionOwned` |
+| Split one known input across your threads | `ParallelCompressor::prepare_slice` / `prepare_source` → `ScopedParallelBatch` | — |
+| Stream chunked input across your threads | `ParallelCompressor::start` → `ParallelEncoderSession` + `ParallelTaskQueue` | — |
+| Same, with the session owning the compressor | `ParallelCompressor::into_session` → `ParallelEncoderSessionOwned` | — |
 
 ### Reuse memory between payloads
 
@@ -311,6 +317,12 @@ For fixed segment settings, parallel output is deterministic across task counts,
 it can differ in bytes and size from serial compression. The example stages compressed
 segments in memory; see the [parallel guide][parallel] for budgets, disk staging,
 file input, and other executors.
+
+When input arrives in chunks, `ParallelCompressor::start(window)` returns a
+`ParallelEncoderSession` and a `ParallelTaskQueue`: every full segment becomes a task
+your executors take from the queue, and `process` delivers finished segments in input
+order while later ones still encode. Without a flush, its output is byte-identical to
+`prepare_slice` over the same bytes.
 
 ## Native decompression
 

@@ -34,6 +34,12 @@ pub enum ParallelEncodeError {
     /// A previously observed task failure; the typed cause remains in the chain.
     #[error("parallel batch failed: {0}")]
     BatchFailed(#[source] std::sync::Arc<ParallelEncodeError>),
+    /// A streaming session failed earlier; the typed cause remains in the chain.
+    #[error("parallel stream failed: {0}")]
+    StreamFailed(#[source] std::sync::Arc<ParallelEncodeError>),
+    /// Every task queue handle was dropped while the stream still had work.
+    #[error("parallel task queue was closed by its executors")]
+    TaskQueueClosed,
     /// Configuration validation failed.
     #[error("invalid parallel configuration: {0}")]
     Config(#[from] ParallelConfigError),

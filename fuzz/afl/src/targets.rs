@@ -1105,6 +1105,8 @@ fn validate_framing_directory(bytes: &[u8]) {
 /// Parallel output must decode once and remain invariant under task grouping,
 /// reverse execution, worker reuse, reconfiguration, and host dispatch.
 /// Payloads are bounded to two 64 KiB segments; scheduling is deterministic.
+/// A streamed session over the same bytes, chunked and windowed by the input,
+/// must reproduce the batch, or round-trip when it flushes midway.
 pub fn parallel(ctx: &Context, data: &[u8]) {
     use mbrotli::compressor::parallel::{
         BatchConfig, ParallelCompressor, ParallelConfig, SegmentSize, TaskCount,
@@ -1175,6 +1177,75 @@ pub fn parallel(ctx: &Context, data: &[u8]) {
             } else {
                 expected[index] = Some(out);
             }
+        }
+        // The last batch used `encoder`; a stream without a flush must repeat it.
+        let selector = data.get(1).copied().unwrap_or(0);
+        let chunk = usize::from(selector >> 1) * 509 + 1;
+        let window = TaskCount::try_from(usize::from(control >> 4) % 3 + 1).unwrap();
+        let flush_at = (selector & 2 != 0).then_some(input.len() / 2);
+        let streamed = parallel_stream(&mut compressor, &input, chunk, window, flush_at);
+        assert_round_trip(&input, &streamed);
+        if flush_at.is_none_or(|at| at == 0) {
+            assert_eq!(Some(&streamed), expected[0].as_ref());
+        }
+    }
+}
+
+/// Drives a parallel session in `chunk`-byte calls through a small output
+/// buffer, running each batch of queued tasks in reverse queue order.
+fn parallel_stream(
+    compressor: &mut mbrotli::compressor::parallel::ParallelCompressor,
+    input: &[u8],
+    chunk: usize,
+    window: mbrotli::compressor::parallel::TaskCount,
+    mut flush_at: Option<usize>,
+) -> Vec<u8> {
+    use mbrotli::Operation;
+    use mbrotli::compressor::parallel::ParallelEncoderStatus;
+    let (mut session, queue) = compressor.start(window).unwrap();
+    let mut out = Vec::new();
+    let mut buffer = [0u8; 97];
+    let mut position = 0;
+    loop {
+        let (end, operation) = match flush_at {
+            Some(at) if position <= at && at != 0 => {
+                let end = (position + chunk).min(at);
+                let operation = if end == at {
+                    Operation::Flush
+                } else {
+                    Operation::Process
+                };
+                (end, operation)
+            }
+            _ => {
+                let end = (position + chunk).min(input.len());
+                let operation = if end == input.len() {
+                    Operation::Finish
+                } else {
+                    Operation::Process
+                };
+                (end, operation)
+            }
+        };
+        let progress = session
+            .process(&input[position..end], &mut buffer, operation)
+            .unwrap();
+        position += progress.consumed;
+        out.extend_from_slice(&buffer[..progress.produced]);
+        match progress.status {
+            ParallelEncoderStatus::Finished => return out,
+            ParallelEncoderStatus::Pending => {
+                let mut tasks = Vec::new();
+                while let Some(task) = queue.try_recv() {
+                    tasks.push(task);
+                }
+                for task in tasks.into_iter().rev() {
+                    task.run();
+                }
+                session.wait().unwrap();
+            }
+            ParallelEncoderStatus::NeedsInput if operation == Operation::Flush => flush_at = None,
+            ParallelEncoderStatus::NeedsInput | ParallelEncoderStatus::NeedsOutput => {}
         }
     }
 }

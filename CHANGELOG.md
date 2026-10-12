@@ -1,5 +1,33 @@
 # Changelog
 
+## Unreleased
+
+- Parallel compression accepts input incrementally. `ParallelCompressor::start(window)`
+  returns a `ParallelEncoderSession` and a `ParallelTaskQueue`;
+  `into_session(window)` returns the owned `ParallelEncoderSessionOwned`. Each
+  full segment the session accepts becomes a task on the queue, which the
+  caller's executors drain with `for task in queue { task.run() }`; finished
+  parts are delivered in input order through `process`, `flush` and `finish`,
+  which never block, while `wait` blocks for one completion. `window` bounds the
+  segments queued, running or awaiting delivery, and so the session's memory;
+  a full window reports the new `ParallelEncoderStatus::Pending`. Without a
+  flush the stream is byte-identical to `prepare_slice` over the same bytes for
+  any chunking, window and execution order, including the serial fallback for
+  small inputs. Finishing, failing or dropping the session closes the queue, so
+  executor loops end; dropping every queue handle fails the stream with the new
+  `ParallelEncodeError::TaskQueueClosed` instead of hanging, and failures are
+  reported as the new `ParallelEncodeError::StreamFailed` with the cause as its
+  source. Batch output is unchanged; batch completions now use an unbounded
+  ID channel.
+- Measured with `cargo bench --bench parallel -- 'parallel/q(1|5)/text-(1|16)MiB/(tasks|stream-tasks)/'`
+  (Alice cycled to 1 and 16 MiB, 256 KiB and 4 MiB segments, 64 KiB input
+  calls and output buffer, Apple M5 Pro, Rayon pool of four): streaming costs
+  0.2-2.9% against the batch with one inline task (q5 16 MiB 8.08 -> 8.32 ms)
+  and 1.3-8.5% with four executors (q1 16 MiB 3.47 -> 3.74 ms, q5 16 MiB
+  2.18 -> 2.37 ms, q5 1 MiB 1.97 -> 2.07 ms): the session copies input into its
+  segments and output through the caller's buffer, where the batch reads the
+  slice in place. Output sizes are identical.
+
 ## [v0.5.9](https://github.com/M-Compressors/mbrotli/releases/tag/v0.5.9) - 2026-10-11
 
 - The four-slot quick match finders (`H4` and `H54`, quality 4) measure a

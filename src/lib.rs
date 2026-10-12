@@ -14,9 +14,11 @@
 //! # Choose your API
 //!
 //! Compression and decompression expose the same core I/O shapes. Pick the shape that
-//! matches how your application already moves bytes; parallel compression is a separate
-//! execution strategy, not another streaming API. Each codec requires its Cargo
-//! feature; reader/writer adapters and parallel compression are unavailable with `no_std`.
+//! matches how your application already moves bytes. [`ParallelCompressor`] is a separate
+//! execution strategy for compression: it splits the input into independent segments and
+//! hands them to your executor as tasks, either for a whole input at once or for input
+//! that arrives in chunks. Each codec requires its Cargo feature; reader/writer adapters
+//! and parallel compression are unavailable with `no_std`.
 //!
 //! | I/O shape | Compression | Decompression |
 //! | --- | --- | --- |
@@ -27,6 +29,9 @@
 //! | Push input through `std::io::Write` | [`Compressor::writer`][compressor-writer] | [`Decompressor::writer`][decompressor-writer] |
 //! | Drive input/output incrementally | [`start`][compressor-start] → [`EncoderSession`] | [`start`][decompressor-start] → [`DecoderSession`] |
 //! | Same, with the session owning the codec | [`into_session`][compressor-into-session] → [`EncoderSessionOwned`] | [`into_session`][decompressor-into-session] → [`DecoderSessionOwned`] |
+//! | Split one known input across your threads | [`prepare_slice`][parallel-prepare-slice] / [`prepare_source`][parallel-prepare-source] → [`ScopedParallelBatch`] | — |
+//! | Stream chunked input across your threads | [`start`][parallel-start] → [`ParallelEncoderSession`] + [`ParallelTaskQueue`] | — |
+//! | Same, with the session owning the compressor | [`into_session`][parallel-into-session] → [`ParallelEncoderSessionOwned`] | — |
 //!
 //! ## Reuse memory between payloads
 //!
@@ -237,6 +242,12 @@
 //! it can differ in bytes and size from serial compression. The example stages compressed
 //! segments in memory; see the [parallel guide][parallel] for budgets, disk staging,
 //! file input, and other executors.
+//!
+//! When input arrives in chunks, [`start`][parallel-start] returns a
+//! [`ParallelEncoderSession`] and a [`ParallelTaskQueue`]: every full segment becomes a
+//! task your executors take from the queue, and `process` delivers finished segments in
+//! input order while later ones still encode. Without a flush, its output is
+//! byte-identical to [`prepare_slice`][parallel-prepare-slice] over the same bytes.
 //!
 //! # Native decompression
 //!
@@ -477,6 +488,34 @@
 [compressor-writer]: crate::Compressor::writer
 [encoder-flush]: crate::io::EncoderWriter#method.flush
 [encoder-finish]: crate::io::EncoderWriter::finish
+"#
+)]
+#![cfg_attr(
+    all(feature = "compression", not(feature = "no_std")),
+    doc = r#"
+[`ParallelCompressor`]: crate::compressor::parallel::ParallelCompressor
+[parallel-prepare-slice]: crate::compressor::parallel::ParallelCompressor::prepare_slice
+[parallel-prepare-source]: crate::compressor::parallel::ParallelCompressor::prepare_source
+[`ScopedParallelBatch`]: crate::compressor::parallel::ScopedParallelBatch
+[parallel-start]: crate::compressor::parallel::ParallelCompressor::start
+[`ParallelEncoderSession`]: crate::compressor::parallel::ParallelEncoderSession
+[`ParallelTaskQueue`]: crate::compressor::parallel::ParallelTaskQueue
+[parallel-into-session]: crate::compressor::parallel::ParallelCompressor::into_session
+[`ParallelEncoderSessionOwned`]: crate::compressor::parallel::ParallelEncoderSessionOwned
+"#
+)]
+#![cfg_attr(
+    not(all(feature = "compression", not(feature = "no_std"))),
+    doc = r#"
+[`ParallelCompressor`]: #select-only-the-codecs-you-need
+[parallel-prepare-slice]: #select-only-the-codecs-you-need
+[parallel-prepare-source]: #select-only-the-codecs-you-need
+[`ScopedParallelBatch`]: #select-only-the-codecs-you-need
+[parallel-start]: #select-only-the-codecs-you-need
+[`ParallelEncoderSession`]: #select-only-the-codecs-you-need
+[`ParallelTaskQueue`]: #select-only-the-codecs-you-need
+[parallel-into-session]: #select-only-the-codecs-you-need
+[`ParallelEncoderSessionOwned`]: #select-only-the-codecs-you-need
 "#
 )]
 #![cfg_attr(
