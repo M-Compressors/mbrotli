@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## [v0.5.10](https://github.com/M-Compressors/mbrotli/releases/tag/v0.5.10) - 2026-10-12
 
 - Parallel compression accepts input incrementally. `ParallelCompressor::start(window)`
   returns a `ParallelEncoderSession` and a `ParallelTaskQueue`;
