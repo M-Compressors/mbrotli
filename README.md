@@ -10,7 +10,7 @@ parallel compression when a workload benefits from it.
 [![Crates.io](https://img.shields.io/crates/v/mbrotli.svg)][crate]
 [![docs.rs](https://docs.rs/mbrotli/badge.svg)][api]
 [![Tests](https://github.com/M-Compressors/mbrotli/actions/workflows/ci.yml/badge.svg?branch=master)][ci]
-[![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)][#license]
+[![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#License)
 
 [Quick start](#quick-start) · [Benchmarks](#performance) · [`Read` / `Write`](#read-and-write-streaming) · [API guide][guide] · [Compatibility](#compatibility) · [Changelog][changelog]
 
