@@ -10,7 +10,7 @@ homepage = "https://github.com/M-Compressors/mbrotli"
 readme = "README.md"
 keywords = ["brotli", "compression", "ffi", "c"]
 categories = ["compression", "external-ffi-bindings"]
-include = ["src/**", "include/**", "README.md"]
+include = ["src/**", "include/**", "README.md", "LICENSE-MIT", "LICENSE-APACHE"]
 
 [lib]
 # `cdylib` and `staticlib` are what C links against; `rlib` lets the Rust
