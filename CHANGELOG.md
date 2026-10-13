@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## [v0.5.11](https://github.com/M-Compressors/mbrotli/releases/tag/v0.5.11) - 2026-10-13
 
 - Add Apache 2.0 license
 - `ParallelEncoderSession` and `ParallelEncoderSessionOwned` have
