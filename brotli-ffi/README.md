@@ -30,5 +30,5 @@ for content round trips. Native C one-shot output and arbitrary streaming
 schedules are not interchangeable with the Rust serial byte-identity contract;
 see [serial output identity](../architecture/universal-encoding.md).
 
-Licensed under MIT or Apache-2.0 (at your option)vendored source use the MIT license; see
+The crate and vendored source use the MIT license; see
 [the upstream license](vendor/brotli/LICENSE).
