@@ -15,6 +15,8 @@ to view as `&mut [u8]`.
 | --- | --- | --- |
 | `EncoderSession::process` | `EncoderSession::process_uninit` | `compressor::session` |
 | `EncoderSessionOwned::process` | `EncoderSessionOwned::process_uninit` | `compressor::session` |
+| `ParallelEncoderSession::process` | `ParallelEncoderSession::process_uninit` | `compressor::parallel::session` |
+| `ParallelEncoderSessionOwned::process` | `ParallelEncoderSessionOwned::process_uninit` | `compressor::parallel::session` |
 | `Compressor::compress_to_slice` | `Compressor::compress_to_uninit` | `compressor::encoder` |
 | `DecoderSession::process` | `DecoderSession::process_uninit` | `decompressor::session` |
 | `DecoderSessionOwned::process` | `DecoderSessionOwned::process_uninit` | `decompressor::session` |
@@ -102,6 +104,35 @@ a `zip` + `MaybeUninit::write` loop that compiles to a `memcpy` and keeps the
 MSRV. It copies exactly the bytes it counts, which is what makes the
 "nothing past `produced`" contract hold; the in-place `Slice` path may leave
 scratch bytes past `produced`, which initialized callers never relied on.
+
+## Parallel streaming sessions
+
+A parallel session never encodes into the caller's slice: workers stage each
+segment in a `Vec<u8>`, and the session only copies finished parts out in
+input order. Its delivery therefore never reads the destination, and both
+methods share one path. `core::stream::Stream::process` and its `drain` are
+generic over a private `Sink` trait (`len`, `put(at, bytes)`), implemented for
+`[u8]` (`copy_from_slice`) and `[MaybeUninit<u8>]` (`copy_to_uninit`). Each
+public method instantiates it once, so the initialized path compiles to the
+same slice copies as before and no call chooses a variant at run time.
+
+```mermaid
+sequenceDiagram
+    participant API as ParallelEncoderSession{,Owned}
+    participant Stream as core::Stream
+    participant Flight as finished parts
+    participant Sink as Sink impl
+    API->>Stream: process::<[MaybeUninit u8]>(parent, input, output, operation)
+    Stream->>Flight: collect published completions
+    Stream->>Sink: drain(output, 0): put(produced, part bytes)
+    Stream->>Stream: accept input, queue full segments
+    Stream->>Sink: drain(output, produced)
+    Stream-->>API: ParallelProgress
+```
+
+`drain` writes exactly the `take` bytes it adds to `produced`, which is what
+keeps "nothing past `produced`". See [Parallel streaming
+sessions](parallel-stream.md).
 
 ## Decompressor
 
@@ -265,7 +296,8 @@ has been zeroed. See [C ABI](c-abi.md).
   encoder's in-place and scratch paths are already byte-identical, and ring and
   linear decoder delivery write the same bytes.
 - The encoder chooses between `Destination` variants once per call or per
-  helper invocation, never inside the SIMD copy kernels. The decoder does not
+  helper invocation, never inside the SIMD copy kernels. The parallel session
+  is monomorphized per `Sink` type, as the decoder is. The decoder does not
   choose at run time at all: it is monomorphized per `Sink` type, so the
   initialized decode loop carries no uninitialized-output code.
 
@@ -283,12 +315,19 @@ has been zeroed. See [C ABI](c-abi.md).
   zeroing steps long, `OutputTooSmall` at every step boundary, concatenated
   members, output limits and corrupt input, each against
   `decompress_to_slice` with sentinels past the result.
+- `tests/parallel_stream.rs`: `process_uninit` and mixed calls against the
+  batch for four qualities, windows 1-4, inline and threaded executors and
+  output buffers down to one byte, the serial fallback and segment edges, an
+  empty destination and a finished stream (sentinels untouched), a failed
+  stream, and owned sessions.
 - AFL: `encoder_session` and `decoder_session` drive borrowed and owned
   sessions with `process` and `process_uninit` mixed call by call, check that
   nothing is written past `produced`, and restart owned sessions with `reinit`
   from every state; `streaming_equivalence` and `output_capacity` compare
   `compress_to_uninit` with the initialized one-shots, and `decompress`
-  compares `decompress_to_uninit` with ring delivery.
+  compares `decompress_to_uninit` with ring delivery; `parallel` alternates
+  `process` and `process_uninit` on its streamed session under the same
+  sentinel check and batch-identity oracle.
 - Unit tests in `shared::uninit` (including `zero_extend`), resumable
   `Delivery::Linear` in `decompressor::core::session`, and the `mbrotli-ffi`
   core tests, which run on uninitialized destinations.

@@ -46,7 +46,7 @@ FFI do not appear in public signatures. Each codec compiles independently.
 | [Codec features](codec-features.md) | Codec gates, shared types and isolated consumer checks. |
 | [No standard library](no-std.md) | Alloc-backed APIs, feature precedence and compile-time SIMD. |
 | [Shared primitives](shared-primitives.md) | Common data, transforms, fixed boxed tables and private ownership. |
-| [Uninitialized output](uninit-output.md) | `process_uninit`, `compress_to_uninit` and `decompress_to_uninit`: write-only destinations, the paths they take and the C ABI's use of them. |
+| [Uninitialized output](uninit-output.md) | `process_uninit` (serial and parallel sessions), `compress_to_uninit` and `decompress_to_uninit`: write-only destinations, the paths they take and the C ABI's use of them. |
 
 ## Compression
 
@@ -61,7 +61,7 @@ FFI do not appear in public signatures. Each codec compiles independently.
 | [High-quality encoder](hq-encoder.md) | Qualities 10–11: tree search, SIMD distance-cache and dictionary-word filters, command-price rows, ordered starts and clustering. |
 | [Owned sessions](owned-sessions.md) | Lifetime-free raw and framed sessions sharing the borrowed state machines and release paths; `reinit` and input-free `flush`/`finish`. |
 | [Parallel compression](parallel-compression.md) | Planning, encoder reconfiguration, caller-run tasks, staging and assembly. |
-| [Parallel streaming sessions](parallel-stream.md) | Chunked input into queued segment tasks, a bounded window, ordered delivery, flush, batch byte identity, queue closure, and the blocking `Read`/`Write` adapters returned with their task queue. |
+| [Parallel streaming sessions](parallel-stream.md) | Chunked input into queued segment tasks, a bounded window, ordered delivery into initialized or uninitialized output, flush, batch byte identity, queue closure, and the blocking `Read`/`Write` adapters returned with their task queue. |
 
 ## Decompression
 

@@ -1243,7 +1243,9 @@ fn parallel_adapters(
 }
 
 /// Drives a parallel session in `chunk`-byte calls through a small output
-/// buffer, running each batch of queued tasks in reverse queue order.
+/// buffer, running each batch of queued tasks in reverse queue order. Calls
+/// alternate between `process` and `process_uninit`, which must not write a
+/// byte past what it reports.
 fn parallel_stream(
     compressor: &mut mbrotli::compressor::parallel::ParallelCompressor,
     input: &[u8],
@@ -1256,8 +1258,9 @@ fn parallel_stream(
     let (mut session, queue) = compressor.start(window).unwrap();
     let mut out = Vec::new();
     let mut buffer = [0u8; 97];
+    let mut uninit = sentinel_output(buffer.len());
     let mut position = 0;
-    loop {
+    for call in 0usize.. {
         let (end, operation) = match flush_at {
             Some(at) if position <= at && at != 0 => {
                 let end = (position + chunk).min(at);
@@ -1278,11 +1281,23 @@ fn parallel_stream(
                 (end, operation)
             }
         };
-        let progress = session
-            .process(&input[position..end], &mut buffer, operation)
-            .unwrap();
+        let progress = if call % 2 == 0 {
+            let progress = session
+                .process(&input[position..end], &mut buffer, operation)
+                .unwrap();
+            out.extend_from_slice(&buffer[..progress.produced]);
+            progress
+        } else {
+            let progress = session
+                .process_uninit(&input[position..end], &mut uninit, operation)
+                .unwrap();
+            let written = read_output(&uninit);
+            out.extend_from_slice(&written[..progress.produced]);
+            assert!(written[progress.produced..].iter().all(|&b| b == SENTINEL));
+            uninit.fill(std::mem::MaybeUninit::new(SENTINEL));
+            progress
+        };
         position += progress.consumed;
-        out.extend_from_slice(&buffer[..progress.produced]);
         match progress.status {
             ParallelEncoderStatus::Finished => return out,
             ParallelEncoderStatus::Pending => {
@@ -1299,4 +1314,5 @@ fn parallel_stream(
             ParallelEncoderStatus::NeedsInput | ParallelEncoderStatus::NeedsOutput => {}
         }
     }
+    unreachable!("a stream finishes")
 }

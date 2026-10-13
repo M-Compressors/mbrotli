@@ -14,7 +14,7 @@ order while later segments still encode.
 | --- | --- |
 | `ParallelCompressor::start(window)` | Borrowed session `ParallelEncoderSession<'c>` plus a `ParallelTaskQueue`. |
 | `ParallelCompressor::into_session(window)` | Owned `ParallelEncoderSessionOwned` plus a queue; `into_compressor` returns the parent. |
-| `ParallelEncoderSession{,Owned}` | `process`, `flush`, `finish`, `wait`, `wait_timeout`, `is_finished`. |
+| `ParallelEncoderSession{,Owned}` | `process`, `process_uninit`, `flush`, `finish`, `wait`, `wait_timeout`, `is_finished`. |
 | `ParallelEncoderStatus`, `ParallelProgress` | `NeedsInput`, `NeedsOutput`, `Pending`, `Finished`, with exact `consumed`/`produced`. |
 | `ParallelTaskQueue`, `ParallelTasks` | `Clone + Send + Sync` handle with blocking `recv`, non-blocking `try_recv`, and a blocking iterator. |
 | `ParallelCompressor::writer(sink, window)` | `ParallelEncoderWriter<'c, W: Write>` plus a queue. |
@@ -107,6 +107,12 @@ Input is copied once, into `filling`. Dispatch swaps `filling` with the worker's
 `input` buffer, so the session keeps the worker's previous allocation and the
 task owns the segment without another copy. Output is copied once from a
 finished part into the caller's slice; a part may take several calls.
+
+`Stream::process` and `drain` are generic over a private `Sink` trait, so the
+same code delivers into `&mut [u8]` (`process`) and `&mut [MaybeUninit<u8>]`
+(`process_uninit`). Delivery only writes, exactly the bytes it counts in
+`produced`; the two methods give identical bytes, counts, statuses and errors
+and may be mixed on one stream. See [Uninitialized output](uninit-output.md).
 
 ## Window and backpressure
 
@@ -381,11 +387,16 @@ batch workers do.
   and without the threshold; window backpressure; flush prefixes decoded by C;
   finishing and idempotent `Finished`; queue closure and task abandonment;
   session drop; owned sessions; memory limits; `Send`/`Sync` and `Debug`.
+  `process_uninit` and calls mixed with `process` match the batch across
+  qualities, windows, executors and output sizes, never write past
+  `produced`, and report failures as `process` does, borrowed and owned.
 - Private unit tests cover malformed completions, cancellation-versus-cause
   ordering, queue-handle counting and single-segment artifact extraction.
 - `fuzz/afl` target `parallel` streams each input with input-derived chunk
   size, window and optional mid-stream flush, running queued tasks in reverse
-  order, and requires batch identity (or a round trip after a flush). It then
+  order, alternating `process` and `process_uninit` with a sentinel check
+  past `produced`, and requires batch identity (or a round trip after a
+  flush). It then
   repeats the stream through the writer (with the same flush) and the reader,
   each with one executor thread.
 - `tests/parallel_io.rs`: writer and reader byte identity with
@@ -406,7 +417,6 @@ batch workers do.
 
 ## Known gaps
 
-- No `process_uninit` over the session yet.
 - The reader and writer borrow their `ParallelCompressor`; there are no owned
   adapter variants over `ParallelEncoderSessionOwned`.
 - The adapters never run tasks on the calling thread, so they cannot be used

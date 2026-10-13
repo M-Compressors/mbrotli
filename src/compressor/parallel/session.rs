@@ -6,7 +6,7 @@
 //! input order, so output can be written while later segments still encode.
 use super::{ParallelCompressor, ParallelEncodeError, TaskCount, WaitStatus, core};
 use crate::compressor::Operation;
-use std::time::Duration;
+use std::{mem::MaybeUninit, time::Duration};
 
 /// What a parallel session needs next.
 ///
@@ -280,6 +280,66 @@ impl ParallelEncoderSession<'_> {
         let core::BorrowedStream { parent, stream } = &mut self.inner;
         stream.process(parent, input, output, operation)
     }
+    /// Moves the stream forward by one step, writing into uninitialized memory.
+    ///
+    /// Behaves exactly as [`Self::process`]: the same bytes, the same
+    /// `consumed` and `produced` counts, the same statuses and errors, and
+    /// calls of the two methods may be mixed on one stream. Use it to deliver
+    /// straight into spare capacity, such as [`Vec::spare_capacity_mut`],
+    /// without zeroing it first.
+    ///
+    /// On success exactly `output[..produced]` has been initialized, and no
+    /// byte after it is written. After an error, treat none of `output` as
+    /// initialized.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::process`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mbrotli::compressor::parallel::{
+    ///     ParallelCompressor, ParallelConfig, ParallelEncoderStatus, TaskCount,
+    /// };
+    /// use mbrotli::Operation;
+    ///
+    /// let mut compressor = ParallelCompressor::new(Default::default(), ParallelConfig::default())?;
+    /// let (mut session, queue) = compressor.start(TaskCount::ONE)?;
+    /// let mut compressed = Vec::with_capacity(64);
+    /// let mut input = &b"delivered into spare capacity"[..];
+    /// loop {
+    ///     if compressed.len() == compressed.capacity() {
+    ///         compressed.reserve(64);
+    ///     }
+    ///     let progress =
+    ///         session.process_uninit(input, compressed.spare_capacity_mut(), Operation::Finish)?;
+    ///     input = &input[progress.consumed..];
+    ///     // SAFETY: `process_uninit` initialized the first `produced` spare bytes.
+    ///     unsafe { compressed.set_len(compressed.len() + progress.produced) };
+    ///     match progress.status {
+    ///         ParallelEncoderStatus::Finished => break,
+    ///         ParallelEncoderStatus::Pending => {
+    ///             while let Some(task) = queue.try_recv() {
+    ///                 task.run();
+    ///             }
+    ///             session.wait()?;
+    ///         }
+    ///         _ => {}
+    ///     }
+    /// }
+    /// assert!(!compressed.is_empty());
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn process_uninit(
+        &mut self,
+        input: &[u8],
+        output: &mut [MaybeUninit<u8>],
+        operation: Operation,
+    ) -> Result<ParallelProgress, ParallelEncodeError> {
+        let core::BorrowedStream { parent, stream } = &mut self.inner;
+        stream.process(parent, input, output, operation)
+    }
     /// Makes everything accepted so far decodable, without taking input.
     ///
     /// Shorthand for [`Self::process`] with empty input and
@@ -465,6 +525,24 @@ impl ParallelEncoderSessionOwned {
         &mut self,
         input: &[u8],
         output: &mut [u8],
+        operation: Operation,
+    ) -> Result<ParallelProgress, ParallelEncodeError> {
+        let core::OwnedStream { parent, stream } = &mut self.inner;
+        stream.process(parent, input, output, operation)
+    }
+    /// Behaves exactly as [`ParallelEncoderSession::process_uninit`].
+    ///
+    /// On success exactly `output[..produced]` has been initialized, and no
+    /// byte after it is written. After an error, treat none of `output` as
+    /// initialized.
+    ///
+    /// # Errors
+    ///
+    /// As [`ParallelEncoderSession::process`].
+    pub fn process_uninit(
+        &mut self,
+        input: &[u8],
+        output: &mut [MaybeUninit<u8>],
         operation: Operation,
     ) -> Result<ParallelProgress, ParallelEncodeError> {
         let core::OwnedStream { parent, stream } = &mut self.inner;

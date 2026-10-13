@@ -12,10 +12,10 @@ use super::{
     task::{Completion, Job, Slot},
     *,
 };
-use crate::compressor::Operation;
+use crate::{compressor::Operation, shared::uninit::copy_to_uninit};
 use std::{
     collections::VecDeque,
-    mem,
+    mem::{self, MaybeUninit},
     sync::{
         Condvar, Mutex, MutexGuard, PoisonError,
         atomic::{AtomicBool, Ordering},
@@ -112,6 +112,32 @@ impl Drop for QueueHandle {
         let tasks = mem::take(&mut state.tasks);
         drop(state);
         drop(tasks);
+    }
+}
+
+/// A caller destination the stream copies delivered bytes into.
+///
+/// Delivery only ever writes, so an uninitialized slice serves as well as an
+/// initialized one, and each gets its own instantiation of `process`.
+pub(in crate::compressor::parallel) trait Sink {
+    fn len(&self) -> usize;
+    /// Writes `bytes` at `at`; `at + bytes.len()` never exceeds [`Self::len`].
+    fn put(&mut self, at: usize, bytes: &[u8]);
+}
+impl Sink for [u8] {
+    fn len(&self) -> usize {
+        <[u8]>::len(self)
+    }
+    fn put(&mut self, at: usize, bytes: &[u8]) {
+        self[at..at + bytes.len()].copy_from_slice(bytes);
+    }
+}
+impl Sink for [MaybeUninit<u8>] {
+    fn len(&self) -> usize {
+        <[MaybeUninit<u8>]>::len(self)
+    }
+    fn put(&mut self, at: usize, bytes: &[u8]) {
+        copy_to_uninit(&mut self[at..at + bytes.len()], bytes);
     }
 }
 
@@ -228,11 +254,13 @@ impl Stream {
     }
 
     /// Accepts input, queues full segments, and delivers finished parts in order.
-    pub(in crate::compressor::parallel) fn process(
+    ///
+    /// Exactly `output[..produced]` is written, whatever the sink.
+    pub(in crate::compressor::parallel) fn process<O: Sink + ?Sized>(
         &mut self,
         parent: &mut Compressor,
         input: &[u8],
-        output: &mut [u8],
+        output: &mut O,
         operation: Operation,
     ) -> Result<ParallelProgress, ParallelEncodeError> {
         self.check()?;
@@ -244,7 +272,7 @@ impl Stream {
             });
         }
         self.collect(parent)?;
-        let mut produced = self.drain(output);
+        let mut produced = self.drain(output, 0);
         let mut consumed = 0;
         if matches!(self.phase, Phase::Open) {
             consumed = self.accept(parent, input)?;
@@ -259,7 +287,7 @@ impl Stream {
                     Operation::Finish => self.begin_finish(parent)?,
                 }
             }
-            produced += self.drain(&mut output[produced..]);
+            produced = self.drain(output, produced);
         }
         let status = self.status(parent, consumed < input.len(), operation);
         Ok(ParallelProgress {
@@ -403,15 +431,15 @@ impl Stream {
         Err(self.fail(error.1))
     }
 
-    /// Copies delivered parts into `output` in input order.
-    fn drain(&mut self, output: &mut [u8]) -> usize {
-        let mut produced = 0;
+    /// Copies delivered parts into `output` from `produced` on, in input
+    /// order, and returns where the delivered bytes end.
+    fn drain<O: Sink + ?Sized>(&mut self, output: &mut O, mut produced: usize) -> usize {
         while let Some(entry) = self.flight.front_mut() {
             let State::Done { bytes, cursor } = &mut entry.state else {
                 break;
             };
             let take = (bytes.len() - *cursor).min(output.len() - produced);
-            output[produced..produced + take].copy_from_slice(&bytes[*cursor..*cursor + take]);
+            output.put(produced, &bytes[*cursor..*cursor + take]);
             produced += take;
             *cursor += take;
             if *cursor < bytes.len() {
@@ -699,7 +727,7 @@ mod tests {
         let (mut stream, queue) = Stream::new(&parent, TaskCount::ONE).unwrap();
         assert!(stream.receive(&mut parent, 7).is_err());
         stream
-            .process(&mut parent, b"abc", &mut [], Operation::Flush)
+            .process(&mut parent, b"abc", &mut [0u8; 0][..], Operation::Flush)
             .unwrap();
         queue.try_recv().unwrap().run();
         let id = stream.receiver.recv().unwrap();

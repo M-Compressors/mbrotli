@@ -5,7 +5,7 @@
 mod support;
 use mbrotli::compressor::parallel::*;
 use mbrotli::{EncoderConfig, Operation, Quality};
-use std::{error::Error, time::Duration};
+use std::{error::Error, mem::MaybeUninit, time::Duration};
 
 const SEGMENT: usize = 64 << 10;
 
@@ -55,6 +55,12 @@ trait Session {
         output: &mut [u8],
         operation: Operation,
     ) -> Result<ParallelProgress, ParallelEncodeError>;
+    fn step_uninit(
+        &mut self,
+        input: &[u8],
+        output: &mut [MaybeUninit<u8>],
+        operation: Operation,
+    ) -> Result<ParallelProgress, ParallelEncodeError>;
     fn block(&mut self) -> Result<(), ParallelEncodeError>;
 }
 impl Session for ParallelEncoderSession<'_> {
@@ -65,6 +71,14 @@ impl Session for ParallelEncoderSession<'_> {
         operation: Operation,
     ) -> Result<ParallelProgress, ParallelEncodeError> {
         self.process(input, output, operation)
+    }
+    fn step_uninit(
+        &mut self,
+        input: &[u8],
+        output: &mut [MaybeUninit<u8>],
+        operation: Operation,
+    ) -> Result<ParallelProgress, ParallelEncodeError> {
+        self.process_uninit(input, output, operation)
     }
     fn block(&mut self) -> Result<(), ParallelEncodeError> {
         self.wait()
@@ -79,9 +93,39 @@ impl Session for ParallelEncoderSessionOwned {
     ) -> Result<ParallelProgress, ParallelEncodeError> {
         self.process(input, output, operation)
     }
+    fn step_uninit(
+        &mut self,
+        input: &[u8],
+        output: &mut [MaybeUninit<u8>],
+        operation: Operation,
+    ) -> Result<ParallelProgress, ParallelEncodeError> {
+        self.process_uninit(input, output, operation)
+    }
     fn block(&mut self) -> Result<(), ParallelEncodeError> {
         self.wait()
     }
+}
+
+/// Marks destination bytes a session must not have written.
+const SENTINEL: u8 = 0xa5;
+
+/// Which method a driven call goes through.
+#[derive(Clone, Copy, Debug)]
+enum Path {
+    Init,
+    Uninit,
+    /// Alternates, starting with the initialized slice.
+    Mixed,
+}
+
+/// Reads bytes the test itself initialized or the session reported written.
+fn read(bytes: &[MaybeUninit<u8>]) -> Vec<u8> {
+    // SAFETY: callers pass only the reported prefix or sentinel-filled bytes,
+    // all of which are initialized.
+    bytes
+        .iter()
+        .map(|byte| unsafe { byte.assume_init() })
+        .collect()
 }
 
 /// Feeds `input` in `chunk`-byte calls and collects output through an
@@ -93,20 +137,57 @@ fn drive(
     chunk: usize,
     out: usize,
 ) -> Vec<u8> {
+    drive_path(session, inline, input, chunk, out, Path::Init)
+}
+
+/// As [`drive`], with each call going through the method `path` picks.
+/// Uninitialized calls must leave every byte past `produced` untouched.
+fn drive_path(
+    session: &mut impl Session,
+    inline: Option<&ParallelTaskQueue>,
+    input: &[u8],
+    chunk: usize,
+    out: usize,
+    path: Path,
+) -> Vec<u8> {
     let mut output = Vec::new();
     let mut buffer = vec![0; out];
+    let mut uninitialized = vec![MaybeUninit::new(SENTINEL); out];
     let mut rest = input;
-    loop {
+    for call in 0usize.. {
         let take = rest.len().min(chunk);
         let operation = if take == rest.len() {
             Operation::Finish
         } else {
             Operation::Process
         };
-        let progress = session.step(&rest[..take], &mut buffer, operation).unwrap();
-        assert!(progress.consumed <= take && progress.produced <= out);
+        let uninit = match path {
+            Path::Init => false,
+            Path::Uninit => true,
+            Path::Mixed => call % 2 == 1,
+        };
+        let progress = if uninit {
+            let progress = session
+                .step_uninit(&rest[..take], &mut uninitialized, operation)
+                .unwrap();
+            assert!(progress.produced <= out);
+            output.extend(read(&uninitialized[..progress.produced]));
+            assert!(
+                read(&uninitialized[progress.produced..])
+                    .iter()
+                    .all(|&byte| byte == SENTINEL),
+                "process_uninit wrote past `produced`"
+            );
+            uninitialized.fill(MaybeUninit::new(SENTINEL));
+            progress
+        } else {
+            let progress = session.step(&rest[..take], &mut buffer, operation).unwrap();
+            assert!(progress.produced <= out);
+            output.extend_from_slice(&buffer[..progress.produced]);
+            progress
+        };
+        assert!(progress.consumed <= take);
         rest = &rest[progress.consumed..];
-        output.extend_from_slice(&buffer[..progress.produced]);
         match progress.status {
             ParallelEncoderStatus::Finished => return output,
             ParallelEncoderStatus::Pending => {
@@ -120,6 +201,7 @@ fn drive(
             ParallelEncoderStatus::NeedsInput | ParallelEncoderStatus::NeedsOutput => {}
         }
     }
+    unreachable!("a stream finishes")
 }
 
 /// Streams `input` through `threads` executors, or inline when zero.
@@ -131,6 +213,19 @@ fn streamed(
     out: usize,
     threads: usize,
 ) -> Vec<u8> {
+    streamed_path(c, input, tasks, chunk, out, threads, Path::Init)
+}
+
+/// As [`streamed`], with each call going through the method `path` picks.
+fn streamed_path(
+    c: &mut ParallelCompressor,
+    input: &[u8],
+    tasks: usize,
+    chunk: usize,
+    out: usize,
+    threads: usize,
+    path: Path,
+) -> Vec<u8> {
     std::thread::scope(|scope| {
         let (mut session, queue) = c.start(window(tasks)).unwrap();
         for _ in 0..threads {
@@ -138,10 +233,10 @@ fn streamed(
             scope.spawn(move || queue.into_iter().for_each(|task| task.run()));
         }
         if threads == 0 {
-            drive(&mut session, Some(&queue), input, chunk, out)
+            drive_path(&mut session, Some(&queue), input, chunk, out, path)
         } else {
             drop(queue);
-            drive(&mut session, None, input, chunk, out)
+            drive_path(&mut session, None, input, chunk, out, path)
         }
     })
 }
@@ -472,6 +567,122 @@ fn owned_sessions_match_borrowed_ones_and_return_a_reusable_compressor() {
     drop(session);
     assert!(queue.recv().is_none());
     assert_eq!(executor.join().unwrap(), 0);
+}
+
+#[test]
+fn process_uninit_matches_process_for_every_chunking_window_and_executor() {
+    let input = data(3 * SEGMENT + 1);
+    for q in [0, 1, 5, 10] {
+        let mut c = compressor(q, 0);
+        let expected = batch(&mut c, &input);
+        for (tasks, chunk, out, threads) in [
+            (1, usize::MAX, 1 << 20, 0),
+            (2, 4097, 7, 2),
+            (4, SEGMENT, SEGMENT, 4),
+            (3, 1000, 1, 1),
+        ] {
+            for path in [Path::Uninit, Path::Mixed] {
+                assert_eq!(
+                    streamed_path(&mut c, &input, tasks, chunk, out, threads, path),
+                    expected,
+                    "q{q} window{tasks} chunk{chunk} out{out} threads{threads} {path:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn process_uninit_keeps_the_serial_fallback_and_empty_stream() {
+    for minimum in [0, 8 << 20] {
+        let mut c = compressor(5, minimum);
+        for n in [0, 1, SEGMENT - 1, SEGMENT, SEGMENT + 1] {
+            let input = data(n);
+            let expected = batch(&mut c, &input);
+            let out = streamed_path(&mut c, &input, 2, 4096, 3, 0, Path::Uninit);
+            assert_eq!(out, expected, "min{minimum} n{n}");
+        }
+    }
+}
+
+#[test]
+fn process_uninit_on_an_empty_destination_writes_nothing_and_waits_for_room() {
+    let mut c = compressor(3, 0);
+    let expected = batch(&mut c, b"abc");
+    let (mut session, queue) = c.start(TaskCount::ONE).unwrap();
+    let progress = session
+        .process_uninit(b"abc", &mut [], Operation::Finish)
+        .unwrap();
+    assert_eq!(progress.consumed, 3);
+    assert_eq!(progress.status, ParallelEncoderStatus::Pending);
+    queue.recv().unwrap().run();
+    session.wait().unwrap();
+    let progress = session
+        .process_uninit(b"", &mut [], Operation::Finish)
+        .unwrap();
+    assert_eq!(progress.produced, 0);
+    assert_eq!(progress.status, ParallelEncoderStatus::NeedsOutput);
+    let mut output = [MaybeUninit::new(SENTINEL); 64];
+    let progress = session
+        .process_uninit(b"ignored", &mut output, Operation::Finish)
+        .unwrap();
+    assert_eq!(progress.consumed, 0);
+    assert_eq!(progress.status, ParallelEncoderStatus::Finished);
+    assert_eq!(read(&output[..progress.produced]), expected);
+    assert!(
+        read(&output[progress.produced..])
+            .iter()
+            .all(|&byte| byte == SENTINEL)
+    );
+    // A finished stream stays finished and writes nothing.
+    let mut output = [MaybeUninit::new(SENTINEL); 4];
+    assert_eq!(
+        session
+            .process_uninit(b"", &mut output, Operation::Finish)
+            .unwrap(),
+        ParallelProgress {
+            consumed: 0,
+            produced: 0,
+            status: ParallelEncoderStatus::Finished,
+        }
+    );
+    assert_eq!(read(&output), [SENTINEL; 4]);
+}
+
+#[test]
+fn process_uninit_reports_a_failed_stream_with_its_cause() {
+    let input = data(2 * SEGMENT);
+    let mut c = compressor(0, 0);
+    let (mut session, queue) = c.start(window(2)).unwrap();
+    drop(queue);
+    let mut output = [MaybeUninit::uninit(); 64];
+    for _ in 0..2 {
+        assert!(matches!(
+            session.process_uninit(&input, &mut output, Operation::Process),
+            Err(ParallelEncodeError::StreamFailed(cause))
+                if matches!(*cause, ParallelEncodeError::TaskQueueClosed)
+        ));
+    }
+}
+
+#[test]
+fn owned_process_uninit_matches_the_borrowed_session() {
+    let input = data(2 * SEGMENT + 17);
+    let mut c = compressor(6, 0);
+    let expected = batch(&mut c, &input);
+    for path in [Path::Uninit, Path::Mixed] {
+        let (mut session, queue) = c.into_session(window(2)).unwrap();
+        let output = drive_path(&mut session, Some(&queue), &input, 3000, 100, path);
+        assert_eq!(output, expected, "{path:?}");
+        c = session.into_compressor();
+    }
+    let (mut session, queue) = c.into_session(TaskCount::ONE).unwrap();
+    drop(queue);
+    assert!(matches!(
+        session.process_uninit(&input, &mut [MaybeUninit::uninit(); 8], Operation::Process),
+        Err(ParallelEncodeError::StreamFailed(cause))
+            if matches!(*cause, ParallelEncodeError::TaskQueueClosed)
+    ));
 }
 
 #[test]

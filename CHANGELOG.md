@@ -3,6 +3,12 @@
 ## Unreleased
 
 - Add Apache 2.0 license
+- `ParallelEncoderSession` and `ParallelEncoderSessionOwned` have
+  `process_uninit`, which delivers into `&mut [MaybeUninit<u8>]` such as
+  `Vec::spare_capacity_mut` without zeroing it first. It produces the same
+  bytes, counts, statuses and errors as `process`, writes nothing past
+  `produced`, and may be mixed with `process` on one stream. The AFL `parallel`
+  target alternates the two.
 - Parallel streams have `std::io` adapters. `ParallelCompressor::writer(sink, window)`
   returns a `ParallelEncoderWriter` and `ParallelCompressor::reader(source, window)`
   a `ParallelEncoderReader`, each beside the `ParallelTaskQueue` their segment
