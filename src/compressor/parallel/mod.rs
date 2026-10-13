@@ -26,6 +26,7 @@
 mod config;
 mod core;
 mod error;
+mod io;
 mod session;
 mod source;
 
@@ -35,6 +36,7 @@ pub use config::{
     SegmentSize, SourceConsistency, Staging, TaskCount,
 };
 pub use error::{ParallelConfigError, ParallelEncodeError, ParallelFinishError};
+pub use io::{ParallelEncoderReader, ParallelEncoderWriter};
 pub use session::{
     ParallelEncoderSession, ParallelEncoderSessionOwned, ParallelEncoderStatus, ParallelProgress,
     ParallelTaskQueue, ParallelTasks,

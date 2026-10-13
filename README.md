@@ -147,6 +147,8 @@ that arrives in chunks. It requires `std`.
 | Split one known input across your threads | `ParallelCompressor::prepare_slice` / `prepare_source` → `ScopedParallelBatch` | — |
 | Stream chunked input across your threads | `ParallelCompressor::start` → `ParallelEncoderSession` + `ParallelTaskQueue` | — |
 | Same, with the session owning the compressor | `ParallelCompressor::into_session` → `ParallelEncoderSessionOwned` | — |
+| Pull parallel output through `std::io::Read` | `ParallelCompressor::reader` → `ParallelEncoderReader` + `ParallelTaskQueue` | — |
+| Push input through `std::io::Write` across your threads | `ParallelCompressor::writer` → `ParallelEncoderWriter` + `ParallelTaskQueue` | — |
 
 ### Reuse memory between payloads
 

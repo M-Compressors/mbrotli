@@ -32,6 +32,8 @@
 //! | Split one known input across your threads | [`prepare_slice`][parallel-prepare-slice] / [`prepare_source`][parallel-prepare-source] → [`ScopedParallelBatch`] | — |
 //! | Stream chunked input across your threads | [`start`][parallel-start] → [`ParallelEncoderSession`] + [`ParallelTaskQueue`] | — |
 //! | Same, with the session owning the compressor | [`into_session`][parallel-into-session] → [`ParallelEncoderSessionOwned`] | — |
+//! | Pull parallel output through `std::io::Read` | [`reader`][parallel-reader] → [`ParallelEncoderReader`] + [`ParallelTaskQueue`] | — |
+//! | Push input through `std::io::Write` across your threads | [`writer`][parallel-writer] → [`ParallelEncoderWriter`] + [`ParallelTaskQueue`] | — |
 //!
 //! ## Reuse memory between payloads
 //!
@@ -502,6 +504,10 @@
 [`ParallelTaskQueue`]: crate::compressor::parallel::ParallelTaskQueue
 [parallel-into-session]: crate::compressor::parallel::ParallelCompressor::into_session
 [`ParallelEncoderSessionOwned`]: crate::compressor::parallel::ParallelEncoderSessionOwned
+[parallel-reader]: crate::compressor::parallel::ParallelCompressor::reader
+[`ParallelEncoderReader`]: crate::compressor::parallel::ParallelEncoderReader
+[parallel-writer]: crate::compressor::parallel::ParallelCompressor::writer
+[`ParallelEncoderWriter`]: crate::compressor::parallel::ParallelEncoderWriter
 "#
 )]
 #![cfg_attr(
@@ -516,6 +522,10 @@
 [`ParallelTaskQueue`]: #select-only-the-codecs-you-need
 [parallel-into-session]: #select-only-the-codecs-you-need
 [`ParallelEncoderSessionOwned`]: #select-only-the-codecs-you-need
+[parallel-reader]: #select-only-the-codecs-you-need
+[`ParallelEncoderReader`]: #select-only-the-codecs-you-need
+[parallel-writer]: #select-only-the-codecs-you-need
+[`ParallelEncoderWriter`]: #select-only-the-codecs-you-need
 "#
 )]
 #![cfg_attr(

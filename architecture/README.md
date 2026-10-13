@@ -15,6 +15,8 @@ graph TD
     Decode --> DCore[private decompressor::core]
     Encode --> Parallel[parallel API and private core: std]
     Parallel --> PStream[parallel sessions and task queue: core::stream]
+    Parallel --> PIO[parallel reader and writer: io]
+    PIO --> PStream
     Encode --> Framing[framed compressor: experimental, alloc]
     Framing --> FIO[framed writer and reader: std]
     Decode --> FDecode[framed decoder and private core: experimental, alloc]
@@ -59,7 +61,7 @@ FFI do not appear in public signatures. Each codec compiles independently.
 | [High-quality encoder](hq-encoder.md) | Qualities 10–11: tree search, SIMD distance-cache and dictionary-word filters, command-price rows, ordered starts and clustering. |
 | [Owned sessions](owned-sessions.md) | Lifetime-free raw and framed sessions sharing the borrowed state machines and release paths; `reinit` and input-free `flush`/`finish`. |
 | [Parallel compression](parallel-compression.md) | Planning, encoder reconfiguration, caller-run tasks, staging and assembly. |
-| [Parallel streaming sessions](parallel-stream.md) | Chunked input into queued segment tasks, a bounded window, ordered delivery, flush, batch byte identity and queue closure. |
+| [Parallel streaming sessions](parallel-stream.md) | Chunked input into queued segment tasks, a bounded window, ordered delivery, flush, batch byte identity, queue closure, and the blocking `Read`/`Write` adapters returned with their task queue. |
 
 ## Decompression
 

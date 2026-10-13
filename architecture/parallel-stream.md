@@ -17,18 +17,25 @@ order while later segments still encode.
 | `ParallelEncoderSession{,Owned}` | `process`, `flush`, `finish`, `wait`, `wait_timeout`, `is_finished`. |
 | `ParallelEncoderStatus`, `ParallelProgress` | `NeedsInput`, `NeedsOutput`, `Pending`, `Finished`, with exact `consumed`/`produced`. |
 | `ParallelTaskQueue`, `ParallelTasks` | `Clone + Send + Sync` handle with blocking `recv`, non-blocking `try_recv`, and a blocking iterator. |
+| `ParallelCompressor::writer(sink, window)` | `ParallelEncoderWriter<'c, W: Write>` plus a queue. |
+| `ParallelCompressor::reader(source, window)` | `ParallelEncoderReader<'c, R: Read>` plus a queue. |
 
 `Operation` and `WaitStatus` are reused from the serial session and the batch
 API. Errors are `ParallelEncodeError`, with two variants added for streams:
-`StreamFailed(Arc<ParallelEncodeError>)` and `TaskQueueClosed`.
+`StreamFailed(Arc<ParallelEncodeError>)` and `TaskQueueClosed`. The adapters
+reuse `mbrotli::io::FinishError` and `mbrotli::io::EncoderReaderParts`, and
+report session failures through `From<ParallelEncodeError> for std::io::Error`.
 
 The public module `compressor::parallel::session` only wraps the private
-`parallel::core::stream` module. There is still no executor trait, no
+`parallel::core::stream` module. The private module `compressor::parallel::io`
+wraps a borrowed `ParallelEncoderSession` in turn and is re-exported from
+`compressor::parallel`; it never reaches into `core`. There is still no executor trait, no
 runtime dependency and no hidden thread: the caller's executors take tasks from
 the queue.
 
 ```mermaid
 graph TD
+    Adapters[parallel::io: ParallelEncoderWriter, ParallelEncoderReader] --> Public
     Public[parallel::session public wrappers] --> Borrowed[core::BorrowedStream: &mut Compressor + Stream]
     Public --> Owned[core::OwnedStream: Compressor + Stream]
     Public --> Handle[core::QueueHandle]
@@ -223,6 +230,142 @@ completions already published without waiting, and trims the parent to its
 retention policy. Tasks an executor already took keep their worker and release
 it on completion; it cannot return to the parent.
 
+## Reader and writer adapters
+
+`ParallelEncoderWriter` and `ParallelEncoderReader` hold a borrowed session and
+drive it exactly as a caller of `process` would; they make no segmentation,
+scheduling or delivery decision of their own, so their bytes are the session's.
+Each constructor calls `start(window)` and returns the queue beside the adapter.
+Unlike `process`, the adapters block, in `ParallelEncoderSession::wait`. They
+never run tasks themselves, so executors must run on other threads; if every
+queue handle is dropped, the session fails instead (`TaskQueueClosed` or
+`TaskAbandoned`) and the adapter returns that failure.
+
+```mermaid
+classDiagram
+    class ParallelEncoderWriter~W~ {
+        Box~ParallelEncoderSession~ session
+        W sink
+        Vec~u8~ outbox
+        usize head
+        usize end
+        State state
+    }
+    class ParallelEncoderReader~R~ {
+        ParallelEncoderSession session
+        R source
+        Vec~u8~ input
+        usize head
+        usize end
+        bool eof
+        bool finished
+    }
+    class ParallelEncoderSession
+    ParallelEncoderWriter --> ParallelEncoderSession
+    ParallelEncoderReader --> ParallelEncoderSession
+    ParallelEncoderWriter ..> FinishError : finish failure
+    ParallelEncoderReader ..> EncoderReaderParts : into_parts
+```
+
+The writer boxes its session: the stream state is about 300 bytes, and
+`finish` returns the whole adapter by value inside `FinishError`.
+
+### Writer
+
+The writer follows `EncoderWriter`'s transactional rules. Compressed bytes are
+pulled from the session into a retained 128 KiB `outbox`, and `head..end` is
+the part the sink has not taken. A pull happens only when the outbox is empty,
+and every call drains first, so a short write, `Interrupted` (retried),
+`WouldBlock` or a sink error leaves the exact undelivered suffix in place.
+
+```mermaid
+flowchart TD
+    Write["write(buf)"] --> Open{state Open?}
+    Open -->|no| Refuse[InvalidInput]
+    Open -->|yes| Drain[drain outbox to sink; error returns, nothing consumed]
+    Drain --> Empty{buf empty?}
+    Empty -->|yes| Zero["Ok(0)"]
+    Empty -->|no| Pump[process buf, Process, into outbox]
+    Pump --> Took{consumed > 0?}
+    Took -->|yes| Best[drain, ignoring sink errors] --> Count["Ok(consumed)"]
+    Took -->|no: window full| Drain2[drain]
+    Drain2 --> Produced{produced > 0?}
+    Produced -->|yes| Pump
+    Produced -->|no| Wait[session.wait] --> Pump
+```
+
+Accepted bytes belong to the adapter: a sink error after the session consumed
+input is not reported with the count, so the caller never repeats bytes; it
+surfaces on the next drain.
+
+`flush` and `try_finish` repeat `pump(&[], Flush | Finish)` then `drain` until
+the session reports `NeedsInput` (flush) or `Finished` (finish). A step that
+produced nothing while `Pending` waits for one completion; a step that produced
+bytes is simply repeated, since more may already be ready. `try_finish` moves
+the writer to `Finishing` after its first finish step, so later writes are
+refused even if the sink fails before the end, then flushes the sink and moves
+to `Finished`. Retrying a failed `try_finish` resumes the same stream; a
+finished writer returns `Ok` at once. `flush` after finishing only flushes the
+sink.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Open: ParallelCompressor::writer
+    Open --> Open: write / flush
+    Open --> Finishing: first Finish step of try_finish
+    Finishing --> Finishing: sink or session error, retry try_finish
+    Finishing --> Finished: session Finished, outbox drained, sink flushed
+    Finished --> Finished: try_finish is a no-op; write is refused
+```
+
+### Reader
+
+The reader follows `EncoderReader`: source bytes are read in 64 KiB fills into a
+retained buffer and handed to the session from a cursor, with `Process` until
+the source reports end of file and `Finish` after it. Compressed bytes go
+straight into the caller's slice.
+
+```mermaid
+sequenceDiagram
+    participant Caller
+    participant Reader as ParallelEncoderReader
+    participant Source
+    participant Session
+    participant Executor
+    Caller->>Reader: read(buf)
+    loop until produced > 0 or Finished
+        opt buffered input empty and not EOF
+            Reader->>Source: read 64 KiB (retry Interrupted)
+        end
+        Reader->>Session: process(buffered, buf, Process or Finish)
+        alt status Pending and nothing produced
+            Reader->>Session: wait()
+            Executor-->>Session: completion
+        end
+    end
+    Reader-->>Caller: Ok(produced) or Ok(0) once Finished
+```
+
+A read keeps filling and queuing segments until the window is full, so up to
+`window` segments encode while the caller consumes the first. A source error
+propagates with nothing lost: buffered bytes stay at the cursor and the next
+read continues. `into_parts` returns the source and the bytes read but not yet
+accepted by the session; bytes the session accepted belong to the abandoned
+stream.
+
+### Errors and dropping
+
+`From<ParallelEncodeError> for std::io::Error` keeps the error as the source and
+takes the kind of the root cause through `StreamFailed` and `BatchFailed`:
+`OutOfMemory` for allocation and memory limits, `InvalidInput` for
+configuration and size overflow, `InvalidData` for a changed source, an I/O
+cause's own kind, the encoder's kind for `Encode`, and `Other` for task and
+queue failures. It never yields `Interrupted` or `WouldBlock`, which `std::io`
+callers retry, because a failed stream stays failed.
+
+Dropping an adapter drops its session, which cancels unstarted tasks, closes
+the queue and trims the parent, as dropping a session does.
+
 ## SIMD and dispatch
 
 The session adds no dispatch. Workers build their fragment and serial encoders
@@ -242,13 +385,34 @@ batch workers do.
   ordering, queue-handle counting and single-segment artifact extraction.
 - `fuzz/afl` target `parallel` streams each input with input-derived chunk
   size, window and optional mid-stream flush, running queued tasks in reverse
-  order, and requires batch identity (or a round trip after a flush).
+  order, and requires batch identity (or a round trip after a flush). It then
+  repeats the stream through the writer (with the same flush) and the reader,
+  each with one executor thread.
+- `tests/parallel_io.rs`: writer and reader byte identity with
+  `prepare_slice` at every quality for windows 1-4, 1-4 executor threads,
+  writes and source reads from 1 byte to a whole segment, and read buffers down
+  to one byte; serial fallback and segment edges; parts larger than one 128 KiB
+  pull; flush prefixes decoded by C and an empty re-flush; sinks failing with
+  `WouldBlock`, `Interrupted` and `Other` at every fifth call while writing short,
+  with `finish` retried through `FinishError`; a sink accepting nothing
+  (`WriteZero`); writes refused after finishing; dropped queues reported as
+  `StreamFailed(TaskQueueClosed)` through `std::io::Error`; interrupted and
+  failing sources; `into_parts` read-ahead; adapter drop closing the queue;
+  memory limits; `Send` and `Debug`.
+- Unit tests in `parallel::error` map every `ParallelEncodeError` variant to its
+  `io::ErrorKind` and check that wrapped causes keep their kind and chain.
 - `benches/parallel.rs` measures `stream-tasks/{1,4}` beside the batch
   `tasks/{1,4}` on the same corpora, after checking identical output.
 
 ## Known gaps
 
-- No `process_uninit`, reader or writer adapter over the session yet.
+- No `process_uninit` over the session yet.
+- The reader and writer borrow their `ParallelCompressor`; there are no owned
+  adapter variants over `ParallelEncoderSessionOwned`.
+- The adapters never run tasks on the calling thread, so they cannot be used
+  with the queue drained only on that thread.
+- The writer copies each part twice (session to outbox, outbox to sink), and
+  `benches/parallel.rs` does not measure the adapters yet.
 - No directory staging: streamed parts are always staged in memory, bounded by
   the window.
 - Cancellation granularity is that of batch tasks: a running segment finishes

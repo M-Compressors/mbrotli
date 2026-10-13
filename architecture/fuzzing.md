@@ -165,7 +165,7 @@ target that can reach the validating conversions and the large-window refusal.
 | `dictionary` | dictionary | preparation is a transaction — an empty, count or limit refusal yields no dictionary; the accessors agree with what was attached; the offset-to-distance mapping round-trips and saturates at both ends; below quality 5 every entry point refuses rather than ignoring, and the compressor still works afterwards; at quality 5 and above the three entry points agree, the output fits the bound, and a dictionary call never changes the next ordinary one |
 | `serialized_dictionary` | dictionary stream | parser validity versus C, excluding its five-byte varint limit and ignored trailing bytes; canonical reserialization; bounded preparation of prefixes/custom indexes; q5/q11 compression independently decoded by C with the serialized dictionary attached |
 | `framing` | settings byte and bounded resource bytes | resource/metadata sequences with bounded chunks, independent metadata compression and selected repeats; identical bytes under one-byte, 37-byte and 2048-byte caller writes; directory completeness including type 8; C decoding of metadata streams; successful finalization or typed validation failure |
-| `parallel` | bounded task/source settings | deterministic task schedules, slice/seek-source equivalence, staged assembly and C decoding |
+| `parallel` | bounded task/source settings | deterministic task schedules, slice/seek-source equivalence, staged assembly and C decoding; streamed session, writer and reader reproduce the batch or round-trip after a flush |
 | `c_abi` | C ABI | `mbrotli-ffi`'s exported functions: out-of-range quality or window returns `MBROTLI_INVALID_PARAMETER` with `*output_len == 0`; otherwise a `mbrotli_compress_bound` buffer always suffices, the stream round-trips, one byte short decodes as `MBROTLI_OUTPUT_TOO_SMALL`, and output matches Google's `BrotliEncoderCompress` byte for byte, including accept/reject at a selected smaller capacity (qualities 10–11 are skipped on aarch64, where clang's FMA contraction moves the C oracle); the payload decoded as a stream agrees with Google's large-window streaming decoder: a fully consumed success is identical; trailing data or malformed input is `MBROTLI_ERROR`, or `MBROTLI_OUTPUT_TOO_SMALL` when the output fills before the malformation, in which case a 1 MiB buffer must still not succeed |
 | `compressor_lifecycle` | lifecycle | whatever sequence of reuse, appending, deliberate failure, trimming, reconfiguration, abandoned and leaked sessions the input asks for, the compressor still emits the bytes a fresh one would for the configuration it ended up with |
 
@@ -356,6 +356,32 @@ and backends.
 The parallel target also compares borrowed slice input with an owned
 `SeekSource<Cursor<Vec<u8>>>` through the generic `prepare_source` API, exercising
 absolute offsets and length checks under the same decode/determinism oracle.
+
+After the batches, each backend streams the same input three ways, with a
+chunk size and window (1-3) taken from the control bytes and an optional flush
+at half the input:
+
+- a `ParallelEncoderSession` fed in chunk-sized `process` calls through a
+  97-byte output buffer, running each batch of queued tasks in reverse order on
+  the fuzzing thread before `wait`;
+- a `ParallelEncoderWriter` given chunk-sized `write_all` calls, with
+  `Write::flush` at the flush point and one executor thread;
+- a `ParallelEncoderReader` over the whole input, read into buffers of at most
+  4 KiB, with one executor thread.
+
+Without a flush, all three must equal the batch output for the original
+quality; with one, the session and the writer must round-trip. The reader never
+flushes, so it must always equal the batch.
+
+```mermaid
+flowchart LR
+    Batch[batch output, original quality] --> Cmp{flush requested mid-stream?}
+    Session[session: inline reverse-order tasks] --> Cmp
+    Writer[writer: one executor thread] --> Cmp
+    Cmp -->|no| Equal[session and writer equal the batch]
+    Cmp -->|yes| Round[session and writer round-trip]
+    Reader[reader: one executor thread] --> Same[equals the batch]
+```
 
 ## Native decoder boundaries
 

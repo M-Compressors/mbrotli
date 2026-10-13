@@ -3,6 +3,21 @@
 ## Unreleased
 
 - Add Apache 2.0 license
+- Parallel streams have `std::io` adapters. `ParallelCompressor::writer(sink, window)`
+  returns a `ParallelEncoderWriter` and `ParallelCompressor::reader(source, window)`
+  a `ParallelEncoderReader`, each beside the `ParallelTaskQueue` their segment
+  tasks go to, as `start` does. Both drive the parallel session and produce its
+  bytes, so without a flush the output is byte-identical to `prepare_slice`
+  however writes or source reads are split. Unlike `process`, they block in
+  `wait` while the window is full or a part is pending, so the queue must run
+  on other threads. The writer keeps `EncoderWriter`'s transactional guarantees:
+  nothing is lost to short writes or sink errors, `Write::flush` is
+  `Operation::Flush`, and `finish` returns the adapter inside `FinishError` for
+  a retry. `reader.into_parts()` returns read-ahead source bytes as
+  `EncoderReaderParts`. `ParallelEncodeError` now converts into
+  `std::io::Error`, taking the kind of its root cause through `StreamFailed` and
+  `BatchFailed` and never `Interrupted` or `WouldBlock`. The AFL `parallel`
+  target also drives both adapters.
 
 ## [v0.5.10](https://github.com/M-Compressors/mbrotli/releases/tag/v0.5.10) - 2026-10-12
 

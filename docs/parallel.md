@@ -109,6 +109,53 @@ fn compress(
 - `into_session(window)` returns an owned session without a lifetime;
   `into_compressor` returns the compressor.
 
+## Reader and writer adapters
+
+`writer(sink, window)` and `reader(source, window)` wrap the same session in
+`std::io::Write` and `std::io::Read` and return the task queue beside the
+adapter, so the loop above becomes `std::io::copy`:
+
+```rust
+use mbrotli::compressor::parallel::{ParallelCompressor, ParallelConfig, TaskCount};
+use mbrotli::io::FinishError;
+use mbrotli::{EncoderConfig, Quality};
+use std::io::{Read, Write};
+
+fn compress<W: Write>(
+    mut reader: impl Read,
+    writer: W,
+) -> Result<W, Box<dyn std::error::Error>> {
+    let mut encoder = ParallelCompressor::new(
+        EncoderConfig::default().with_quality(Quality::Q5),
+        ParallelConfig::default(),
+    )?;
+    std::thread::scope(|scope| {
+        let (mut sink, queue) = encoder.writer(writer, TaskCount::try_from(4)?)?;
+        for _ in 0..4 {
+            let queue = queue.clone();
+            scope.spawn(move || queue.into_iter().for_each(|task| task.run()));
+        }
+        drop(queue);
+        std::io::copy(&mut reader, &mut sink)?;
+        Ok(sink.finish().map_err(FinishError::into_error)?)
+    })
+}
+```
+
+- Unlike `process`, the adapters block: a write waits while the window is
+  full, a read waits for the next part, and `finish` waits for every part. Run
+  the queue on threads other than the one using the adapter.
+- Output is byte-identical to `prepare_slice` over the same bytes. The writer's
+  `flush` is `Operation::Flush`: it makes everything written decodable and
+  moves later segment boundaries.
+- The writer keeps every compressed byte until the sink takes it, so short
+  writes, `WouldBlock` and sink errors lose nothing, and `finish` hands the
+  adapter back inside `FinishError` for a retry, as `EncoderWriter` does.
+  `reader.into_parts()` returns source bytes read ahead of the session.
+- Session failures arrive as `std::io::Error` with the `ParallelEncodeError`
+  as their source. Dropping an adapter abandons the stream and closes the
+  queue.
+
 ## Segments and compressed size
 
 Segment size defaults to 4 MiB and accepts 64 KiB–16 MiB. Effective task count

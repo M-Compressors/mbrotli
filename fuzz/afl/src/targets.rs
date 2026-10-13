@@ -1106,7 +1106,8 @@ fn validate_framing_directory(bytes: &[u8]) {
 /// reverse execution, worker reuse, reconfiguration, and host dispatch.
 /// Payloads are bounded to two 64 KiB segments; scheduling is deterministic.
 /// A streamed session over the same bytes, chunked and windowed by the input,
-/// must reproduce the batch, or round-trip when it flushes midway.
+/// must reproduce the batch, or round-trip when it flushes midway; so must its
+/// writer adapter, and its reader adapter must reproduce the batch.
 pub fn parallel(ctx: &Context, data: &[u8]) {
     use mbrotli::compressor::parallel::{
         BatchConfig, ParallelCompressor, ParallelConfig, SegmentSize, TaskCount,
@@ -1188,7 +1189,57 @@ pub fn parallel(ctx: &Context, data: &[u8]) {
         if flush_at.is_none_or(|at| at == 0) {
             assert_eq!(Some(&streamed), expected[0].as_ref());
         }
+        // The std adapters over the same session must agree with it.
+        let (written, read) = parallel_adapters(&mut compressor, &input, chunk, window, flush_at);
+        assert_round_trip(&input, &written);
+        if flush_at.is_none_or(|at| at == 0) {
+            assert_eq!(Some(&written), expected[0].as_ref());
+        }
+        assert_eq!(Some(&read), expected[0].as_ref());
     }
+}
+
+/// Writes `input` in `chunk`-byte writes, flushing at `flush_at`, and reads
+/// it back through the reader adapter in `chunk`-byte buffers, each with one
+/// executor thread.
+fn parallel_adapters(
+    compressor: &mut mbrotli::compressor::parallel::ParallelCompressor,
+    input: &[u8],
+    chunk: usize,
+    window: mbrotli::compressor::parallel::TaskCount,
+    flush_at: Option<usize>,
+) -> (Vec<u8>, Vec<u8>) {
+    use std::io::{Read, Write};
+    let written = std::thread::scope(|scope| {
+        let (mut sink, queue) = compressor.writer(Vec::new(), window).unwrap();
+        scope.spawn(move || queue.into_iter().for_each(|task| task.run()));
+        let (head, tail) = input.split_at(flush_at.unwrap_or(0));
+        for piece in head.chunks(chunk) {
+            sink.write_all(piece).unwrap();
+        }
+        if flush_at.is_some() {
+            sink.flush().unwrap();
+        }
+        for piece in tail.chunks(chunk) {
+            sink.write_all(piece).unwrap();
+        }
+        sink.finish().map_err(|e| e.into_error()).unwrap()
+    });
+    let read = std::thread::scope(|scope| {
+        let (mut source, queue) = compressor.reader(input, window).unwrap();
+        scope.spawn(move || queue.into_iter().for_each(|task| task.run()));
+        let mut out = Vec::new();
+        let mut buffer = vec![0; chunk.min(4096)];
+        loop {
+            let n = source.read(&mut buffer).unwrap();
+            if n == 0 {
+                break;
+            }
+            out.extend_from_slice(&buffer[..n]);
+        }
+        out
+    });
+    (written, read)
 }
 
 /// Drives a parallel session in `chunk`-byte calls through a small output
