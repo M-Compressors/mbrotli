@@ -10,7 +10,7 @@ parallel compression when a workload benefits from it.
 [![Crates.io](https://img.shields.io/crates/v/mbrotli.svg)][crate]
 [![docs.rs](https://docs.rs/mbrotli/badge.svg)][api]
 [![Tests](https://github.com/M-Compressors/mbrotli/actions/workflows/ci.yml/badge.svg?branch=master)][ci]
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)][license]
+[![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)][license]
 
 [Quick start](#quick-start) · [Benchmarks](#performance) · [`Read` / `Write`](#read-and-write-streaming) · [API guide][guide] · [Compatibility](#compatibility) · [Changelog][changelog]
 
@@ -480,7 +480,7 @@ The [development guide][development] covers local checks, coverage, and fuzzing.
 
 ## License
 
-[MIT][license]. The encoder builds on the work of the [Google Brotli project][google-brotli].
+[MIT][LICENSE-MIT] or [APACHE 2.0][LICENSE-APACHE] at your option. The encoder builds on the work of the [Google Brotli project][google-brotli].
 
 [crate]: https://crates.io/crates/mbrotli
 [api]: https://docs.rs/mbrotli
