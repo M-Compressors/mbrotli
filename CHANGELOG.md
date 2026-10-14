@@ -1,5 +1,19 @@
 # Changelog
 
+## [v0.5.15](https://github.com/M-Compressors/mbrotli/releases/tag/v0.5.15) - 2026-10-14
+
+- Parallel history no longer slows down short-period input. 0.5.14 stored
+  every history position in the match finder; in zeros or a short record
+  repeated over and over they all share a few keys, and each search there
+  measured every one of them to the full run length. History is now stored the
+  way a stream stores its own copies: inside a run that repeats a period of up
+  to 1 KiB for more than four periods, only the last four periods are kept.
+  Output is unchanged. With 256 KiB segments and a 22-bit window (one task,
+  best of 7, Apple M5 Pro), the bytes 0-255 repeated to 1 MiB take 0.4 ms
+  at q9 instead of 7.8 ms (0.1 ms without history in 0.5.13) and zeros 0.2 ms
+  at q5 instead of 0.4 ms; finding the runs costs other input 1-5% (random
+  1 MiB at q5: 1.3 ms instead of 0.8 ms).
+
 ## [v0.5.14](https://github.com/M-Compressors/mbrotli/releases/tag/v0.5.14) - 2026-10-14
 
 - Parallel segments at qualities 2-9 copy from the input before them. Each

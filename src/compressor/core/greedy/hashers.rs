@@ -103,6 +103,61 @@ fn read_u64(data: &[u8], offset: usize) -> u64 {
     }
 }
 
+/// The longest period [`history_ranges`] looks for. A run that repeats every
+/// `p` bytes stores a position under each of its keys every `p` bytes, so
+/// short periods are what fill a bucket with one key; longer ones spread out.
+#[cfg(not(feature = "no_std"))]
+const HISTORY_RUN_MAX_PERIOD: usize = 1024;
+
+/// Calls `store` with the half-open position ranges of `history` worth
+/// storing: all of them, except inside runs that repeat a period of at most
+/// [`HISTORY_RUN_MAX_PERIOD`] bytes for more than four periods, of which only
+/// the last four periods are kept.
+///
+/// It is the rule `commit_match` applies to a stream's own copies, where a
+/// copy whose distance is under a quarter of its length stores only its last
+/// `4 * distance` positions: without it, history of zeros or of a short
+/// repeated record fills whole buckets with one key, and every search there
+/// measures each of them to the full run length. Runs are found through a
+/// table of each 4-byte key's last position and confirmed eight bytes at a
+/// time; a run is measured once, so the pass is linear in the history.
+#[cfg(not(feature = "no_std"))]
+fn history_ranges(history: &[u8], mut store: impl FnMut(usize, usize)) {
+    const TABLE_BITS: u32 = 12;
+    let mut last = [u32::MAX; 1 << TABLE_BITS];
+    let mut keep_from = 0;
+    let mut measured_until = 0;
+    let mut i = 0;
+    while i + 8 <= history.len() {
+        let key = (read_u32(history, i).wrapping_mul(HASH_MUL32) >> (32 - TABLE_BITS)) as usize;
+        let previous = last[key] as usize;
+        // History is within the backward limit, so positions fit `u32`.
+        last[key] = i as u32;
+        let period = i.wrapping_sub(previous);
+        if i >= measured_until
+            && previous < i
+            && period <= HISTORY_RUN_MAX_PERIOD
+            && read_u64(history, previous) == read_u64(history, i)
+        {
+            let mut end = i + 8;
+            while end + 8 <= history.len()
+                && read_u64(history, end) == read_u64(history, end - period)
+            {
+                end += 8;
+            }
+            measured_until = end;
+            if end - i > 4 * period {
+                store(keep_from, i);
+                keep_from = end - 4 * period;
+                i = end;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    store(keep_from, history.len());
+}
+
 /// Reads four little-endian bytes at `offset`, or zero past the end.
 ///
 /// See [`read_u64`] for the offset mask.
@@ -3581,25 +3636,73 @@ impl MatchFinder {
             .stitch_to_previous_block(num_bytes, position, data, mask));
     }
 
-    /// Records every position of the first `len` window bytes whose
-    /// lookahead lies inside them (`HasherPrependCustomDictionary`).
+    /// Records the positions of `history`, the first window bytes, whose
+    /// lookahead lies inside it (`HasherPrependCustomDictionary`), except
+    /// inside short-period runs (see [`history_ranges`]).
     ///
-    /// The last positions, whose lookahead reaches past `len`, are left to
-    /// [`MatchFinder::stitch_to_previous_block`] once the next block arrives.
+    /// The last positions, whose lookahead reaches past the history, are left
+    /// to [`MatchFinder::stitch_to_previous_block`] once the next block
+    /// arrives.
     #[cfg(not(feature = "no_std"))]
-    pub(crate) fn prepend(&mut self, data: &[u8], mask: usize, len: usize) {
-        fn store_prefix<M: Matcher>(matcher: &mut M, data: &[u8], mask: usize, len: usize) {
-            if len >= M::STORE_LOOKAHEAD {
-                matcher.store_range(data, mask, 0, len - M::STORE_LOOKAHEAD + 1);
-            }
+    pub(crate) fn prepend(&mut self, data: &[u8], mask: usize, history: &[u8]) {
+        fn store_prefix<M: Matcher>(matcher: &mut M, data: &[u8], mask: usize, history: &[u8]) {
+            let Some(limit) = (history.len() + 1).checked_sub(M::STORE_LOOKAHEAD) else {
+                return;
+            };
+            history_ranges(history, |start, end| {
+                let end = end.min(limit);
+                if start < end {
+                    matcher.store_range(data, mask, start, end);
+                }
+            });
         }
-        with_matcher!(self, |matcher| store_prefix(matcher, data, mask, len));
+        with_matcher!(self, |matcher| store_prefix(matcher, data, mask, history));
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Positions [`history_ranges`] keeps, in order.
+    #[cfg(not(feature = "no_std"))]
+    fn kept(history: &[u8]) -> Vec<(usize, usize)> {
+        let mut ranges = Vec::new();
+        history_ranges(history, |start, end| ranges.push((start, end)));
+        ranges
+    }
+
+    #[cfg(not(feature = "no_std"))]
+    #[test]
+    fn history_runs_keep_only_their_last_four_periods() {
+        let total = |ranges: &[(usize, usize)]| ranges.iter().map(|(s, e)| e - s).sum::<usize>();
+        // Zeros repeat every byte: the start and the last four positions.
+        let zeros = kept(&[0; 1 << 16]);
+        assert!(total(&zeros) <= 16, "{zeros:?}");
+        assert_eq!(zeros.last().map(|r| r.1), Some(1 << 16));
+        // A 256-byte record over and over: its first copy and the last four.
+        let records: Vec<u8> = (0..=255u8).cycle().take(1 << 16).collect();
+        let ranges = kept(&records);
+        assert!(total(&ranges) <= 256 + 8 + 4 * 256, "{ranges:?}");
+        let mut state = 1u32;
+        let noise: Vec<u8> = (0..1 << 16)
+            .map(|_| {
+                state = state.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+                (state >> 24) as u8
+            })
+            .collect();
+        // A run with a period over the limit is stored whole, like text.
+        let long: Vec<u8> = noise[..2048]
+            .iter()
+            .copied()
+            .cycle()
+            .take(1 << 16)
+            .collect();
+        assert_eq!(kept(&long), [(0, 1 << 16)]);
+        // Neither short history nor input without runs loses a position.
+        assert_eq!(kept(&[1, 2, 3]), [(0, 3)]);
+        assert_eq!(kept(&noise), [(0, 1 << 16)]);
+    }
 
     #[test]
     fn dense_stores_fill_a_bucket_downwards_through_either_index() {

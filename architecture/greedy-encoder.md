@@ -1224,7 +1224,8 @@ The parallel fragment adapter builds `GreedyEncoder<true>` once per worker.
 `prepend_history` first takes the input before the segment as already-emitted
 history, the way brotli 1.0's `BrotliEncoderSetCustomDictionary` did: window,
 positions, prior bytes and `MatchFinder::prepend`, which stores each position
-whose lookahead lies inside it (see
+whose lookahead lies inside it, except the earlier periods of short-period runs
+(see
 [parallel compression](parallel-compression.md#history)).
 `begin_fragment` then starts headerless, fills the four remembered distances (and
 `saved_dist_cache`) with -16 so that no short code refers to the decoder's

@@ -276,11 +276,23 @@ window's backward limit `(1 << lgwin) - 16`, and nothing at the other qualities.
 `BrotliEncoderSetCustomDictionary`: it trims the history to the backward limit,
 copies it into the ring buffer, sets `input_pos`, `last_processed_pos` and
 `last_flush_pos` past it and the prior bytes to its last two, prepares the match
-finder for a stream that is not one-shot, and stores every history position
+finder for a stream that is not one-shot, and stores the history positions
 whose lookahead lies inside it (`MatchFinder::prepend`,
 `HasherPrependCustomDictionary`); the boundary positions are stitched when the
 segment arrives, as between any two blocks. No meta-block is written for the
 history.
+
+Unlike the reference, `prepend` skips positions inside short-period runs
+(`history_ranges`): where the history repeats a period of at most 1 KiB for
+more than four periods, only the run's last four periods are stored. That is
+the rule `commit_match` applies to a stream's own copies (a copy shorter than
+four times its distance stores everything, a longer one only its last
+`4 * distance` positions), so the buckets hold what a serial stream's would.
+Storing every position put all of a zero run or a repeated 256-byte record
+under a few keys, and every search there measured each candidate to the full
+run length: 1 MiB of repeated bytes 0-255 at q9 took 7.8 ms instead of 0.4 ms.
+Runs are found through a 4096-entry table of each 4-byte key's last position
+and confirmed eight bytes at a time; each byte is measured at most once.
 
 Every part shares the configured `lgwin`, which the first part's header
 declares, and the encoder never emits a distance beyond
@@ -292,8 +304,11 @@ and segment, so the match finder is sized for every position it stores.
 ```mermaid
 flowchart LR
     Input[input before the segment] --> Tail["last history_len bytes<br/>(batch: Plan::history_start,<br/>stream: history buffer)"]
-    Tail --> Prepend["prepend_history:<br/>ring, positions, prior bytes,<br/>prepare + prepend match finder"]
-    Prepend --> Begin["begin_fragment:<br/>header off, -16 distances,<br/>two-byte prefix"]
+    Tail --> Prepend["prepend_history:<br/>ring, positions, prior bytes,<br/>prepare match finder"]
+    Prepend --> Runs["history_ranges:<br/>skip all but the last four periods<br/>of short-period runs"]
+    Runs --> Store["store_range for kept positions"]
+    Store --> Begin
+    Begin["begin_fragment:<br/>header off, -16 distances,<br/>two-byte prefix"]
     Begin --> Body["segment body:<br/>copies reach into history"]
 ```
 

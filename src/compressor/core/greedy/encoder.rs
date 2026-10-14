@@ -143,11 +143,8 @@ impl<const INDEPENDENT: bool> GreedyEncoder<INDEPENDENT> {
             self.prev_byte2 = second_last;
         }
         self.prepare_matcher(0, history.len(), false);
-        self.matcher.prepend(
-            self.ringbuffer.buffer(),
-            self.ringbuffer.mask(),
-            history.len(),
-        );
+        self.matcher
+            .prepend(self.ringbuffer.buffer(), self.ringbuffer.mask(), history);
     }
 
     /// Confirms the flush left no pending partial byte.
