@@ -107,6 +107,11 @@ impl<const INDEPENDENT: bool> GreedyEncoder<INDEPENDENT> {
         self.last_bytes = 0;
         self.last_bytes_bits = 0;
         self.references.dictionary = crate::shared::dictionary::DictionaryStats::DISABLED;
+        // The decoder's distance ring at a fragment's start is whatever the
+        // fragments before it left there. Distances that can never match keep
+        // short codes off each slot until this fragment's own copies fill it.
+        self.references.dist_cache[..NUM_REMEMBERED_DISTANCES].fill(-16);
+        self.saved_dist_cache = remembered(&self.references.dist_cache);
         // Two bytes cannot make a copy. Flush seeds the ring and prior-byte
         // context; the shared fragment writer owns the actual prefix output.
         self.flush_block(prefix, None)?;

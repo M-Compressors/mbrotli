@@ -1,5 +1,30 @@
 # Changelog
 
+## [v0.5.13](https://github.com/M-Compressors/mbrotli/releases/tag/v0.5.13) - 2026-10-14
+
+- Parallel segments at qualities 2-9 use the short distance codes again. An
+  independent fragment wrote every copy distance in full, because the
+  decoder's distance cache at its start is left by the fragments before it.
+  It now starts with distances that never match in all four cache slots, so a
+  short code only refers to a slot the fragment's own copies filled, and the
+  rest of the fragment encodes distances as a serial stream does. Input with
+  one repeated distance shrinks most: 9.3 MB of `seq 1 1300000` at q6 with
+  1 MiB segments gives 387,467 bytes instead of 2,210,113 (serial 377,638,
+  the 1 MiB segments compressed separately 392,833), and one 1 MiB segment
+  as a fragment 70,714 instead of 358,630 (serial 71,446). Text without
+  such repeats is within 0.1%: three copies of `/usr/share/dict/words` at q6
+  give 2,295,903 bytes instead of 2,297,066. Parallel output at these
+  qualities changes; it still decodes with Google's decoder, checked on
+  `seq`, text, random and mixed input at q2-9 with 64 KiB and 1 MiB segments
+  and windows of 16, 19 and 22 bits. Speed now matches serial compression of
+  the same segments (one task, best of 7, Apple M5 Pro, lgwin 19): `seq` q6
+  102 ms (serial 101 ms, before 96 ms), q9 222 ms (serial 223 ms, before
+  192 ms, when the explicit distances skipped the cache work); text within
+  1%. Qualities 0-1 and 10-11 keep writing explicit distances in fragments.
+  Regression tests check that a q2-9 fragment stays within 5% of a serial
+  stream and that a fragment repeating at the distances a fresh cache starts
+  with decodes after one that left other distances in the decoder's cache.
+
 ## [v0.5.12](https://github.com/M-Compressors/mbrotli/releases/tag/v0.5.12) - 2026-10-14
 
 - A reused quality 5 or 6 compressor takes the dense bucket table from its

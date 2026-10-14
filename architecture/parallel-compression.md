@@ -185,8 +185,10 @@ the preferred file adapter when concurrent input reads are desired.
 
 ## Fragment format and encoder state
 
-Format plan version 1 uses uniform two-byte raw prefixes and explicit distances
-throughout every segment. It follows RFC 7932 sections 11.2 and 11.3. Every part
+Format plan version 1 uses uniform two-byte raw prefixes. Qualities 0-1 and
+10-11 write explicit distances throughout every segment; qualities 2-9 write a
+short distance code only for a cache slot the segment's own copies filled (see
+[Recent distances](#recent-distances)). It follows RFC 7932 sections 11.2 and 11.3. Every part
 starts at a byte boundary (except the first part also owns the window header),
 contains only non-final data blocks, and ends aligned. Alignment metadata uses
 the existing flush writer's when-needed empty metadata blocks. The assembler
@@ -202,6 +204,7 @@ sequenceDiagram
     Task->>Fragment: encode(segment bytes, first role)
     Fragment->>Codec: reset semantic state, preserve allocations
     Fragment->>Codec: begin_fragment(prefix)
+    Note over Codec: greedy fills its four remembered distances with -16
     Note over Codec: greedy/HQ seed local ring and prior bytes via two-byte flush
     Fragment->>Fragment: optional header + raw min(length,2) prefix
     loop complete body input blocks
@@ -219,15 +222,43 @@ sequenceDiagram
 | Ring and input coordinates | `reset_for` resets local positions and history; no prior segment is present. Greedy/HQ seed only the two current prefix bytes. |
 | Greedy matcher | Existing dirty/partial-prepare protocol clears logical candidates while retaining allocations. Dictionary statistics use the permanently disabled sentinel. |
 | HQ matcher/DP | Existing tree preparation resets roots; all-match and Zopfli arenas are rebuilt from this segment. Static-dictionary match distance is outside the representable range. |
-| Recent distances | All wire distances are explicit. HQ excludes cached-distance DP edges. Greedy still uses local cache values as search candidates but writes full distances. Inherited decoder cache values are never consulted. |
+| Recent distances | Inherited decoder cache values are never consulted. Greedy (q2-9) starts each fragment with -16 in all four remembered slots and encodes distances with the serial `compute_distance_code`, so short codes appear once the fragment's own copies have filled a slot. HQ excludes cached-distance DP edges and writes explicit distances; q0/q1 write explicit distances. |
 | q0/q1 commands | Insert commands copy two bytes; the remaining copy and its distance are explicit. q0's independent starter/adaptive histograms include symbols 17/18 for three/four-byte copy remainders. q1 preserves compact symbol 40 at wire symbol 128 instead of overwriting it with the unused insert-zero alias, preserving the canonical Huffman order. |
 | Literal contexts | Greedy/HQ prefix seeding advances prior-byte state exactly once. Fast codecs use no literal contexts. Prefix data is emitted exactly once by the common writer. |
 | Entropy and splits | Rebuilt locally; q0 adaptive trees never cross a segment reset. |
 | SIMD | Backend detected by the planner once; the fragment adapter builds `Encoder<true>` on it and retains it across reset. Serial encoders are `Encoder<false>`, separately monomorphized, so serial-only builds never link the fragment kernels. |
 
-Every segment uses explicit distances throughout; cache-relative coding does
-not resume after a prefix. Dictionary overloads are absent. Parallel Large
-Window configuration returns a typed configuration error.
+### Recent distances
+
+The decoder's distance cache carries over between meta-blocks, so at a
+fragment's start it holds whatever the fragments before it left there, which the
+encoder cannot know. Greedy fragments make those slots unusable instead of
+avoiding the cache altogether: `GreedyEncoder::begin_fragment` writes -16 to the
+four remembered distances (and to `saved_dist_cache`, which a re-encoded
+meta-block restores). A copy distance is at least 1, so neither an exact match
+nor a ±1..3 neighbour of -16 ever equals it, `compute_distance_code` never
+returns a short code for such a slot, and the searcher's cached-distance probe
+rejects the position it computes. Every copy pushes its distance as in a serial
+stream; after four distinct pushes the cache is entirely the fragment's own and
+the rest of the fragment codes distances exactly as serial encoding does.
+
+```mermaid
+flowchart TD
+    Start[begin_fragment] --> Seed["dist_cache[0..4] = -16<br/>saved_dist_cache = -16"]
+    Seed --> Copy{copy at distance d}
+    Copy --> Code["compute_distance_code(d, cache)"]
+    Code --> Slot{"d equals, or is ±1..3 of,<br/>a filled slot?"}
+    Slot -- yes --> Short[short code 0-15]
+    Slot -- "no, or the slot still holds -16" --> Full["explicit code d + 15"]
+    Short --> Push{code > 0}
+    Full --> Push
+    Push -- yes --> Shift[shift d into dist_cache]
+    Push -- no --> Copy
+    Shift --> Copy
+```
+
+Dictionary overloads are absent. Parallel Large Window configuration returns a
+typed configuration error.
 
 ## Completion, cancellation, and reuse
 
@@ -386,6 +417,11 @@ and serial C/Rust measurements; those policies are labeled separately.
   A running codec call or blocking source read may delay cancellation.
 - Independent segments lose cross-segment history and dictionary coding, so
   their ratio and speed are distinct from serial encoding.
+- q0/q1 and q10-11 fragments still write every distance explicitly. Input
+  that repeats one distance compresses several times worse there than
+  serially: 9.3 MB of `seq 1 1300000` at q1 with 1 MiB segments gave 4.2 MB
+  instead of 1.0 MB. Greedy qualities 2-9 resume the cache as described in
+  [Recent distances](#recent-distances).
 - Source metadata checks cannot detect every in-place mutation.
 - Spool cleanup is best effort; process termination and filesystem errors can
   leave files behind.

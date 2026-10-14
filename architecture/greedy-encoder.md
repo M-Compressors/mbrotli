@@ -1220,9 +1220,12 @@ sized by the same `2 * bytes + 503` reservation the reference uses.
 ## Independent parallel fragments
 
 The parallel fragment adapter builds `GreedyEncoder<true>` once per worker.
-Its command policy emits full distance codes, while `DictionaryStats::DISABLED`
-keeps static-dictionary lookup disabled. `begin_fragment` starts headerless and
-seeds the ring and literal context with the raw prefix; the common fragment
+`DictionaryStats::DISABLED` keeps static-dictionary lookup disabled.
+`begin_fragment` starts headerless, fills the four remembered distances (and
+`saved_dist_cache`) with -16 so that no short code refers to the decoder's
+inherited cache, and seeds the ring and literal context with the raw prefix.
+Distances are then coded by the serial `compute_distance_code`, which only
+returns short codes for slots the fragment's own copies filled; the common fragment
 writer owns those prefix bytes in the output. Serial kernels use `false` and
 retain their existing behavior. See [parallel compression](parallel-compression.md)
 for reset invariants and assembly.

@@ -531,11 +531,11 @@ fn commit_match<S: Simd, R: MatchRun, const ENABLE_PREFIX: bool, const INDEPENDE
     let position = cursor.position;
     cursor.apply_random_heuristics = position + 2 * sr.len + block.heuristics_window;
     let dictionary_start = (position + block.position_offset).min(block.max_backward_limit);
-    let distance_code = if INDEPENDENT {
-        sr.distance + NUM_DISTANCE_SHORT_CODES as usize - 1
-    } else {
-        compute_distance_code(sr.distance, dictionary_start + block.gap, &state.dist_cache)
-    };
+    // An independent fragment starts with unmatchable distances in the cache
+    // (see `GreedyEncoder::begin_fragment`), so short codes only ever refer
+    // to slots its own copies filled.
+    let distance_code =
+        compute_distance_code(sr.distance, dictionary_start + block.gap, &state.dist_cache);
     if sr.distance <= dictionary_start + block.gap && distance_code > 0 {
         state.dist_cache[3] = state.dist_cache[2];
         state.dist_cache[2] = state.dist_cache[1];

@@ -107,7 +107,94 @@ impl FragmentEncoder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compressor::Quality;
+    use crate::compressor::{Compressor, Quality};
+
+    /// Decodes a complete stream with Google's decoder.
+    fn c_decode(stream: &[u8], len: usize) -> Vec<u8> {
+        let mut decoded = vec![0; len];
+        let mut size = decoded.len();
+        // SAFETY: both buffers are live, non-overlapping, and have the
+        // lengths passed to C; the output length pointer is writable.
+        let status = unsafe {
+            google_brotli_ffi::BrotliDecoderDecompress(
+                stream.len(),
+                stream.as_ptr(),
+                &mut size,
+                decoded.as_mut_ptr(),
+            )
+        };
+        assert_eq!(status, google_brotli_ffi::BROTLI_DECODER_RESULT_SUCCESS);
+        decoded.truncate(size);
+        decoded
+    }
+
+    /// `len` bytes that repeat every `period` bytes after a pseudo-random start.
+    fn periodic(period: usize, len: usize, seed: u32) -> Vec<u8> {
+        let mut state = seed;
+        let mut bytes: Vec<u8> = (0..period)
+            .map(|_| {
+                state = state.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+                (state >> 24) as u8
+            })
+            .collect();
+        for i in period..len {
+            bytes.push(bytes[i - period]);
+        }
+        bytes
+    }
+
+    #[test]
+    fn independent_parts_at_greedy_qualities_compress_like_a_serial_stream() {
+        // Lines of consecutive numbers repeat at one distance after another,
+        // which only the distance cache's short codes make cheap.
+        let input: Vec<u8> = (1..=20_000)
+            .flat_map(|n: u32| format!("{n}\n").into_bytes())
+            .collect();
+        for q in 2..=9 {
+            for backend in Backend::available() {
+                let config = EncoderConfig::default().with_quality(Quality::try_from(q).unwrap());
+                let serial = Compressor::new(config).unwrap().compress(&input).unwrap();
+                let mut encoder = FragmentEncoder::new(config, backend);
+                let mut stream = encoder.encode(&input, true).unwrap().bytes.to_vec();
+                stream.push(3);
+                assert_eq!(c_decode(&stream, input.len()), input, "q{q} {backend:?}");
+                assert!(
+                    stream.len() <= serial.len() * 21 / 20,
+                    "q{q} {backend:?}: fragment {} bytes, serial {}",
+                    stream.len(),
+                    serial.len()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn independent_parts_never_inherit_the_decoder_distance_cache() {
+        // The first part leaves distances 5, 6, 9 and 13 in the decoder's
+        // cache; the second repeats at 4, 11, 15 and 16, the cache a fresh
+        // stream starts with. A short code for those would decode against
+        // the first part's distances instead.
+        let first: Vec<u8> = [5, 6, 9, 13]
+            .into_iter()
+            .flat_map(|period| periodic(period, 2048, period as u32))
+            .collect();
+        let second: Vec<u8> = [4, 11, 15, 16]
+            .into_iter()
+            .flat_map(|period| periodic(period, 2048, 100 + period as u32))
+            .collect();
+        for q in 0..=11 {
+            for backend in Backend::available() {
+                let config = EncoderConfig::default().with_quality(Quality::try_from(q).unwrap());
+                let mut encoder = FragmentEncoder::new(config, backend);
+                let mut stream = encoder.encode(&first, true).unwrap().bytes.to_vec();
+                stream.extend_from_slice(encoder.encode(&second, false).unwrap().bytes);
+                stream.push(3);
+                let mut input = first.clone();
+                input.extend_from_slice(&second);
+                assert_eq!(c_decode(&stream, input.len()), input, "q{q} {backend:?}");
+            }
+        }
+    }
 
     #[test]
     fn independent_parts_round_trip_at_every_quality_and_backend() {
