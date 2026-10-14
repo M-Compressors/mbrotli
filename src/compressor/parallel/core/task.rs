@@ -22,12 +22,14 @@ pub(in crate::compressor::parallel) enum Job<'a> {
         input: Input<'a>,
         plan: Arc<Plan>,
     },
-    /// One streamed segment already copied into the worker's input buffer.
+    /// One streamed segment already copied into the worker's input buffer,
+    /// after the `history` bytes of input that precede it.
     Streamed {
         segment: u64,
         source: Range<u64>,
         first: bool,
         serial: bool,
+        history: usize,
     },
 }
 impl Job<'_> {
@@ -42,6 +44,8 @@ impl Job<'_> {
 struct Unit<'s> {
     segment: u64,
     source: Range<u64>,
+    /// Input right before `src`, which copies may reach back into.
+    history: &'s [u8],
     src: &'s [u8],
     first: bool,
     serial: bool,
@@ -93,11 +97,15 @@ impl Task<'_> {
                         return Err(ParallelEncodeError::Cancelled);
                     }
                     let source = plan.source_range(segment)?;
-                    let len = usize::try_from(source.end - source.start)
+                    // The history is read together with the segment.
+                    let from = plan.history_start(source.start);
+                    let history = usize::try_from(source.start - from)
                         .map_err(|_| ParallelEncodeError::SizeOverflow)?;
-                    let src = match input {
+                    let len = usize::try_from(source.end - from)
+                        .map_err(|_| ParallelEncodeError::SizeOverflow)?;
+                    let bytes = match input {
                         Input::Slice(bytes) => bytes
-                            .get(source.start as usize..source.end as usize)
+                            .get(from as usize..source.end as usize)
                             .ok_or(ParallelEncodeError::FragmentInvariant("slice range"))?,
                         Input::Source(shared) => {
                             if worker.input.len() < len {
@@ -105,7 +113,7 @@ impl Task<'_> {
                                 worker.input.resize(len, 0);
                             }
                             shared
-                                .read_exact_at(source.start, &mut worker.input[..len])
+                                .read_exact_at(from, &mut worker.input[..len])
                                 .map_err(|source| ParallelEncodeError::SourceRead {
                                     task: self.id,
                                     segment: SegmentId(segment),
@@ -114,9 +122,11 @@ impl Task<'_> {
                             &worker.input[..len]
                         }
                     };
+                    let (history, src) = bytes.split_at(history);
                     let unit = Unit {
                         segment,
                         source,
+                        history,
                         src,
                         first: segment == 0,
                         serial: plan.serial,
@@ -136,19 +146,25 @@ impl Task<'_> {
                 source,
                 first,
                 serial,
+                history,
             } => {
                 let len = usize::try_from(source.end - source.start)
                     .map_err(|_| ParallelEncodeError::SizeOverflow)?;
-                let src = worker
+                let end = history
+                    .checked_add(len)
+                    .ok_or(ParallelEncodeError::SizeOverflow)?;
+                let bytes = worker
                     .input
-                    .get(..len)
+                    .get(..end)
                     .ok_or(ParallelEncodeError::FragmentInvariant("streamed segment"))?;
+                let (history, src) = bytes.split_at(*history);
                 if self.cancelled.load(Ordering::Relaxed) {
                     return Err(ParallelEncodeError::Cancelled);
                 }
                 let unit = Unit {
                     segment: *segment,
                     source: source.clone(),
+                    history,
                     src,
                     first: *first,
                     serial: *serial,
@@ -211,7 +227,7 @@ fn encode(
             }
         }
     } else {
-        match fragment.encode(unit.src, unit.first) {
+        match fragment.encode(unit.history, unit.src, unit.first) {
             Ok(fragment) => artifact.append(fragment.bytes),
             Err(source) => {
                 return Err(ParallelEncodeError::Encode {

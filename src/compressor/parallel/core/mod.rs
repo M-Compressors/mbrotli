@@ -125,6 +125,18 @@ impl Compressor {
             }
         }
     }
+    /// Input before a segment that its part may copy from: a quarter of a
+    /// segment, within the window's backward limit. Hashing history costs
+    /// time; a quarter keeps most of the ratio a whole segment would give at
+    /// about a quarter of that cost. Only the greedy qualities take history;
+    /// the others start every part from nothing.
+    pub(in crate::compressor::parallel) fn history_len(&self) -> usize {
+        if !FragmentEncoder::takes_history(self.encoder) {
+            return 0;
+        }
+        let backward_limit = (1usize << self.encoder.window().bits()) - 16;
+        backward_limit.min(self.parallel.segment_size.get() / 4)
+    }
     /// Conservative workspace ceiling of one worker for the current settings.
     fn worker_estimate(&self) -> Result<usize, ParallelEncodeError> {
         // Deliberately conservative, including the q9 bucket payload and HQ
@@ -134,10 +146,12 @@ impl Compressor {
             2..=4 => (64 << 20, 128),
             _ => (256 << 20, 256),
         };
+        // A worker's window and match finder also hold the history.
         self.parallel
             .segment_size
             .get()
-            .checked_mul(scale)
+            .checked_add(self.history_len())
+            .and_then(|n| n.checked_mul(scale))
             .and_then(|n| n.checked_add(base))
             .ok_or(ParallelEncodeError::SizeOverflow)
     }
@@ -203,6 +217,7 @@ impl Compressor {
             tasks,
             serial,
             segment_size: segment,
+            history: if serial { 0 } else { self.history_len() as u64 },
             estimate: ParallelSizeEstimate {
                 input_bytes: len,
                 segment_count: segments,
@@ -219,9 +234,15 @@ pub(in crate::compressor::parallel) struct Plan {
     pub(in crate::compressor::parallel) tasks: usize,
     serial: bool,
     segment_size: usize,
+    /// Input before each segment that its part may copy from.
+    history: u64,
     pub(in crate::compressor::parallel) estimate: ParallelSizeEstimate,
 }
 impl Plan {
+    /// Where the history of the segment starting at `start` begins.
+    const fn history_start(&self, start: u64) -> u64 {
+        start.saturating_sub(self.history)
+    }
     fn source_range(&self, segment: u64) -> Result<Range<u64>, ParallelEncodeError> {
         let start = segment
             .checked_mul(self.segment_size as u64)

@@ -183,6 +183,10 @@ pub(in crate::compressor::parallel) struct Stream {
     flight: VecDeque<Entry>,
     /// Input of the segment being gathered.
     filling: Vec<u8>,
+    /// The last `history_len` bytes of input before `filling`, which the
+    /// next part may copy from.
+    history: Vec<u8>,
+    history_len: usize,
     segment_size: usize,
     minimum_parallel_size: u64,
     next_segment: u64,
@@ -202,17 +206,21 @@ impl Stream {
     ) -> Result<(Self, QueueHandle), ParallelEncodeError> {
         let window = window.get();
         let segment_size = parent.parallel.segment_size.get();
+        let history_len = parent.history_len();
         if let Some(limit) = parent.parallel.aggregate_memory_limit {
-            // Per part: a worker, its staged output and input, plus the
-            // filling buffer and what the parent already retains.
+            // Per part: a worker, its staged output and input with history,
+            // plus the filling and history buffers and what the parent
+            // already retains.
             let staged = segment_size
                 .checked_mul(3)
+                .and_then(|n| n.checked_add(history_len))
                 .and_then(|n| n.checked_add(1024 + 4096));
             let required = parent
                 .worker_estimate()?
                 .checked_add(staged.ok_or(ParallelEncodeError::SizeOverflow)?)
                 .and_then(|n| n.checked_mul(window))
                 .and_then(|n| n.checked_add(segment_size))
+                .and_then(|n| n.checked_add(history_len))
                 .and_then(|n| n.checked_add(parent.retained_bytes()))
                 .ok_or(ParallelEncodeError::SizeOverflow)?;
             if required > limit {
@@ -237,6 +245,8 @@ impl Stream {
             window,
             flight: VecDeque::new(),
             filling: Vec::new(),
+            history: Vec::new(),
+            history_len,
             segment_size,
             minimum_parallel_size: parent.parallel.minimum_parallel_size,
             next_segment: 0,
@@ -547,8 +557,19 @@ impl Stream {
             Some(worker) => worker,
             None => Worker::new(parent.encoder, parent.backend)?,
         };
+        // The worker gets the history, then the segment. A serial part is
+        // the whole input, so nothing precedes it.
+        let history = if serial { 0 } else { self.history.len() };
+        worker.input.clear();
+        worker
+            .input
+            .try_reserve_exact(history + self.filling.len())?;
+        self.history
+            .try_reserve_exact(self.history_len.saturating_sub(self.history.len()))?;
         self.free.pop();
-        mem::swap(&mut worker.input, &mut self.filling);
+        worker.input.extend_from_slice(&self.history[..history]);
+        worker.input.extend_from_slice(&self.filling);
+        self.advance_history();
         self.filling.clear();
         let segment = self.next_segment;
         let first = !self.fragments;
@@ -568,6 +589,7 @@ impl Stream {
                 source,
                 first,
                 serial,
+                history,
             },
             worker: Some(worker),
             artifact: Some(artifact),
@@ -575,6 +597,22 @@ impl Stream {
             sender: Some(self.sender.clone()),
             cancelled: Arc::clone(&self.cancelled),
         }))
+    }
+
+    /// Moves the history on past `filling`: it keeps the last `history_len`
+    /// bytes of the input so far. Its capacity is already reserved.
+    fn advance_history(&mut self) {
+        let keep = self.history_len;
+        let filling = self.filling.len();
+        if filling >= keep {
+            self.history.clear();
+            self.history
+                .extend_from_slice(&self.filling[filling - keep..]);
+        } else {
+            let excess = (self.history.len() + filling).saturating_sub(keep);
+            self.history.drain(..excess);
+            self.history.extend_from_slice(&self.filling);
+        }
     }
 
     /// Queues the last part and the stream end, choosing the batch's serial

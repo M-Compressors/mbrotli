@@ -732,3 +732,47 @@ fn session_types_are_sendable_and_debuggable() {
     assert!(format!("{session:?}").contains("ParallelEncoderSessionOwned"));
     assert_eq!(format!("{:?}", ParallelEncoderStatus::Pending), "Pending");
 }
+
+#[test]
+fn flushed_short_segments_still_copy_from_the_input_before_them() {
+    // A flush every 3000 bytes cuts segments far shorter than the 16 KiB
+    // history, which is then gathered from several of them.
+    let block = support::Rng::new(9).bytes(8 << 10, 256);
+    let input: Vec<u8> = block.iter().copied().cycle().take(4 * SEGMENT).collect();
+    let mut c = compressor(6, 0);
+    let mut compressed = Vec::new();
+    std::thread::scope(|scope| {
+        let (mut session, queue) = c.start(window(2)).unwrap();
+        scope.spawn(move || queue.into_iter().for_each(|task| task.run()));
+        let mut output = vec![0; 4096];
+        let mut chunks = input.chunks(3000).peekable();
+        while let Some(chunk) = chunks.next() {
+            let operation = if chunks.peek().is_some() {
+                Operation::Flush
+            } else {
+                Operation::Finish
+            };
+            let mut rest = chunk;
+            loop {
+                let progress = session.process(rest, &mut output, operation).unwrap();
+                rest = &rest[progress.consumed..];
+                compressed.extend_from_slice(&output[..progress.produced]);
+                match progress.status {
+                    ParallelEncoderStatus::NeedsInput | ParallelEncoderStatus::Finished => break,
+                    ParallelEncoderStatus::Pending => session.wait().unwrap(),
+                    ParallelEncoderStatus::NeedsOutput => {}
+                }
+            }
+        }
+    });
+    assert_eq!(
+        support::c_decompress(&compressed, input.len()).unwrap(),
+        input
+    );
+    // Spelling every segment out would take the whole input again.
+    assert!(
+        compressed.len() < input.len() / 8,
+        "{} bytes",
+        compressed.len()
+    );
+}

@@ -46,6 +46,7 @@ graph TD
     Stream --> Slots[completion Slots + mpsc ID channel]
     Stream --> Flight[flight: VecDeque Entry in input order]
     Stream --> Filling[filling segment buffer]
+    Stream --> History[history: last history_len bytes before filling]
     Queue --> Task[core::Task with Job::Streamed]
     Task --> Worker[Worker: FragmentEncoder, serial Compressor, input buffer]
     Task --> Slots
@@ -64,8 +65,9 @@ and `OwnedStream::into_parent` run the same `release` path. `Stream`'s own
 
 - `Job::Planned { range, input, plan }` encodes a batch task's contiguous
   segments read from its slice or source.
-- `Job::Streamed { segment, source, first, serial }` encodes one segment that
-  the session has already moved into the worker's input buffer.
+- `Job::Streamed { segment, source, first, serial, history }` encodes one
+  segment that the session has already copied into the worker's input buffer,
+  after the `history` bytes of input that precede it.
 
 Both kinds share `Task::run` (unwind capture, cancellation checks, single
 publication into a slot) and one `encode` helper that writes either a fragment
@@ -91,7 +93,8 @@ sequenceDiagram
     Session->>Caller: drain finished parts in input order
     loop while input remains and the window has a free slot
         Session->>Session: copy into filling until segment_size
-        Session->>Session: swap filling with a worker input buffer
+        Session->>Session: worker input = history + filling
+        Session->>Session: history = last history_len bytes of input so far
         Session->>Queue: push Task(Job::Streamed)
     end
     Session-->>Caller: ParallelProgress (Pending if input left or Flush/Finish waits)
@@ -103,9 +106,18 @@ sequenceDiagram
     Session->>Session: recv one ID, then collect the rest
 ```
 
-Input is copied once, into `filling`. Dispatch swaps `filling` with the worker's
-`input` buffer, so the session keeps the worker's previous allocation and the
-task owns the segment without another copy. Output is copied once from a
+Input is copied into `filling`, then at dispatch once more into the worker's
+`input` buffer, after the session's `history`: the last
+`Compressor::history_len` bytes of input before the segment (a quarter of a
+segment within the window's backward limit at qualities 2-9, nothing
+otherwise; see [parallel compression](parallel-compression.md#history)).
+The history then moves on to the input's last `history_len` bytes, so after a
+`Flush` cut short segments it is gathered from several of them. A serial part
+is the whole input and takes no history. Both buffers are reserved before the
+part takes a completion slot; a failed reservation fails the stream with
+`Allocation`. The
+batch reads the same bytes before each segment, so a stream without flushes
+produces the batch's bytes. Output is copied once from a
 finished part into the caller's slice; a part may take several calls.
 
 `Stream::process` and `drain` are generic over a private `Sink` trait, so the
@@ -123,10 +135,11 @@ delivered. Workers come from the parent's idle reservoir or are created, and
 return to it on completion, so a session creates at most `window` workers.
 When the window is full and `filling` is full, `process` stops consuming input
 and reports `Pending`. Memory is therefore bounded by `window` parts (worker,
-input and staged output each) plus the filling buffer.
+input with history and staged output each) plus the filling and history
+buffers.
 
 With an aggregate memory limit configured, `start` checks
-`window * (worker estimate + 3 * segment + 5 KiB) + segment + retained bytes`
+`window * (worker estimate + 3 * segment + history + 5 KiB) + segment + history + retained bytes`
 and returns `WorkerMemoryLimit` or `SizeOverflow` before creating anything. The
 worker estimate is the batch planner's conservative per-quality ceiling.
 

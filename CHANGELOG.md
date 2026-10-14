@@ -1,5 +1,26 @@
 # Changelog
 
+## [v0.5.14](https://github.com/M-Compressors/mbrotli/releases/tag/v0.5.14) - 2026-10-14
+
+- Parallel segments at qualities 2-9 copy from the input before them. Each
+  segment's part takes the last quarter of a segment before it, within the
+  window's backward limit, as history it has already emitted, the way brotli
+  1.0's `BrotliEncoderSetCustomDictionary` primed an encoder: the bytes fill
+  the window and match finder, nothing is written for them, and the decoder,
+  which has decoded the parts before, holds them. Before, every segment started
+  from nothing. Batches read the history with each segment; streams keep it
+  across parts, so after a `Flush` it may come from several short ones. With
+  1 MiB segments (one task, best of 7, Apple M5 Pro), alice29.txt repeated to
+  4 MiB is 51,261 bytes at q6 (its segments compressed separately: 203,708);
+  `seq 1 1300000` at q6 with a 22-bit window 376,734 bytes instead of 390,766;
+  three copies of `/usr/share/dict/words` and mixed binary input 0.2-0.6%
+  smaller. The
+  hashing costs time: q9 with a 22-bit window took 11-12% longer on `seq` and
+  mixed input, q6 2-9%; repetitive text got faster. Qualities 0-1 and 10-11 are
+  unchanged. Parallel output at qualities 2-9 changes and still decodes with
+  Google's decoder, checked on batches and on streams flushed at random points.
+  Serial output is unchanged.
+
 ## [v0.5.13](https://github.com/M-Compressors/mbrotli/releases/tag/v0.5.13) - 2026-10-14
 
 - Parallel segments at qualities 2-9 use the short distance codes again. An

@@ -32,6 +32,12 @@ impl FragmentEncoder {
         }
     }
 
+    /// Whether parts at `config`'s quality use history before them: only
+    /// the greedy encoder can take it.
+    pub(crate) fn takes_history(config: EncoderConfig) -> bool {
+        (2..=9).contains(&config.quality().get())
+    }
+
     pub(crate) fn retained_bytes(&self) -> usize {
         self.bytes.capacity()
             + self
@@ -41,22 +47,40 @@ impl FragmentEncoder {
     }
 
     #[cfg_attr(all(feature = "hotpath", not(feature = "no_std")), hotpath::measure)]
-    pub(crate) fn encode(&mut self, src: &[u8], first: bool) -> BrotliResult<AlignedFragment<'_>> {
+    /// Encodes `src` as one part. `history` is the input right before it,
+    /// which the decoder holds by the time it reaches this part; the greedy
+    /// qualities (2-9) let copies reach back into it, the others ignore it.
+    pub(crate) fn encode(
+        &mut self,
+        history: &[u8],
+        src: &[u8],
+        first: bool,
+    ) -> BrotliResult<AlignedFragment<'_>> {
         if src.is_empty() {
             return Err(BrotliCompressError::BufferOverflow);
         }
-        let params = self.config.lower(Some(src.len()));
+        let history = if Self::takes_history(self.config) {
+            history
+        } else {
+            &[]
+        };
+        // The match finder is sized for every position it will store.
+        let size_hint = history.len() + src.len();
+        let params = self.config.lower(Some(size_hint));
         if !self
             .encoder
             .as_mut()
-            .is_some_and(|e| e.reset_for(&params, src.len()))
+            .is_some_and(|e| e.reset_for(&params, size_hint))
         {
-            self.encoder = Some(Encoder::new(self.backend, &params, src.len())?);
+            self.encoder = Some(Encoder::new(self.backend, &params, size_hint)?);
         }
         let encoder = self
             .encoder
             .as_mut()
             .ok_or(BrotliCompressError::BufferOverflow)?;
+        if let Encoder::Greedy(e) = encoder {
+            e.prepend_history(history);
+        }
         let prefix = &src[..src.len().min(2)];
         match encoder {
             Encoder::Fast(e) => e.begin_fragment(prefix)?,
@@ -155,7 +179,7 @@ mod tests {
                 let config = EncoderConfig::default().with_quality(Quality::try_from(q).unwrap());
                 let serial = Compressor::new(config).unwrap().compress(&input).unwrap();
                 let mut encoder = FragmentEncoder::new(config, backend);
-                let mut stream = encoder.encode(&input, true).unwrap().bytes.to_vec();
+                let mut stream = encoder.encode(&[], &input, true).unwrap().bytes.to_vec();
                 stream.push(3);
                 assert_eq!(c_decode(&stream, input.len()), input, "q{q} {backend:?}");
                 assert!(
@@ -186,8 +210,8 @@ mod tests {
             for backend in Backend::available() {
                 let config = EncoderConfig::default().with_quality(Quality::try_from(q).unwrap());
                 let mut encoder = FragmentEncoder::new(config, backend);
-                let mut stream = encoder.encode(&first, true).unwrap().bytes.to_vec();
-                stream.extend_from_slice(encoder.encode(&second, false).unwrap().bytes);
+                let mut stream = encoder.encode(&[], &first, true).unwrap().bytes.to_vec();
+                stream.extend_from_slice(encoder.encode(&[], &second, false).unwrap().bytes);
                 stream.push(3);
                 let mut input = first.clone();
                 input.extend_from_slice(&second);
@@ -214,7 +238,7 @@ mod tests {
                 .enumerate()
                 {
                     input.extend_from_slice(part);
-                    output.extend_from_slice(encoder.encode(part, i == 0).unwrap().bytes);
+                    output.extend_from_slice(encoder.encode(&[], part, i == 0).unwrap().bytes);
                 }
                 output.push(3);
                 let mut decoded = vec![0; input.len()];
@@ -237,7 +261,65 @@ mod tests {
                 assert_eq!(size, input.len());
                 assert_eq!(decoded, input, "q{q} {backend:?}");
                 assert!(encoder.retained_bytes() > 0);
-                assert!(encoder.encode(&[], false).is_err());
+                assert!(encoder.encode(&[], &[], false).is_err());
+            }
+        }
+    }
+
+    /// A stream of `parts`, each encoded with the input before it as history.
+    fn stream_with_history(encoder: &mut FragmentEncoder, parts: &[&[u8]]) -> (Vec<u8>, Vec<u8>) {
+        let mut input = Vec::new();
+        let mut stream = Vec::new();
+        for (i, part) in parts.iter().enumerate() {
+            stream.extend_from_slice(encoder.encode(&input, part, i == 0).unwrap().bytes);
+            input.extend_from_slice(part);
+        }
+        stream.push(3);
+        (stream, input)
+    }
+
+    #[test]
+    fn independent_parts_copy_from_the_history_before_them() {
+        let block = periodic(4096, 4096, 7);
+        let repeated = block.repeat(4);
+        for q in 0..=11 {
+            for backend in Backend::available() {
+                let config = EncoderConfig::default().with_quality(Quality::try_from(q).unwrap());
+                let mut encoder = FragmentEncoder::new(config, backend);
+                // One- and two-byte histories leave nothing whole to hash.
+                for history in [&block[..1], &block[..2], &block[..]] {
+                    let (stream, input) = stream_with_history(&mut encoder, &[history, &repeated]);
+                    assert_eq!(c_decode(&stream, input.len()), input, "q{q} {backend:?}");
+                }
+                let first = encoder.encode(&[], &block, true).unwrap().bytes.len();
+                let second = encoder
+                    .encode(&block, &repeated, false)
+                    .unwrap()
+                    .bytes
+                    .len();
+                if FragmentEncoder::takes_history(config) {
+                    // Copies of the history, not the block spelled out again.
+                    assert!(second < first / 4, "q{q} {backend:?}: {second} of {first}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn history_beyond_the_backward_limit_is_dropped() {
+        // A 64 KiB window reaches 65,520 bytes back. The second part repeats
+        // the start of a 100,000-byte history, which lies further away.
+        let history = periodic(100_000, 100_000, 3);
+        let mut part = history[..5000].to_vec();
+        part.extend_from_slice(&history[95_000..]);
+        for q in 2..=9 {
+            for backend in Backend::available() {
+                let config = EncoderConfig::default()
+                    .with_quality(Quality::try_from(q).unwrap())
+                    .with_window(crate::Window::standard(16).unwrap());
+                let mut encoder = FragmentEncoder::new(config, backend);
+                let (stream, input) = stream_with_history(&mut encoder, &[&history, &part]);
+                assert_eq!(c_decode(&stream, input.len()), input, "q{q} {backend:?}");
             }
         }
     }

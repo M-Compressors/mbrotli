@@ -162,12 +162,13 @@ Segment size defaults to 4 MiB and accepts 64 KiB–16 MiB. Effective task count
 is at most the number of segments. For fixed input and segment settings, task
 grouping and completion order do not change output bytes.
 
-Independent segments do not share match history. At qualities 2-9 each
-segment otherwise codes distances as a serial stream does; at qualities 0-1 and
-10-11 it writes every distance explicitly, which costs most on input that
-repeats one distance, such as tables and logs. Their compression ratio can be
-worse than serial compression, especially for repetition across segment
-boundaries. Compare both output size and elapsed time.
+Segments are encoded independently. At qualities 2-9 a segment may copy from
+the input before it, up to a quarter of a segment within the window, and codes
+distances as a serial stream does; at qualities 0-1 and 10-11 it starts from
+nothing and writes every distance explicitly, which costs most on input that
+repeats one distance, such as tables and logs. The compression ratio can be
+worse than serial compression, especially for repetition further back than that
+history. Compare both output size and elapsed time.
 
 Empty input uses serial encoding without tasks. A nonempty input below the
 default 8 MiB parallel threshold uses a single serial task only when it also

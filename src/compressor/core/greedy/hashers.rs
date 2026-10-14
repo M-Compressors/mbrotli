@@ -3580,6 +3580,21 @@ impl MatchFinder {
         with_matcher!(self, |matcher| matcher
             .stitch_to_previous_block(num_bytes, position, data, mask));
     }
+
+    /// Records every position of the first `len` window bytes whose
+    /// lookahead lies inside them (`HasherPrependCustomDictionary`).
+    ///
+    /// The last positions, whose lookahead reaches past `len`, are left to
+    /// [`MatchFinder::stitch_to_previous_block`] once the next block arrives.
+    #[cfg(not(feature = "no_std"))]
+    pub(crate) fn prepend(&mut self, data: &[u8], mask: usize, len: usize) {
+        fn store_prefix<M: Matcher>(matcher: &mut M, data: &[u8], mask: usize, len: usize) {
+            if len >= M::STORE_LOOKAHEAD {
+                matcher.store_range(data, mask, 0, len - M::STORE_LOOKAHEAD + 1);
+            }
+        }
+        with_matcher!(self, |matcher| store_prefix(matcher, data, mask, len));
+    }
 }
 
 #[cfg(test)]

@@ -893,3 +893,26 @@ fn q1_two_byte_copy_keeps_canonical_huffman_order_with_other_short_copies() {
         input
     );
 }
+
+#[test]
+fn later_segments_copy_from_the_input_before_them() {
+    // An 8 KiB random block over and over: every segment after the first
+    // repeats the bytes right before it. The 16 KiB history of a 64 KiB
+    // segment reaches them; without it each segment spells the block out.
+    let block = support::Rng::new(5).bytes(8 << 10, 256);
+    let input: Vec<u8> = block
+        .iter()
+        .copied()
+        .cycle()
+        .take(16 * (64 << 10))
+        .collect();
+    for q in 2..=9 {
+        let out = inline(&mut compressor(q), &input, 4);
+        assert_eq!(
+            support::c_decompress(&out, input.len()).unwrap(),
+            input,
+            "q{q}"
+        );
+        assert!(out.len() < 2 * block.len(), "q{q}: {} bytes", out.len());
+    }
+}

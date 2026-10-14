@@ -118,6 +118,38 @@ impl<const INDEPENDENT: bool> GreedyEncoder<INDEPENDENT> {
         Ok(())
     }
 
+    /// Makes `history` the bytes before the next input, as if this stream had
+    /// already written them out (`BrotliEncoderSetCustomDictionary` of brotli
+    /// 1.0): they fill the window and the match finder, so copies may reach
+    /// back into them, but nothing is emitted for them.
+    ///
+    /// Only the last `max_backward_limit` bytes are kept. Call it on a fresh
+    /// encoder, before [`Self::begin_fragment`]; the decoder must already hold
+    /// the same bytes right before the fragment, as it does for the preceding
+    /// segment of one stream.
+    #[cfg(not(feature = "no_std"))]
+    pub(crate) fn prepend_history(&mut self, history: &[u8]) {
+        debug_assert!(self.input_pos == 0);
+        let limit = self.params.max_backward_limit();
+        let history = &history[history.len().saturating_sub(limit)..];
+        let Some((&last, rest)) = history.split_last() else {
+            return;
+        };
+        self.copy_input_to_ring_buffer(history);
+        self.last_flush_pos = self.input_pos;
+        self.last_processed_pos = self.input_pos;
+        self.prev_byte = last;
+        if let Some(&second_last) = rest.last() {
+            self.prev_byte2 = second_last;
+        }
+        self.prepare_matcher(0, history.len(), false);
+        self.matcher.prepend(
+            self.ringbuffer.buffer(),
+            self.ringbuffer.mask(),
+            history.len(),
+        );
+    }
+
     /// Confirms the flush left no pending partial byte.
     #[cfg(not(feature = "no_std"))]
     pub(crate) const fn fragment_aligned(&self) -> bool {

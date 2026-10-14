@@ -107,7 +107,7 @@ Requires **Rust 1.89 or later**. Add it to your project:
 
 ```toml
 [dependencies]
-mbrotli = "0.5.13"
+mbrotli = "0.5.14"
 ```
 
 ```rust
@@ -414,7 +414,7 @@ features to select one codec or use `no_std` with `alloc`. For an alloc-backed d
 
 ```toml
 [dependencies]
-mbrotli = { version = "0.5.13", default-features = false, features = ["no_std", "decompression"] }
+mbrotli = { version = "0.5.14", default-features = false, features = ["no_std", "decompression"] }
 ```
 
 Add `"compression"` for both codecs, or use `"std"` instead of `"no_std"` for standard

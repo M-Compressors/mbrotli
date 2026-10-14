@@ -3,7 +3,9 @@
 This subsystem is omitted when `no_std` is enabled. See
 [feature boundaries](no-std.md) for the alloc-backed API that remains available.
 
-The caller schedules tasks that encode fixed independent segments. Input that
+The caller schedules tasks that encode fixed segments, each independently of
+the others' encoding: at qualities 2-9 a segment may copy from the input before
+it (its [history](#history)), which the decoder holds by then. Input that
 arrives in chunks uses the [streaming session](parallel-stream.md) over the
 same tasks and workers. Private
 fragment encoders produce aligned non-final blocks, and the batch assembles them
@@ -81,7 +83,8 @@ fallback to one segment prevents user-selected thresholds from causing a
 whole-file allocation. Setting the threshold to zero forces independent parts.
 
 Borrowed slices go directly into codec calls. Detached sources fill one retained
-segment buffer per task. `FileSource` retains an open regular file and uses Unix
+segment buffer per task, reading each segment's history together with it
+(`Plan::history_start`), so a source read covers `history + segment` bytes. `FileSource` retains an open regular file and uses Unix
 `read_at` or Windows `seek_read`, retrying interruptions and short reads. Other
 platforms return `Unsupported` for positional reads. File handles are never used
 with a shared seek cursor. Metadata snapshots include length and modification
@@ -89,6 +92,8 @@ time, plus device, inode and change time on Unix. Metadata checks cannot prove
 immutability against every in-place write; callers can provide stronger immutable
 snapshot sources. Arbitrary blocking source calls cannot be forcibly interrupted.
 
+The active-worker estimate scales `segment + history` rather than the segment
+alone, since a worker's window and match finder hold both.
 Planning checks staged-byte bounds, descriptor sizes, active-worker estimates,
 completion metadata, assembly scratch and currently retained workspaces before
 returning tasks. Staged payload allowance is `2 * input + 1024 * max(segments,1)`.
@@ -188,7 +193,9 @@ the preferred file adapter when concurrent input reads are desired.
 Format plan version 1 uses uniform two-byte raw prefixes. Qualities 0-1 and
 10-11 write explicit distances throughout every segment; qualities 2-9 write a
 short distance code only for a cache slot the segment's own copies filled (see
-[Recent distances](#recent-distances)). It follows RFC 7932 sections 11.2 and 11.3. Every part
+[Recent distances](#recent-distances)), and copies from the segment's
+[history](#history) as from earlier input of the same stream. It follows RFC
+7932 sections 11.2 and 11.3. Every part
 starts at a byte boundary (except the first part also owns the window header),
 contains only non-final data blocks, and ends aligned. Alignment metadata uses
 the existing flush writer's when-needed empty metadata blocks. The assembler
@@ -201,8 +208,10 @@ sequenceDiagram
     participant Fragment as FragmentEncoder
     participant Codec as retained Encoder
     participant Artifact
-    Task->>Fragment: encode(segment bytes, first role)
+    Task->>Fragment: encode(history, segment bytes, first role)
     Fragment->>Codec: reset semantic state, preserve allocations
+    Fragment->>Codec: prepend_history(history) (greedy only)
+    Note over Codec: history fills the window and match finder, emits nothing
     Fragment->>Codec: begin_fragment(prefix)
     Note over Codec: greedy fills its four remembered distances with -16
     Note over Codec: greedy/HQ seed local ring and prior bytes via two-byte flush
@@ -219,7 +228,7 @@ sequenceDiagram
 | State | Reset/ownership rule |
 | --- | --- |
 | Header and pending bits | Common prefix writer owns the sole window header; body codecs start headerless. Every successful fragment proves zero pending bits. |
-| Ring and input coordinates | `reset_for` resets local positions and history; no prior segment is present. Greedy/HQ seed only the two current prefix bytes. |
+| Ring and input coordinates | `reset_for` resets local positions and history. Greedy then takes the segment's history as already-emitted input (positions, window, prior bytes and match finder); HQ and fast codecs start with nothing before the segment. Greedy/HQ then seed the two current prefix bytes. |
 | Greedy matcher | Existing dirty/partial-prepare protocol clears logical candidates while retaining allocations. Dictionary statistics use the permanently disabled sentinel. |
 | HQ matcher/DP | Existing tree preparation resets roots; all-match and Zopfli arenas are rebuilt from this segment. Static-dictionary match distance is outside the representable range. |
 | Recent distances | Inherited decoder cache values are never consulted. Greedy (q2-9) starts each fragment with -16 in all four remembered slots and encodes distances with the serial `compute_distance_code`, so short codes appear once the fragment's own copies have filled a slot. HQ excludes cached-distance DP edges and writes explicit distances; q0/q1 write explicit distances. |
@@ -256,6 +265,45 @@ flowchart TD
     Push -- no --> Copy
     Shift --> Copy
 ```
+
+### History
+
+A part is decoded after every part before it, so the decoder already holds the
+input before a segment. Greedy fragments let copies reach into the last
+`Compressor::history_len` bytes of it: a quarter of a segment, capped at the
+window's backward limit `(1 << lgwin) - 16`, and nothing at the other qualities.
+`GreedyEncoder::prepend_history` mirrors brotli 1.0's
+`BrotliEncoderSetCustomDictionary`: it trims the history to the backward limit,
+copies it into the ring buffer, sets `input_pos`, `last_processed_pos` and
+`last_flush_pos` past it and the prior bytes to its last two, prepares the match
+finder for a stream that is not one-shot, and stores every history position
+whose lookahead lies inside it (`MatchFinder::prepend`,
+`HasherPrependCustomDictionary`); the boundary positions are stitched when the
+segment arrives, as between any two blocks. No meta-block is written for the
+history.
+
+Every part shares the configured `lgwin`, which the first part's header
+declares, and the encoder never emits a distance beyond
+`min(position, backward limit)`, its position counting the history. The
+decoder's position is at least as far, so such a copy is an ordinary backward
+reference there, never a static-dictionary one. The size hint covers history
+and segment, so the match finder is sized for every position it stores.
+
+```mermaid
+flowchart LR
+    Input[input before the segment] --> Tail["last history_len bytes<br/>(batch: Plan::history_start,<br/>stream: history buffer)"]
+    Tail --> Prepend["prepend_history:<br/>ring, positions, prior bytes,<br/>prepare + prepend match finder"]
+    Prepend --> Begin["begin_fragment:<br/>header off, -16 distances,<br/>two-byte prefix"]
+    Begin --> Body["segment body:<br/>copies reach into history"]
+```
+
+A quarter of a segment keeps most of the ratio a whole segment of history gives
+at about a quarter of the hashing time. With 1 MiB segments (one task, best of 7,
+Apple M5 Pro): alice29.txt repeated to 4 MiB is 51,261 bytes at q6 with either a
+19- or a 22-bit window, against 203,708 for its segments compressed separately;
+for `seq`, three copies of `/usr/share/dict/words` and a mixed binary input the
+gain was 0-6%, and q9 with a 22-bit window took 11-12% longer than the separate
+segments (a whole segment of history: up to 45%).
 
 Dictionary overloads are absent. Parallel Large Window configuration returns a
 typed configuration error.
@@ -415,7 +463,9 @@ and serial C/Rust measurements; those policies are labeled separately.
 
 - Cancellation occurs around segment encoding, not inside q11 optimization.
   A running codec call or blocking source read may delay cancellation.
-- Independent segments lose cross-segment history and dictionary coding, so
+- Segments lose dictionary coding and any history beyond a quarter of a
+  segment (repetition further back, such as a file repeated after 2.4 MB, is
+  not found), and at qualities 0-1 and 10-11 they take no history at all, so
   their ratio and speed are distinct from serial encoding.
 - q0/q1 and q10-11 fragments still write every distance explicitly. Input
   that repeats one distance compresses several times worse there than
