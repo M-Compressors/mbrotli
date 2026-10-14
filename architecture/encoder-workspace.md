@@ -320,9 +320,9 @@ Compact one-shot streams instead link their stores into one chain. Promotion
 from compact to sparse reuses the larger word buffer; promotion from sparse to
 dense flattens the larger position and tag pools and releases the unused storage.
 A prepared sparse or dense table remains in use even for subsequent tiny streams. The dense layout, taken when the matcher's size hint is at
-least the shape's dense limit (a thirty-second of the table for the tagged
-q5 shape and a sixteenth for q6; for deep q7–q9 shapes an eighth on the
-first stream and a sixty-fourth once the matcher is reused), or switched to
+least the shape's dense limit (on the first stream a thirty-second of the
+table for the tagged q5 shape, a sixteenth for q6 and an eighth for deep
+q7–q9 shapes; a sixty-fourth for every shape once the matcher is reused), or switched to
 mid-stream by a sparse stream whose store rate repays the clear (a fresh
 table the live buckets are copied into), preallocates every
 block at `key << block_bits`, zeroed once per matcher, and clears only its
@@ -330,7 +330,7 @@ block at `key << block_bits`, zeroed once per matcher, and clears only its
 validity; a block's stale bytes are never read. Preparation reports
 `Sweep::SelfCleaning`, so a reset neither replays a sweep nor marks the
 table dirty. A reused compressor may therefore allocate once more on its
-second stream — the deep dense table — and nothing after that; the
+second stream — the dense table — and nothing after that; the
 allocator-instrumented tests warm a compressor twice before they count.
 The quick matchers' `SmallSlots` map is sized for the input at preparation,
 even on a fresh encoder, so it never rehashes during the stream. `reset`

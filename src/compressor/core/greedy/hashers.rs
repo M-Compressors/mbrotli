@@ -1394,23 +1394,24 @@ impl<const HASH64: bool, const BUCKETS: usize, const BLOCK: usize, const SLOTS: 
     /// quality seven measured half the reference's speed with the table and
     /// twice it without — while the on-demand layouts touch only what it
     /// stores. A matcher on its second stream has shown it is reused, so
-    /// the clear is paid once for every stream that follows; from then on a
-    /// sixty-fourth of the table is enough, because the on-demand index's
+    /// the clear is paid once for every stream that follows, and later
+    /// streams only zero the counters; from then on a sixty-fourth of the
+    /// table is enough for every shape, because the on-demand index's
     /// dependent load per bucket costs more than the whole search on a
-    /// quarter-mebibyte incompressible input at quality seven. A matcher
-    /// that already holds the table reuses it for every subsequent input.
+    /// quarter-mebibyte incompressible input at quality seven, and reused
+    /// quality six spent 1.7 times as long on 64 KiB of it on demand as with
+    /// the table. A matcher that already holds the table reuses it for every
+    /// subsequent input.
     const fn dense_limit(&self) -> usize {
         let table_bytes = BUCKETS * BLOCK * size_of::<u32>();
-        if Self::TAGGED {
-            if BLOCK <= 16 {
-                table_bytes / 32
-            } else {
-                table_bytes / 16
-            }
-        } else if self.streams == 0 {
-            table_bytes / 8
-        } else {
+        if self.streams != 0 {
             table_bytes / 64
+        } else if !Self::TAGGED {
+            table_bytes / 8
+        } else if BLOCK <= 16 {
+            table_bytes / 32
+        } else {
+            table_bytes / 16
         }
     }
 
@@ -4188,6 +4189,51 @@ mod tests {
         let mut matcher = Q7Bucket::new(1 << 16);
         layout(&mut matcher, 1 << 16, &text);
         assert_eq!(name(&matcher), "sparse");
+    }
+
+    #[test]
+    fn a_reused_tagged_shape_takes_the_dense_table_from_a_sixty_fourth() {
+        fn is_dense<const H: bool, const B: usize, const K: usize, const S: usize>(
+            matcher: &BucketMatcher<H, B, K, S>,
+        ) -> bool {
+            matches!(matcher.layout, Layout::Dense(_))
+        }
+        let mut state = 0x2545_F491u32;
+        let random: Vec<u8> = (0..1 << 16)
+            .map(|_| {
+                state ^= state << 13;
+                state ^= state >> 17;
+                state ^= state << 5;
+                state as u8
+            })
+            .collect();
+        // Quality six: incompressible 64 KiB is below the 128 KiB first-stream
+        // limit, but above the 32 KiB a reused matcher needs.
+        let mut matcher = Q6Bucket::new(1 << 16);
+        matcher.prepare(true, 1 << 16, &random, true);
+        assert!(!is_dense(&matcher));
+        matcher.prepare(true, 1 << 16, &random, true);
+        assert!(is_dense(&matcher));
+        // Below a sixty-fourth it stays on demand however often it is reused.
+        let mut short = Q6Bucket::new(20_000);
+        for _ in 0..3 {
+            short.prepare(true, 20_000, &random[..20_000], true);
+            assert!(!is_dense(&short));
+        }
+        // Repetitive input that its first block speaks for never takes it.
+        let runs = vec![b'x'; 1 << 16];
+        let mut repetitive = Q6Bucket::new(1 << 16);
+        for _ in 0..3 {
+            repetitive.prepare(true, 1 << 16, &runs, true);
+            assert!(!is_dense(&repetitive));
+        }
+        // Quality five: 24 KiB is below its 32 KiB first-stream limit and
+        // above the 16 KiB a reused matcher needs.
+        let mut q5 = BucketMatcher::<false, { 1 << 14 }, 16, { (1 << 14) * 16 }>::new(24 << 10);
+        q5.prepare(true, 24 << 10, &random[..24 << 10], true);
+        assert!(!is_dense(&q5));
+        q5.prepare(true, 24 << 10, &random[..24 << 10], true);
+        assert!(is_dense(&q5));
     }
 
     /// The shape quality seven resolves to.

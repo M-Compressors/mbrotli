@@ -303,7 +303,7 @@ what `prepare` is told about it:
 | --- | --- | --- | --- | --- |
 | Compact | one-shot input of at most 1024 bytes while the matcher is still compact | `KeyMap`, sized two entries per input byte, probed once per position: counter and chain head per bucket | one chain: `Vec<u64>` of `position | next << 32`, one node pushed per store in front of its bucket's previous node; a search walks the newest `BLOCK` nodes, the order a block scan takes | fill a map of at most 16 KiB |
 | Sparse | a known input below the dense limit; an input of unknown length on a deep shape; unless the dense table already exists | a boxed `[u64; BUCKETS]`: generation stamp, block index with a starter flag, counter | typed pools: `Vec<[u32; 4]>` starters that grow into `Vec<[u32; BLOCK]>` full blocks on their fifth store, tags alongside for tagged shapes | bump the generation |
-| Dense | on a tagged shape that knows its input, the first block samples as ordinary data and the input is at least a hundred-and-twenty-eighth of the table (8 KiB at q5, 16 KiB at q6), or it does not sample as repetitive data covering half the input and the size hint reaches the dense limit — a thirty-second of the table for q5 and a sixteenth for q6 (32 KiB and 128 KiB of input) (see [Sampling the first block](#sampling-the-first-block)); for deep q7–q9 shapes an eighth of it on the matcher's first stream (1, 2 and 4 MiB) and a sixty-fourth from its second stream on (256 KiB, 256 KiB and 512 KiB) — or the length is unknown on a tagged shape, or the matcher already holds the dense table; a sparse stream also switches mid-stream at a checkpoint once its store rate repays the clear (see [Mid-stream promotion](#mid-stream-promotion)) | `[u16; BUCKETS]` counters | one flat `Box<[u32; SLOTS]>` with `SLOTS = BUCKETS * BLOCK`, viewed as `[[u32; BLOCK]; BUCKETS]` for a run, zeroed once per matcher | zero the counters |
+| Dense | on a tagged shape that knows its input, the first block samples as ordinary data and the input is at least a hundred-and-twenty-eighth of the table (8 KiB at q5, 16 KiB at q6), or it does not sample as repetitive data covering half the input and the size hint reaches the dense limit — on the matcher's first stream a thirty-second of the table for q5 and a sixteenth for q6 (32 KiB and 128 KiB of input with the 14-bit `H5` shapes), a sixty-fourth from its second stream on (16 KiB and 32 KiB) (see [Sampling the first block](#sampling-the-first-block)); for deep q7–q9 shapes an eighth of it on the matcher's first stream (1, 2 and 4 MiB) and a sixty-fourth from its second stream on (256 KiB, 256 KiB and 512 KiB) — or the length is unknown on a tagged shape, or the matcher already holds the dense table; a sparse stream also switches mid-stream at a checkpoint once its store rate repays the clear (see [Mid-stream promotion](#mid-stream-promotion)) | `[u16; BUCKETS]` counters | one flat `Box<[u32; SLOTS]>` with `SLOTS = BUCKETS * BLOCK`, viewed as `[[u32; BLOCK]; BUCKETS]` for a run, zeroed once per matcher | zero the counters |
 
 `BucketMatcher` owns only `Layout<BUCKETS, BLOCK, SLOTS>`, the retargetable size hint,
 and the saturating stream count. Each enum variant owns its own storage:
@@ -493,8 +493,15 @@ check exactly that.
 
 The dense decision uses the current retargetable size hint, not `prepare`'s
 `one_shot` flag. Unknown-length streams use dense storage on tagged shapes and
-on-demand layouts on deep shapes. Deep-shape thresholds also depend on whether
-the matcher has been reused. These layout choices preserve candidate order and
+on-demand layouts on deep shapes. Every shape's length threshold drops to a
+sixty-fourth of the table once the matcher has been reused: the table is then
+zeroed once and later streams only clear its counters. Reused q6 on 64 KiB of
+incompressible input measured 115 us on demand and 67 us with the table (C
+85-92 us); reused text, JSON and repetitive input were unchanged, since the
+sample already gives them the table or keeps them on demand. The cost is
+retained memory: a q6 compressor reused on such input now keeps about 3.5 MiB
+instead of 1.4 MiB, what it already kept for text of the same size. These
+layout choices preserve candidate order and
 output; allocation timing is not part of the public reuse contract.
 
 ### Sampling the first block
@@ -511,7 +518,7 @@ is known therefore samples the block `prepare` receives
 ```mermaid
 flowchart TD
     start[BucketMatcher::wants_dense] --> deep{deep shape or unknown length?}
-    deep -->|yes| length[size hint at least dense_limit]
+    deep -->|yes| length[size hint at least dense_limit: table/64 once reused]
     deep -->|no| small{input below table/128?}
     small -->|yes| sparse[on demand]
     small -->|no| sample[sample 256 eight-byte windows of the first block]

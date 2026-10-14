@@ -1,5 +1,27 @@
 # Changelog
 
+## [v0.5.12](https://github.com/M-Compressors/mbrotli/releases/tag/v0.5.12) - 2026-10-14
+
+- A reused quality 5 or 6 compressor takes the dense bucket table from its
+  second stream on once the input reaches a sixty-fourth of the table (16 and
+  32 KiB with the 14-bit shapes, 64 KiB with the 15-bit `H6` q6 shape), as
+  qualities 7-9 already did; before, incompressible and binary inputs below the
+  first-stream limit stayed on the slower on-demand layout however often the
+  compressor was reused. Output is unchanged. Measured with a scratch harness
+  (reused `Compressor`, best of 2-3 runs, one pinned core, Intel i7-13700KF,
+  WSL2, C identity checked): random 64 KiB q6 115 -> 67 us (C 85-92 us), random
+  32-64 KiB q6 0.54-0.73x the previous time, binary 16-24 KiB q5 0.88x;
+  text, JSON and repetitive input from 4 to 128 KiB within the +-4% noise.
+  Such a compressor now retains about 1-2 MiB more (q6 random 64 KiB: 1.4 ->
+  3.5 MiB, what text of the same size already retained). Cold one-shot
+  calls are unchanged. Reported in issue #5.
+- Parallel memory staging doubles a task's buffer, capped at its staged-payload
+  bound, instead of reserving each appended part exactly. Output and memory
+  accounting are unchanged; a single-segment part is still handed over without
+  spare capacity. A 256 MiB random input at q0 with 64 KiB segments and four
+  tasks took 114-119 ms instead of 143-191 ms; with 4 MiB segments the two are
+  about 4% apart. Reported in issue #5.
+
 ## [v0.5.11](https://github.com/M-Compressors/mbrotli/releases/tag/v0.5.11) - 2026-10-13
 
 - Add Apache 2.0 license

@@ -93,6 +93,12 @@ Planning checks staged-byte bounds, descriptor sizes, active-worker estimates,
 completion metadata, assembly scratch and currently retained workspaces before
 returning tasks. Staged payload allowance is `2 * input + 1024 * max(segments,1)`.
 Memory staging also charges descriptor storage to its explicit limit.
+A memory artifact reserves its first part exactly, so a single-segment task
+hands over a buffer without spare capacity, and then doubles its capacity,
+capped at the task's staged-payload bound, so the accounted bound also bounds
+its spare capacity. Reserving each part exactly reallocated on every append;
+with four tasks on 64 KiB segments of a 256 MiB input that took 143-191 ms
+against 114-119 ms doubling (4 MiB segments: about 4% apart).
 `BatchConfig::auto(tasks)` selects the same memory staging with `usize::MAX` as
 the caller ceiling. Preparation still computes checked per-task payload bounds,
 checks payload plus descriptors fits `usize`, and enforces the aggregate limit.

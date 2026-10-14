@@ -1,4 +1,4 @@
-//! Single-owner private spools and exact-capacity memory artifacts.
+//! Single-owner private spools and bounded memory artifacts.
 use super::spool::Spool;
 use super::*;
 use std::io::{self, Read, Seek, SeekFrom, Write};
@@ -48,7 +48,17 @@ impl Artifact {
             .ok_or_else(|| io::Error::other("fragment exceeded staging bound"))?;
         match &mut self.storage {
             Storage::Memory(v) => {
-                v.try_reserve_exact(bytes.len()).map_err(io::Error::other)?;
+                // Doubling, capped by the staging bound the plan accounted
+                // for: an exact reservation per segment reallocated on every
+                // append. A first append is exact, so a single segment
+                // carries no spare capacity into `into_segment`.
+                if v.capacity() - v.len() < bytes.len() {
+                    let bound = usize::try_from(self.bound).unwrap_or(usize::MAX);
+                    let needed = v.len().saturating_add(bytes.len());
+                    let target = v.len().saturating_mul(2).min(bound).max(needed);
+                    v.try_reserve_exact(target - v.len())
+                        .map_err(io::Error::other)?;
+                }
                 v.extend_from_slice(bytes);
             }
             Storage::File(f) => f.file.write_all(bytes)?,
@@ -165,6 +175,30 @@ mod tests {
             });
         }
         artifact
+    }
+
+    #[test]
+    fn memory_staging_doubles_within_its_bound() {
+        let staging = Staging::Memory(MemoryStaging::from(usize::MAX));
+        let mut artifact = Artifact::new(&staging, 10, 1000).unwrap();
+        let mut capacities = Vec::new();
+        for segment in 0..10u8 {
+            artifact.append(&[segment; 100]).unwrap();
+            let Storage::Memory(v) = &artifact.storage else {
+                panic!("memory storage")
+            };
+            assert!(v.capacity() <= 1000);
+            if capacities.last() != Some(&v.capacity()) {
+                capacities.push(v.capacity());
+            }
+        }
+        // The first append is exact; later growth doubles until the bound.
+        assert_eq!(capacities, [100, 200, 400, 800, 1000]);
+        let Storage::Memory(v) = &artifact.storage else {
+            panic!("memory storage")
+        };
+        assert!(v.chunks(100).enumerate().all(|(i, c)| c == [i as u8; 100]));
+        assert!(artifact.append(b"x").is_err());
     }
 
     #[test]
