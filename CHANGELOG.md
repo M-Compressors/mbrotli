@@ -53,13 +53,12 @@ corpus prefix):
 - **Next-position bucket prefetch at qualities 5-9.** The bucket tables
   outgrow L2 from q6 up, and the load of a bucket's newest slot was the most
   sampled instruction of the search. Each search now hints the bucket of the
-  next position, and a match the one after it, with `_mm_prefetch` called
-  through `fearless_simd::kernel!` on the baseline SSE2 token, the safe way
-  to reach the intrinsic without `unsafe`. The reference prefetches at the
-  start of each search instead; that placement measured slower on binary
-  input (q7 +2%). It is a hint only, and does nothing outside x86-64, where
-  the prefetch intrinsics are unstable. Text compresses 3-5.5% faster at
-  q5-q9, the 3.85 MB corpus 5-9%.
+  next position, and a match the one after it, with an L1 read prefetch
+  through the `branches` crate (`prefetcht0` on x86-64, `prfm pldl1keep` on
+  AArch64), which keeps the inline assembly out of this crate. The reference
+  prefetches at the start of each search instead; that placement measured
+  slower on binary input (q7 +2%). It is a hint only. Text compresses
+  3-5.5% faster at q5-q9 on x86-64, the 3.85 MB corpus 5-9%.
 - **Quality 11 replays repeated distance-cache probes.** 44-57% of the start
   positions `update_nodes` tries at a byte carry the same distance cache as
   an earlier one there, and such a start finds exactly the same copies. Their
@@ -74,7 +73,10 @@ corpus prefix):
   copy handles the last words of the table. Dictionary-heavy text decodes
   3-8% faster in instructions; a test checks all 121 transforms against the
   general transform.
-- Replace arch prefetch with branches lib
+- **The bucket prefetch also runs on AArch64.** `shared::baseline::prefetch`
+  now calls `branches::prefetch_read_data` instead of `_mm_prefetch` through
+  `fearless_simd::kernel!`, which only reached x86-64. It stays a read hint,
+  as in the reference: the bucket is read before it is written.
 
 ## [v0.5.15](https://github.com/M-Compressors/mbrotli/releases/tag/v0.5.15) - 2026-10-14
 

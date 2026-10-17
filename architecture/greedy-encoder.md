@@ -716,12 +716,13 @@ sixteen) and the tag row; the other runs keep the trait's empty default, since
 their tables fit in L2. A prefetch at search start, as in C, measured slower
 on binary input (q7 +2%) than this.
 
-The hint is `shared::baseline::prefetch`: `_mm_prefetch(T0)` through
-`fearless_simd::kernel!` on an `Sse2` token from `Level::baseline()`, the safe
-way to call an intrinsic from code without `#[target_feature]`. It never
-changes a result, so output is unchanged; on targets other than x86-64 it is
-empty, because AArch64's prefetch intrinsic and `core::hint::prefetch_read`
-are unstable.
+The hint is `shared::baseline::prefetch`, a read hint into L1 through
+`branches` (`prefetcht0` on x86-64, `prfm pldl1keep` on AArch64; see
+[shared-primitives.md](shared-primitives.md)). It is a read hint although the
+bucket is later written: the search reads it first, and the store finds the
+line already exclusive to the encoder's thread. It never changes a result, so
+output is unchanged. Buckets deeper than 32 slots get two of their lines, as
+in the reference.
 
 ```mermaid
 sequenceDiagram
@@ -729,7 +730,7 @@ sequenceDiagram
     participant R as DenseRun / SparseRun
     participant C as cache
     L->>R: prefetch(position + 1)
-    R->>C: _mm_prefetch(newest slot, slot + 16, tag row)
+    R->>C: prefetch L1 (newest slot, slot + 16, tag row)
     L->>R: find_longest_match(position)
     Note over R,C: bucket for position was hinted one iteration earlier
     alt match found

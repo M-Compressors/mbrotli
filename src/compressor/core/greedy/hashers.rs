@@ -2543,6 +2543,10 @@ fn probe_last_distances<S: Simd, const BLOCK: usize>(
 }
 
 /// Prefetches the lines holding a bucket's newest slots.
+///
+/// Two lines cover a bucket of up to 32 slots; deeper buckets get only the
+/// newest slot's line and the one sixteen slots older, as the reference
+/// hints the bucket and `bucket + 16`.
 #[inline(always)]
 fn prefetch_newest<const N: usize>(bucket: &[u32; N], count: u16) {
     let newest = !usize::from(count.wrapping_sub(1)) & (N - 1);

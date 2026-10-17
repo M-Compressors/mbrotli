@@ -38,8 +38,13 @@ pub(crate) fn run<K: Kernel>(kernel: K) -> K::Output {
 
 /// Asks for the cache line holding `value` (the reference's `PREFETCH_L1`).
 ///
-/// A hint only: it never faults and never changes a result. `branches`
-/// issues it on x86, x86-64 and AArch64 and does nothing elsewhere.
+/// A read hint into L1, as in the reference: the bucket it targets is read by
+/// the next search before the store writes it, and a line the encoder's
+/// thread reads arrives exclusive, so the later write needs no second
+/// request. A hint only: it never faults and never changes a result.
+/// `branches` emits it on x86-64, AArch64 and x86 with SSE, and on the other
+/// targets it lists (riscv64 with `zicbop`, s390x, PowerPC, any target on
+/// nightly); elsewhere it does nothing.
 #[inline(always)]
 pub(crate) fn prefetch<T>(value: &T) {
     branches::prefetch_read_data::<T, 0>(value);

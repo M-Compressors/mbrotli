@@ -72,11 +72,14 @@ out-of-line call, so `baseline::run` hands a `Kernel` (a value with a generic
 `run<S: Simd>`) the level every build of the target has: `Sse2` from
 `Level::baseline().as_sse2()` on x86, `Neon` on AArch64, otherwise whatever
 `Level::baseline()` is. The selection is a constant and folds away.
-`baseline::prefetch` is the reference's `PREFETCH_L1`: on x86-64 a
-`fearless_simd::kernel!` on that `Sse2` token calls `_mm_prefetch`, the only
-way to reach the intrinsic without `unsafe` (a `#[target_feature]` intrinsic
-is safe only inside a function with the attribute); elsewhere it does
-nothing. `scan` holds the sixteen-lane mask walks the prefix-code builders use
+`baseline::prefetch` is the reference's `PREFETCH_L1`, a read hint into L1:
+`branches::prefetch_read_data::<T, 0>`, which keeps the inline assembly out of
+this crate. It emits `prefetcht0` on x86-64 and x86 with SSE, `prfm
+pldl1keep` on AArch64, the targets' own prefetch on riscv64 with `zicbop`,
+s390x and PowerPC, and the LLVM intrinsic on nightly; elsewhere it does
+nothing. There is no write variant: the hinted bucket is read by the next
+search before its store, and a line read by the encoder's single thread
+arrives exclusive, so the store needs no second request. `scan` holds the sixteen-lane mask walks the prefix-code builders use
 ([fast-encoder.md](fast-encoder.md) §6.1); each is tested on the scalar,
 baseline and detected levels against the plain loop.
 
@@ -87,8 +90,10 @@ flowchart LR
     Run -->|AArch64| NEON["kernel.run(Neon)"]
     Run -->|other| Any["dispatch!(Level::baseline())"]
     Caller --> Pre["baseline::prefetch(&T)"]
-    Pre -->|x86-64| K["kernel!(Sse2): _mm_prefetch T0"]
-    Pre -->|other| Nop["no-op"]
+    Pre --> B["branches::prefetch_read_data::<T, 0>"]
+    B -->|x86 / x86-64| T0["prefetcht0"]
+    B -->|AArch64| PLD["prfm pldl1keep"]
+    B -->|unsupported target| Nop["no-op"]
 ```
 
 `shared::fixed` (compression only) builds `Box<[T; N]>` tables:
