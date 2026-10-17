@@ -36,27 +36,13 @@ pub(crate) fn run<K: Kernel>(kernel: K) -> K::Output {
     fearless_simd::dispatch!(Level::baseline(), simd => kernel.run(simd))
 }
 
-#[cfg(target_arch = "x86_64")]
-fearless_simd::kernel!(
-    #[inline(always)]
-    fn prefetch_line(sse2: Sse2, line: *const i8) {
-        core::arch::x86_64::_mm_prefetch::<{ core::arch::x86_64::_MM_HINT_T0 }>(line);
-    }
-);
-
 /// Asks for the cache line holding `value` (the reference's `PREFETCH_L1`).
 ///
-/// A hint only: it never faults and never changes a result. Only x86-64
-/// issues one. AArch64's `_prefetch` and the portable
-/// `core::hint::prefetch_read` are unstable, so elsewhere this does nothing.
+/// A hint only: it never faults and never changes a result. `branches`
+/// issues it on x86, x86-64 and AArch64 and does nothing elsewhere.
 #[inline(always)]
 pub(crate) fn prefetch<T>(value: &T) {
-    #[cfg(target_arch = "x86_64")]
-    if let Some(sse2) = Level::baseline().as_sse2() {
-        prefetch_line(sse2, core::ptr::from_ref(value).cast());
-    }
-    #[cfg(not(target_arch = "x86_64"))]
-    let _ = value;
+    branches::prefetch_read_data::<T, 0>(value);
 }
 
 #[cfg(test)]

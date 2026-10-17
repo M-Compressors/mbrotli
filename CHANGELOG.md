@@ -74,6 +74,7 @@ corpus prefix):
   copy handles the last words of the table. Dictionary-heavy text decodes
   3-8% faster in instructions; a test checks all 121 transforms against the
   general transform.
+- Replace arch prefetch with branches lib
 
 ## [v0.5.15](https://github.com/M-Compressors/mbrotli/releases/tag/v0.5.15) - 2026-10-14
 
