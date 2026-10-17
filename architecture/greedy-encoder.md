@@ -700,6 +700,44 @@ The distance alphabet is resolved in the same pass: font mode asks for one
 postfix bit and twelve direct codes, every other mode uses what the caller
 configured, and qualities below four always use neither.
 
+### 2.5. Bucket prefetch
+
+From quality six up the bucket tables outgrow the L2 cache (2.5 MiB at six,
+8 to 32 MiB at seven to nine), and the load of a bucket's newest slot was the
+single most sampled instruction of the search. The reference prefetches the
+bucket, the next sixteen slots and the tag row at the start of each
+`FindLongestMatch`. Here the hint is issued one search earlier: every
+iteration of `search_positions` first calls `MatchRun::prefetch` for the
+following position, and `commit_match` does the same for the position after
+the match before `store_range` records the match's bytes. The dense and
+sparse runs hash that position, read its counter or sparse entry, and hint
+the lines holding the newest slot, the slot sixteen older (blocks deeper than
+sixteen) and the tag row; the other runs keep the trait's empty default, since
+their tables fit in L2. A prefetch at search start, as in C, measured slower
+on binary input (q7 +2%) than this.
+
+The hint is `shared::baseline::prefetch`: `_mm_prefetch(T0)` through
+`fearless_simd::kernel!` on an `Sse2` token from `Level::baseline()`, the safe
+way to call an intrinsic from code without `#[target_feature]`. It never
+changes a result, so output is unchanged; on targets other than x86-64 it is
+empty, because AArch64's prefetch intrinsic and `core::hint::prefetch_read`
+are unstable.
+
+```mermaid
+sequenceDiagram
+    participant L as search_positions
+    participant R as DenseRun / SparseRun
+    participant C as cache
+    L->>R: prefetch(position + 1)
+    R->>C: _mm_prefetch(newest slot, slot + 16, tag row)
+    L->>R: find_longest_match(position)
+    Note over R,C: bucket for position was hinted one iteration earlier
+    alt match found
+        L->>R: prefetch(position + len)
+        L->>R: store_range(match bytes)
+    end
+```
+
 ## 3. Streaming lifecycle
 
 ```mermaid

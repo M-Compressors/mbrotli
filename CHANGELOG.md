@@ -1,5 +1,80 @@
 # Changelog
 
+## [v0.5.16](https://github.com/M-Compressors/mbrotli/releases/tag/v0.5.16) - Unreleased
+
+Faster compression of small inputs and at qualities 5-11, and faster decoding
+of dictionary-heavy text. Output is byte-identical at every quality: each
+change below was checked against the previous build on alice29.txt,
+lcet10.txt, mapsdatazrh, plrabn12.txt, 64x and monkey at 100 B, 1 KiB,
+16 KiB, 200 KB and 1 MB, q0-q11 (q10/q11 up to 200 KB), and the C-reference
+test suites pass. Time against v0.5.15 (min of 7 interleaved runs per case,
+one pinned core, i7-13700KF under WSL2; single-call compression of the
+corpus prefix):
+
+| input | change |
+| --- | --- |
+| alice29.txt 1 KiB, q1 / q4 / q9 | -10% / -16% / -10% |
+| alice29.txt 16 KiB, q5 | -7% |
+| lcet10.txt (426 KB), q5 / q6 / q7 / q9 | -5.5% / -4.6% / -3.1% / -3.2% |
+| mapsdatazrh (285 KB), q1 / q4 / q5 / q7 | -11% / -2.5% / -3.3% / -2.3% |
+| 3.85 MB mixed corpus, q5 / q9 | -5.0% / -8.9% |
+| lcet10.txt / mapsdatazrh 64 KiB, q11 | -5.1% / -4.3% |
+| decode alice29.txt 16 KiB q5 / lcet10.txt 64 KiB q11 | -7.8% / -15.9% |
+| q0, q2, q3, q10, mapsdatazrh q9, decoding 1 MB | within +-1.8% (noise) |
+
+- **Prefix codes sort their leaves by bucket.** `create_huffman_tree`, which
+  builds every prefix code except the q0/q1 literal one, ordered leaves with
+  the reference's shell sort. It breaks ties by descending symbol, so the
+  order is total, and a bucket sort reaches it: leaves are counted per count
+  (exactly below 64, per power of two above), placed by descending symbol,
+  and only the power-of-two buckets are sorted afterwards. One array serves
+  as each bucket's start and cursor. Fewer than 13 leaves keep the
+  reference's insertion sort. The q0/q1 literal builder compares counts
+  only, so its order among equal counts is the shell sort's own, and it
+  keeps that sort. A test compares the bucket sort with the shell sort on
+  heavily tied, sparse and full-range histograms up to the 704-symbol
+  command alphabet. Alone it cut 1 KiB inputs at q4-q9 by 1.8-7.7% of
+  instructions (callgrind).
+- **Mask scans around the prefix-code builders.** The used-symbol passes of
+  the bucket sort, `convert_bit_depths_to_symbols`, the run and trailing-zero
+  scans of `write_huffman_tree` and the front passes of
+  `optimize_huffman_counts_for_rle` (now one walk instead of three) compare
+  sixteen entries at once and walk the bit mask (`shared::scan`). That code
+  runs outside the encoders' SIMD entries, so it uses the target's baseline
+  level, fixed at compile time (`shared::baseline`: SSE2, NEON or scalar
+  lanes). With the bucket sort, 1 KiB inputs at q3-q9 compress 8-13% faster
+  in instructions and 7-16% in time. Tests run every scan on the scalar,
+  baseline and detected levels against the plain loop.
+- **Quality 1 packs literals four at a time.** It accumulated literal codes
+  until the next would overflow the bit writer's 56 bits, a branch per
+  literal; it now writes four codes per call (at most 14 bits each) and the
+  rest in one more, as quality 0 already did. Binary input, where most bytes
+  are literals, compresses 10-11% faster at q1.
+- **Next-position bucket prefetch at qualities 5-9.** The bucket tables
+  outgrow L2 from q6 up, and the load of a bucket's newest slot was the most
+  sampled instruction of the search. Each search now hints the bucket of the
+  next position, and a match the one after it, with `_mm_prefetch` called
+  through `fearless_simd::kernel!` on the baseline SSE2 token, the safe way
+  to reach the intrinsic without `unsafe`. The reference prefetches at the
+  start of each search instead; that placement measured slower on binary
+  input (q7 +2%). It is a hint only, and does nothing outside x86-64, where
+  the prefetch intrinsics are unstable. Text compresses 3-5.5% faster at
+  q5-q9, the 3.85 MB corpus 5-9%.
+- **Quality 11 replays repeated distance-cache probes.** 44-57% of the start
+  positions `update_nodes` tries at a byte carry the same distance cache as
+  an earlier one there, and such a start finds exactly the same copies. Their
+  hits (code, length) are now recorded per start and replayed through the
+  same pricing in the same order, skipping the probes: 6-11% fewer
+  instructions and 4-6% less time at q11. Quality 10, which tries one start
+  per byte, compiles the replay out.
+- **Built-in dictionary words decode with fixed-size copies.** Every built-in
+  prefix and suffix is at most eight bytes and a word at most 24, so the
+  decoder copies them as fixed 8- and 32-byte moves into its scratch instead
+  of three variable-length `memcpy` calls per reference; an out-of-line exact
+  copy handles the last words of the table. Dictionary-heavy text decodes
+  3-8% faster in instructions; a test checks all 121 transforms against the
+  general transform.
+
 ## [v0.5.15](https://github.com/M-Compressors/mbrotli/releases/tag/v0.5.15) - 2026-10-14
 
 - Parallel history no longer slows down short-period input. 0.5.14 stored

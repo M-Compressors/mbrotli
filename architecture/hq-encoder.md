@@ -311,6 +311,30 @@ flowchart TD
     Price --> Extend[best_len = len; next_code = code + 1]
     Extend --> Stop
 ```
+
+At quality eleven, 44–57% of the start positions probed at a byte carry a
+distance cache equal to an earlier start's at the same byte: starts reached
+through literals inherit the same four distances. The probes read only the
+cache and the input, so such a start finds exactly the copies the earlier one
+found; only the prices differ, because they start from a different cost.
+`update_nodes` therefore keeps a `ProbeMemo` in the start-position queue: per
+start, its cache and its hits (code, the `best_len` before the hit, the length
+found), in probe order. A start whose cache matches an earlier slot replays
+those hits through the same pricing, in the same order and with the same
+`f32` arithmetic, without calling `ProbeSite::candidates` or measuring a
+match. That cut quality eleven by 6–11% of instructions and 3–6% of time.
+Quality ten probes one start per byte, so the replay is compiled out there
+(`update_nodes`'s `MEMO` parameter is `false` on the
+`zopfli_compute_shortest_path` path).
+
+```mermaid
+flowchart TD
+    K["start k at this byte"] --> Same{"cache equal to slot j < k?"}
+    Same -->|yes| Replay["price slot j's hits (code, best_len, len) in order"]
+    Same -->|no| Probe["probe as above; append each hit to slot k"]
+    Replay --> Next["k >= 2: next start; else tree matches"]
+    Probe --> Next
+```
 - `ZopfliCostModel` rearranges command-symbol prices into rows indexed by insert
   code, last-distance policy, and copy code whenever either initializer rebuilds
   a model for at least 128 bytes. Only insert codes reachable within the block

@@ -164,7 +164,7 @@ flowchart TD
     Literals --> Distance[Short cache / direct / extra-bit distance]
     Distance --> History[Overlapping history copy]
     Distance --> Prefix[Borrowed ordered RAW segments]
-    Distance --> Static[Resolve static word then apply transform]
+    Distance --> Static[Resolve static word then apply transform with fixed-size copies]
     Prefix -->|crossing reference| History
     History --> Command
     Static --> Command
@@ -429,7 +429,9 @@ copies repeat the original virtual prefix/history sequence. This follows
 rejects references crossing the prefix end, so this path has independent fixture
 and unit-test evidence. Static addresses are
 resolved before emitting, and transformed byte count reduces the meta-block's
-remaining output. Zero-output references with distance <= 120 are invalid, avoiding
+remaining output. A built-in word is transformed by `apply_builtin`, which
+copies prefix, word and suffix as fixed 8- and 32-byte moves into the scratch
+([shared-primitives.md](shared-primitives.md)). Zero-output references with distance <= 120 are invalid, avoiding
 zero-bit command loops. Above that distance a transform that consumes its whole
 word — `OmitLast4` over a four-byte word, for instance — is legal and emits
 nothing, so the ring write tolerates an empty write: as a member's first command

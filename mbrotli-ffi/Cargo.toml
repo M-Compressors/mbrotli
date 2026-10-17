@@ -19,7 +19,7 @@ crate-type = ["cdylib", "staticlib", "rlib"]
 
 [dependencies.mbrotli]
 path = ".."
-version = "0.5.15"
+version = "0.5.16"
 default-features = false
 features = ["std", "compression", "decompression"]
 

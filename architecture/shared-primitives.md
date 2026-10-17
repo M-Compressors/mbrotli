@@ -13,6 +13,9 @@ graph LR
     Shared --> Format[format constants / context tables]
     Shared --> Words[dictionary word bytes / borrowed Transform]
     Shared --> Entropy[encoder entropy, command, block and bit writers]
+    Shared --> Baseline[baseline: compile-time SIMD level, prefetch]
+    Entropy --> Scan[scan: 16-lane mask walks]
+    Scan --> Baseline
     Shared --> Decode[decode_dictionary / experimental decode_serialized]
     RFC[compressor::core::rfc9841] --> Words
     Entropy -. encoder command integration .-> RFC
@@ -27,7 +30,16 @@ encoder bit output and match-search types are not reused as decoder state.
 
 The encoder's experimental transform-list ownership and index construction stay
 under `compressor::core::rfc9841`, but application delegates to the same borrowed
-`Transform` used by decoding. The shared module still contains encoder-only
+`Transform` that serialized-dictionary decoding uses. Built-in words in the
+decoder take `apply_builtin` instead: every built-in prefix and suffix is at
+most eight bytes and a word at most 24, so it copies them as fixed 8- and
+32-byte moves from padded tables into the 541-byte scratch, where the bytes
+past the logical end are overwritten by the suffix or never read. That replaced
+three variable-length `memcpy` calls per dictionary reference (decoding
+dictionary-heavy text 3-8% fewer instructions, up to 12% faster at quality
+eleven); an out-of-line exact copy covers the last words of the table, whose
+32-byte read would run past it. A test compares it with `Transform::apply` for
+all 121 transforms. The shared module still contains encoder-only
 primitives: command integration depends on private RFC9841 encoder types. This
 is a crate-private dependency, not a fully independent reusable package. Backend
 selection remains at each public codec's construction boundary; encoder SIMD
@@ -52,6 +64,32 @@ suffix output overwrites any casing writes beyond the logical word. Custom shift
 operations and custom serialized representations compile only with `experimental`.
 No transformed dictionary is materialized. Borrowed inputs outlive one application,
 and no core keeps caller pointers between operations.
+
+`shared::baseline` and `shared::scan` (compression only) give code outside the
+encoders' dispatched SIMD entries a vector level without detection. Handing
+such code the encoder's runtime level would make every vector operation an
+out-of-line call, so `baseline::run` hands a `Kernel` (a value with a generic
+`run<S: Simd>`) the level every build of the target has: `Sse2` from
+`Level::baseline().as_sse2()` on x86, `Neon` on AArch64, otherwise whatever
+`Level::baseline()` is. The selection is a constant and folds away.
+`baseline::prefetch` is the reference's `PREFETCH_L1`: on x86-64 a
+`fearless_simd::kernel!` on that `Sse2` token calls `_mm_prefetch`, the only
+way to reach the intrinsic without `unsafe` (a `#[target_feature]` intrinsic
+is safe only inside a function with the attribute); elsewhere it does
+nothing. `scan` holds the sixteen-lane mask walks the prefix-code builders use
+([fast-encoder.md](fast-encoder.md) §6.1); each is tested on the scalar,
+baseline and detected levels against the plain loop.
+
+```mermaid
+flowchart LR
+    Caller["huffman / histogram / hashers (no target_feature)"] --> Run["baseline::run(kernel)"]
+    Run -->|x86| SSE2["kernel.run(Sse2)"]
+    Run -->|AArch64| NEON["kernel.run(Neon)"]
+    Run -->|other| Any["dispatch!(Level::baseline())"]
+    Caller --> Pre["baseline::prefetch(&T)"]
+    Pre -->|x86-64| K["kernel!(Sse2): _mm_prefetch T0"]
+    Pre -->|other| Nop["no-op"]
+```
 
 `shared::fixed` (compression only) builds `Box<[T; N]>` tables:
 `fixed_table(initial)` allocates through a `Vec` of exactly `N` entries, so a

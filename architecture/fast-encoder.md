@@ -322,6 +322,70 @@ Meta-block layout for a compressed fast-path block:
 | distance prefix code | variable | 64 symbols |
 | commands, extras, literals | variable | the scan |
 
+### 6.1. Prefix-code construction
+
+`shared::huffman` builds the prefix codes of every encoder, not only these
+two qualities. Both builders list the used symbols by descending index, order
+them least popular first, merge them (`merge_nodes`) and walk the tree for
+depths (`set_depth`); a code deeper than its limit raises the minimum count
+(`count_limit`, doubled per retry) and starts again. They differ in how
+equal counts are ordered, and so in how they sort:
+
+```mermaid
+flowchart TD
+    H["histogram, count_limit"] --> W{"builder"}
+    W -->|"create_huffman_tree (q0/q1 commands, q2-q11, code-length codes)"| C["count used symbols per bucket: exact below 64, one per power of two above"]
+    C --> S{"fewer than 13 leaves?"}
+    S -->|yes| I["list by descending symbol, insertion sort"]
+    S -->|no| P["bucket starts from the counts; place leaves by descending symbol"]
+    P --> B["sort_items::&lt;true&gt; inside each power-of-two bucket with 2+ leaves"]
+    W -->|"build_and_store_huffman_tree_fast (q0/q1 literals)"| F["list by descending symbol, sort_items::&lt;false&gt;"]
+    I --> M["merge_nodes, set_depth"]
+    B --> M
+    F --> M
+    M -->|"too deep: count_limit *= 2"| H
+```
+
+- `create_huffman_tree` breaks ties by descending symbol, so its order is
+  total and any sort that reaches it gives the reference's bytes.
+  `sort_leaves` reaches it with a bucket sort: one pass counts the leaves of
+  each bucket, prefix sums turn the counts into starts, and a second pass
+  places leaves by descending symbol, which leaves a single-count bucket in
+  order. Only the power-of-two buckets, from count 64 up, are sorted
+  afterwards, by the reference's shell sort. One array holds both start and
+  cursor: after placement, bucket `b` spans `rank[b - 1]..rank[b]`. Fewer
+  than 13 leaves go straight to the reference's insertion sort, where the
+  bucket pass would cost more than it saves.
+- `build_and_store_huffman_tree_fast` compares counts only, as the
+  reference's literal builder does. Shell sort is not stable, so its order
+  among equal counts is whatever `SortHuffmanTreeItems` leaves, and that
+  order decides which of two equal symbols gets the shorter code. That path
+  keeps the reference's shell sort unchanged.
+
+The scans around the tree go through `shared::scan`: they compare sixteen
+entries at once at the target's baseline SIMD level (`shared::baseline`:
+SSE2, NEON or scalar lanes, chosen at compile time, since this code runs
+outside the encoders' dispatched entries) and walk the bit mask. The
+bucket sort's two passes visit only used symbols (`for_each_nonzero_u32`,
+ascending and descending); `convert_bit_depths_to_symbols` collects the
+used symbols once and assigns codes from that list; `write_huffman_tree`
+finds run ends and the trailing zeros with `run_end_u8` and
+`trim_zeros_u8`; `optimize_huffman_counts_for_rle` takes its used-symbol
+count, last used symbol and smallest count from one walk and its run
+lengths from `run_end_u32`. Each reports exactly what the plain loop would,
+in the same order, so the code lengths and bytes do not change; the tests
+run every scan on the scalar, baseline and detected levels against the
+plain loop.
+
+```mermaid
+flowchart LR
+    T["u32 counts / u8 depths"] --> C["16 lanes: simd_eq(0 or value)"]
+    C --> M["to_bitmask"]
+    M -->|"all lanes set (dense)"| D["straight loop over the chunk"]
+    M -->|sparse| W["tzcnt / lzcnt walk over set bits"]
+    M -->|"run end"| E["first differing lane"]
+```
+
 ## 7. SIMD dispatch points
 
 ```mermaid
@@ -437,8 +501,19 @@ The tree builder caps a literal depth at fourteen bits, so four codes are at
 most 56 bits and always fit one `BitWriter::write`; two fit with room to spare.
 Quality 0 emits literals between matches. Runs of at least eight literals use
 quadruples, followed by pairs and singles; shorter runs start with pairs.
-Quality 1 replays a meta-block's literals and accumulates codes until the next
-would exceed the writer's 56-bit limit.
+Quality 1 replays a meta-block's literals in quadruples too (`pack_literals`),
+then writes the up to three left over in one more call. It used to accumulate
+codes until the next would overflow 56 bits; that per-literal test cost more
+than the calls it saved, about 10% of quality 1 on binary input, where most
+bytes are literals.
+
+```mermaid
+flowchart LR
+    R["literal run"] --> Q{"4 or more left?"}
+    Q -->|yes| F["prefix-sum 4 widths, OR 4 codes, one write (<= 56 bits)"]
+    F --> Q
+    Q -->|no| T["OR the 0-3 left, one write (<= 42 bits)"]
+```
 
 ## Flushing
 

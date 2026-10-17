@@ -117,9 +117,12 @@ fn precedes<const TIE_BY_VALUE: bool>(v0: &HuffmanNode, v1: &HuffmanNode) -> boo
     v0.total_count < v1.total_count
 }
 
+/// Leaf counts below this are sorted by insertion rather than shell sort.
+const INSERTION_SORT_LIMIT: usize = 13;
+
 /// Input-size optimised shell sort (`SortHuffmanTreeItems`).
 fn sort_items<const TIE_BY_VALUE: bool>(items: &mut [HuffmanNode], n: usize) {
-    if n < 13 {
+    if n < INSERTION_SORT_LIMIT {
         for i in 1..n {
             let tmp = items[i];
             let mut k = i;
@@ -148,6 +151,84 @@ fn sort_items<const TIE_BY_VALUE: bool>(items: &mut [HuffmanNode], n: usize) {
             items[j] = tmp;
         }
     }
+}
+
+/// Counts below this have a bucket of their own in `sort_leaves`.
+///
+/// 64 rather than 128 cut 0.4% more instructions from 1 KiB inputs at
+/// quality 5 and 0.2% fewer from 128 KiB of `mapsdatazrh`.
+const EXACT_COUNT_BUCKETS: usize = 64;
+
+/// Buckets `sort_leaves` uses: the exact ones, then one per power of two up
+/// to `u32::MAX`.
+const COUNT_BUCKETS: usize =
+    EXACT_COUNT_BUCKETS + 32 - EXACT_COUNT_BUCKETS.trailing_zeros() as usize;
+
+/// Returns the bucket of a leaf with `count` occurrences.
+const fn count_bucket(count: u32) -> usize {
+    if (count as usize) < EXACT_COUNT_BUCKETS {
+        count as usize
+    } else {
+        EXACT_COUNT_BUCKETS + (count.ilog2() - EXACT_COUNT_BUCKETS.trailing_zeros()) as usize
+    }
+}
+
+/// Writes a leaf for each used symbol of `data[..length]`, with counts raised
+/// to `count_limit`, to the start of `tree`, least popular first, and returns
+/// the nodes and the number of leaves.
+///
+/// The order is the one the reference's `SortHuffmanTreeItems` gives leaves
+/// listed by descending symbol, and it is total: by count, then by
+/// descending symbol. So a bucket sort reaches it as well. Leaves are
+/// counted per bucket, each bucket's start found from the counts, and the
+/// leaves placed by descending symbol, which orders a bucket holding one
+/// count. Only the power-of-two buckets are sorted afterwards. One array
+/// serves as start and cursor: once the leaves are placed, a bucket ends where
+/// the next one starts. Too few leaves to fill the buckets' cost are sorted
+/// by insertion, as the reference does.
+fn sort_leaves<'a>(
+    data: &[u32],
+    length: usize,
+    count_limit: u32,
+    tree: &'a mut Vec<HuffmanNode>,
+) -> (&'a mut [HuffmanNode], usize) {
+    let mut rank = [0u16; COUNT_BUCKETS];
+    super::scan::for_each_nonzero_u32(&data[..length], |_, count| {
+        rank[count_bucket(count.max(count_limit))] += 1;
+    });
+    let n = rank.iter().map(|&size| usize::from(size)).sum();
+    let tree = nodes_for(tree, n);
+
+    if n < INSERTION_SORT_LIMIT {
+        let mut k = 0usize;
+        super::scan::for_each_nonzero_u32_rev(&data[..length], |i, count| {
+            tree[k] = HuffmanNode::leaf(count.max(count_limit), i as i16);
+            k += 1;
+        });
+        sort_items::<true>(tree, n);
+        return (tree, n);
+    }
+
+    let mut start = 0u16;
+    for r in rank.iter_mut() {
+        let size = *r;
+        *r = start;
+        start += size;
+    }
+    super::scan::for_each_nonzero_u32_rev(&data[..length], |i, count| {
+        let count = count.max(count_limit);
+        let slot = &mut rank[count_bucket(count)];
+        tree[usize::from(*slot)] = HuffmanNode::leaf(count, i as i16);
+        *slot += 1;
+    });
+    for b in EXACT_COUNT_BUCKETS..COUNT_BUCKETS {
+        let start = usize::from(rank[b - 1]);
+        let end = usize::from(rank[b]);
+        if end - start > 1 {
+            sort_items::<true>(&mut tree[start..end], end - start);
+        }
+    }
+    (tree, n)
 }
 
 /// Merges the sorted leaves in `tree[..n]` into a complete Huffman tree.
@@ -202,30 +283,16 @@ pub(crate) fn create_huffman_tree(
     tree: &mut Vec<HuffmanNode>,
     depth: &mut [u8],
 ) {
-    let leaves = data
-        .iter()
-        .take(length)
-        .filter(|&&count| count != 0)
-        .count();
-    let tree = nodes_for(tree, leaves);
     let mut count_limit: u32 = 1;
     loop {
-        let mut n = 0usize;
-        for i in (0..length).rev() {
-            if data[i] != 0 {
-                tree[n] = HuffmanNode::leaf(data[i].max(count_limit), i as i16);
-                n += 1;
-            }
-        }
-
+        let (nodes, n) = sort_leaves(data, length, count_limit, tree);
         if n == 1 {
-            depth[tree[0].index_right_or_value as usize] = 1;
+            depth[nodes[0].index_right_or_value as usize] = 1;
             return;
         }
 
-        sort_items::<true>(tree, n);
-        let root = merge_nodes(tree, n);
-        if set_depth(root, tree, depth, tree_limit) {
+        let root = merge_nodes(nodes, n);
+        if set_depth(root, nodes, depth, tree_limit) {
             return;
         }
         count_limit = count_limit.wrapping_mul(2);
@@ -251,14 +318,29 @@ pub(crate) fn convert_bit_depths_to_symbols(depth: &[u8], len: usize, bits: &mut
     const MAX_HUFFMAN_BITS: usize = 16;
     let mut bl_count = [0u16; MAX_HUFFMAN_BITS];
     let mut next_code = [0u16; MAX_HUFFMAN_BITS];
-    for &d in &depth[..len] {
-        bl_count[usize::from(d)] += 1;
-    }
+    let mut nonzero = [0u16; 704];
+    let mut n = 0usize;
+    super::scan::for_each_nonzero_u8(&depth[..len], |i, d| {
+        bl_count[usize::from(d) & 15] += 1;
+        if let Some(slot) = nonzero.get_mut(n) {
+            *slot = i as u16;
+        }
+        n += 1;
+    });
     bl_count[0] = 0;
     let mut code = 0u16;
     for i in 1..MAX_HUFFMAN_BITS {
         code = (code + bl_count[i - 1]) << 1;
         next_code[i] = code;
+    }
+    if n <= nonzero.len() {
+        for &i in &nonzero[..n] {
+            let i = usize::from(i);
+            let d = usize::from(depth[i]) & 15;
+            bits[i] = reverse_bits(d, next_code[d]);
+            next_code[d] += 1;
+        }
+        return;
     }
     for i in 0..len {
         let d = usize::from(depth[i]);
@@ -363,12 +445,7 @@ fn decide_over_rle_use(depth: &[u8], length: usize) -> (bool, bool) {
     let mut i = 0usize;
     while i < length {
         let value = depth[i];
-        let mut reps = 1usize;
-        let mut k = i + 1;
-        while k < length && depth[k] == value {
-            reps += 1;
-            k += 1;
-        }
+        let reps = super::scan::run_end_u8(&depth[..length], i) - i;
         if reps >= 3 && value == 0 {
             total_reps_zero += reps;
             count_reps_zero += 1;
@@ -390,14 +467,7 @@ fn write_huffman_tree(depth: &[u8], length: usize) -> CodeLengthRuns {
     let mut runs = CodeLengthRuns::new();
     let mut previous_value = INITIAL_REPEATED_CODE_LENGTH;
 
-    let mut new_length = length;
-    for i in 0..length {
-        if depth[length - i - 1] == 0 {
-            new_length -= 1;
-        } else {
-            break;
-        }
-    }
+    let new_length = super::scan::trim_zeros_u8(&depth[..length]);
 
     let (use_rle_for_non_zero, use_rle_for_zero) = if length > 50 {
         decide_over_rle_use(depth, new_length)
@@ -410,11 +480,7 @@ fn write_huffman_tree(depth: &[u8], length: usize) -> CodeLengthRuns {
         let value = depth[i];
         let mut reps = 1usize;
         if (value != 0 && use_rle_for_non_zero) || (value == 0 && use_rle_for_zero) {
-            let mut k = i + 1;
-            while k < new_length && depth[k] == value {
-                reps += 1;
-                k += 1;
-            }
+            reps = super::scan::run_end_u8(&depth[..new_length], i) - i;
         }
         if value == 0 {
             runs.write_zero_repetitions(reps);
@@ -780,6 +846,67 @@ mod tests {
             sort_items::<true>(&mut items, n);
             for pair in items.windows(2) {
                 assert!(!precedes::<true>(&pair[1], &pair[0]));
+            }
+        }
+    }
+
+    /// The reference's leaf order: used symbols listed by descending index,
+    /// then `SortHuffmanTreeItems`.
+    fn reference_leaves(data: &[u32], count_limit: u32) -> Vec<HuffmanNode> {
+        let mut leaves: Vec<HuffmanNode> = (0..data.len())
+            .rev()
+            .filter(|&i| data[i] != 0)
+            .map(|i| HuffmanNode::leaf(data[i].max(count_limit), i as i16))
+            .collect();
+        let n = leaves.len();
+        sort_items::<true>(&mut leaves, n);
+        leaves
+    }
+
+    #[test]
+    fn count_buckets_are_exact_below_the_cutoff_and_powers_of_two_above() {
+        assert_eq!(count_bucket(1), 1);
+        assert_eq!(count_bucket(63), 63);
+        assert_eq!(count_bucket(64), 64);
+        assert_eq!(count_bucket(127), 64);
+        assert_eq!(count_bucket(128), 65);
+        assert_eq!(count_bucket(u32::MAX), COUNT_BUCKETS - 1);
+    }
+
+    #[test]
+    fn bucket_sort_orders_leaves_like_the_reference_shell_sort() {
+        let mut state = 0x9E37_79B9u32;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            state
+        };
+        let boundaries = [0, 1, 63, 64, 65, 127, 128, 129, 1 << 20, u32::MAX];
+        for length in [1usize, 2, 12, 13, 14, 56, 57, 64, 256, 704] {
+            for shape in 0..6 {
+                let data: Vec<u32> = (0..length)
+                    .map(|_| {
+                        let r = next();
+                        match shape {
+                            0 => r % 4,
+                            1 => r % 200,
+                            2 => r >> (r % 32),
+                            3 => 7,
+                            4 => boundaries[r as usize % boundaries.len()],
+                            _ => (r % 3) * (r >> 24),
+                        }
+                    })
+                    .collect();
+                for count_limit in [1u32, 2, 64, 1 << 20] {
+                    let mut tree = Vec::new();
+                    let (nodes, n) = sort_leaves(&data, length, count_limit, &mut tree);
+                    assert_eq!(
+                        &nodes[..n],
+                        reference_leaves(&data, count_limit).as_slice(),
+                        "length {length}, shape {shape}, count limit {count_limit}"
+                    );
+                }
             }
         }
     }

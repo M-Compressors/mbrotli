@@ -27,6 +27,7 @@ use fearless_simd_macros::simd;
 use super::super::cache_probe::ProbeSite;
 use super::params::{BucketShape, ChainShape, HasherPlan};
 use super::probe::{StoreOutlook, sample_store_outlook};
+use crate::shared::baseline::prefetch;
 use crate::shared::constants::HASH_MUL32;
 use crate::shared::dictionary::{self, DictionaryStats};
 use crate::shared::fixed::{fixed_table, fixed_table_from_vec};
@@ -298,6 +299,10 @@ pub(crate) trait MatchRun {
 
     /// Records every position in `start..end` (`StoreRange`).
     fn store_range(&mut self, data: &[u8], mask: usize, start: usize, end: usize);
+
+    /// Hints the bucket a later search at `ix` reads.
+    #[inline(always)]
+    fn prefetch(&self, _data: &[u8], _mask: usize, _ix: usize) {}
 
     /// Searches for the best match at `query.cur_ix` (`FindLongestMatch`).
     ///
@@ -2537,6 +2542,20 @@ fn probe_last_distances<S: Simd, const BLOCK: usize>(
     (best_len, found)
 }
 
+/// Prefetches the lines holding a bucket's newest slots.
+#[inline(always)]
+fn prefetch_newest<const N: usize>(bucket: &[u32; N], count: u16) {
+    let newest = !usize::from(count.wrapping_sub(1)) & (N - 1);
+    if let Some(slot) = bucket.get(newest) {
+        prefetch(slot);
+    }
+    if N > 16
+        && let Some(slot) = bucket.get((newest + 16) & (N - 1))
+    {
+        prefetch(slot);
+    }
+}
+
 /// Walks a bucket's candidates newest to oldest, updating `found`.
 ///
 /// `equal` is the tag mask, `newest` the slot of the newest position, and
@@ -2616,6 +2635,18 @@ impl<const HASH64: bool, const BUCKETS: usize, const BLOCK: usize> MatchRun
     const STORE_LOOKAHEAD: usize = Self::HASH_TYPE_LENGTH;
 
     #[inline(always)]
+    fn prefetch(&self, data: &[u8], mask: usize, ix: usize) {
+        let hash = hash_with_tag::<HASH64, BUCKETS>(data, ix & mask);
+        let key = (hash >> 8) & (BUCKETS - 1);
+        let (count, offset) = self.layout.decode_entry(self.layout.entries[key]);
+        if let Some(BlockRef::Full(index)) = SparseLayout::<BUCKETS, BLOCK>::block(offset)
+            && let Some(bucket) = self.layout.blocks.get(index)
+        {
+            prefetch_newest(bucket, count);
+        }
+    }
+
+    #[inline(always)]
     fn store(&mut self, data: &[u8], mask: usize, ix: usize) {
         let hash = hash_with_tag::<HASH64, BUCKETS>(data, ix & mask);
         self.layout
@@ -2687,6 +2718,16 @@ impl<const HASH64: bool, const BUCKETS: usize, const BLOCK: usize> MatchRun
 {
     const HASH_TYPE_LENGTH: usize = if HASH64 { 8 } else { 4 };
     const STORE_LOOKAHEAD: usize = Self::HASH_TYPE_LENGTH;
+
+    #[inline(always)]
+    fn prefetch(&self, data: &[u8], mask: usize, ix: usize) {
+        let hash = hash_with_tag::<HASH64, BUCKETS>(data, ix & mask);
+        let key = (hash >> 8) & (BUCKETS - 1);
+        prefetch_newest(&self.dense[key], self.num[key]);
+        if let Some(tags) = self.tags.as_deref() {
+            prefetch(&tags[key]);
+        }
+    }
 
     #[inline(always)]
     fn store(&mut self, data: &[u8], mask: usize, ix: usize) {

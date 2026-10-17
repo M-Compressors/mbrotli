@@ -408,6 +408,7 @@ fn search_positions<S: Simd, R: MatchRun, const ENABLE_PREFIX: bool, const INDEP
         mut apply_random_heuristics,
     } = cursor;
     while position < loop_end {
+        run.prefetch(hot.ringbuffer, hot.mask, position + 1);
         let max_length = pos_end - position;
         let mut sr = SearchResult::empty();
         hot.search::<S, R, ENABLE_PREFIX>(simd, &mut run, state, position, max_length, &mut sr);
@@ -560,6 +561,7 @@ fn commit_match<S: Simd, R: MatchRun, const ENABLE_PREFIX: bool, const INDEPENDE
     if sr.distance < (sr.len >> 2) {
         range_start = range_end.min(range_start.max(position + sr.len - (sr.distance << 2)));
     }
+    matcher.prefetch(block.ringbuffer, block.mask, position + sr.len);
     matcher.store_range(block.ringbuffer, block.mask, range_start, range_end);
     cursor.position += sr.len;
     (matcher, cursor)
