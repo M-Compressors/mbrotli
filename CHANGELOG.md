@@ -1,6 +1,6 @@
 # Changelog
 
-## [v0.5.16](https://github.com/M-Compressors/mbrotli/releases/tag/v0.5.16) - Unreleased
+## [v0.5.16](https://github.com/M-Compressors/mbrotli/releases/tag/v0.5.16) - 2026-10-17
 
 Faster compression of small inputs and at qualities 5-11, and faster decoding
 of dictionary-heavy text. Output is byte-identical at every quality: each
