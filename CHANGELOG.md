@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Clarified `ParallelTaskQueue` documentation: stopped executors can leave
+  blocking I/O and writer finalization waiting indefinitely; dropping queue
+  handles or tasks reports closure or abandonment errors when observed. Tasks
+  already held by executors must still be run or dropped.
+
 ## [v0.5.16](https://github.com/M-Compressors/mbrotli/releases/tag/v0.5.16) - 2026-10-17
 
 Faster compression of small inputs and at qualities 5-11, and faster decoding

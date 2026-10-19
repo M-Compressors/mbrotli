@@ -218,6 +218,15 @@ cancelling. A session whose queue handles are alive but never drained cannot
 progress, which is why single-thread callers run `try_recv` tasks before
 waiting.
 
+Stopping executors is not itself an error and has no automatic timeout. If a
+needed task stays queued or is held by an executor without being run or dropped,
+`wait` can block indefinitely. The blocking adapters use this wait internally:
+reader `read` and writer `write`, `flush`, `try_finish` and `finish` may therefore
+block too. Executors must remain able to run until finishing returns. A bounded
+pool must leave execution capacity for tasks instead of filling every worker
+with callers waiting for those tasks. `wait_timeout` bounds a session wait only;
+it does not configure a timeout for the adapters.
+
 ## Queue closure, cancellation and errors
 
 The queue is a `Mutex<VecDeque<Task>>` with a `Condvar`, a `closed` flag, and a
@@ -226,6 +235,8 @@ stream finishes, fails, is released or dropped, and when the last handle drops.
 Closing wakes every blocked `recv`, which then returns `None`, so
 `for task in queue` loops end. Tasks still queued at closure are dropped outside
 the lock; each publishes `TaskAbandoned`, returning its worker through its slot.
+Tasks already taken by executors remain owned by those executors and must still
+be run or dropped; dropping all queue handles cannot resolve a task held forever.
 
 Errors propagate as follows:
 

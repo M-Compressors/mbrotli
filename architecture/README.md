@@ -61,7 +61,7 @@ FFI do not appear in public signatures. Each codec compiles independently.
 | [High-quality encoder](hq-encoder.md) | Qualities 10–11: tree search, SIMD distance-cache and dictionary-word filters, replay of repeated distance caches, command-price rows, ordered starts and clustering. |
 | [Owned sessions](owned-sessions.md) | Lifetime-free raw and framed sessions sharing the borrowed state machines and release paths; `reinit` and input-free `flush`/`finish`. |
 | [Parallel compression](parallel-compression.md) | Planning, encoder reconfiguration, caller-run tasks, staging and assembly. |
-| [Parallel streaming sessions](parallel-stream.md) | Chunked input into queued segment tasks, a bounded window, ordered delivery into initialized or uninitialized output, flush, batch byte identity, queue closure, and the blocking `Read`/`Write` adapters returned with their task queue. |
+| [Parallel streaming sessions](parallel-stream.md) | Chunked input into queued segment tasks, a bounded window, ordered delivery into initialized or uninitialized output, flush, batch byte identity, queue closure, executor progress requirements, and the blocking `Read`/`Write` adapters returned with their task queue. |
 
 ## Decompression
 
