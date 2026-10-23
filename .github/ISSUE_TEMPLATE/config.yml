@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/M-Compressors/mbrotli/security/advisories/new
+    about: Report vulnerabilities privately, not as public issues.
+  - name: API documentation
+    url: https://docs.rs/mbrotli
+    about: Usage questions are often answered by the API docs and their examples.

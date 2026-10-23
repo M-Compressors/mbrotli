@@ -1,0 +1,73 @@
+name: Output differs from Google Brotli
+description: Serial compression wrote different bytes than Google Brotli v1.2.0 under equivalent streaming settings.
+labels: ["bug", "byte-identity"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        mbrotli's serial encoder matches Google Brotli v1.2.0 byte for byte at
+        qualities 0–11 and windows 10–24 when the configuration, dictionary,
+        declared input size, flush boundaries and continuation offset match
+        C's streaming encoder.
+
+        Not covered by this guarantee: C one-shot shortcuts and arbitrary C
+        chunk schedules, parallel compression (deterministic, but different
+        from serial output), and the `experimental` formats (custom static
+        dictionaries and framing), which are validated separately.
+  - type: textarea
+    id: configuration
+    attributes:
+      label: Configuration
+      description: |
+        The `EncoderConfig` and stream configuration you used, and the
+        equivalent C parameters (quality, window, mode, size hint, Large
+        Window, dictionaries).
+      render: rust
+    validations:
+      required: true
+  - type: dropdown
+    id: api
+    attributes:
+      label: API mode
+      options:
+        - One-shot
+        - Session, reader or writer
+    validations:
+      required: true
+  - type: textarea
+    id: schedule
+    attributes:
+      label: C call sequence and streaming schedule
+      description: |
+        How you drove the C encoder (`BrotliEncoderCompressStream` operations,
+        chunk sizes, flushes), and the matching mbrotli calls.
+    validations:
+      required: true
+  - type: textarea
+    id: input
+    attributes:
+      label: Input
+      description: |
+        Attach the input (and dictionary, if any), or describe how to generate
+        it. A minimized input is much easier to debug.
+    validations:
+      required: true
+  - type: textarea
+    id: difference
+    attributes:
+      label: Where the outputs differ
+      description: Output lengths and the first differing offset, if you know them.
+  - type: input
+    id: version
+    attributes:
+      label: mbrotli version or commit
+      placeholder: 0.5.16
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Target and CPU
+      placeholder: aarch64-apple-darwin, Apple M2
+    validations:
+      required: true

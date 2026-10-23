@@ -478,7 +478,13 @@ are encapsulated by `fearless_simd`, and differential tests use a C FFI referenc
 
 Bug reports with a minimal input, codec settings, and reproduction steps are welcome.
 For performance reports, include the CPU, compiler, feature set, and workload.
-The [development guide][development] covers local checks, coverage, and fuzzing.
+If compression output differs from Google Brotli under equivalent streaming settings,
+open an issue with the [Output differs from Google Brotli][mismatch] template.
+
+Read [CONTRIBUTING.md][contributing] for the checks a change must pass, and follow
+the [Code of Conduct][conduct]. The [development guide][development] covers local
+checks, coverage, and fuzzing. Report security vulnerabilities privately as described
+in [SECURITY.md][security], not as public issues.
 
 ## License
 
@@ -496,6 +502,10 @@ The [development guide][development] covers local checks, coverage, and fuzzing.
 [decoder-checks]: ./architecture/decompressor-compatibility.md
 [validation]: ./docs/correctness.md
 [development]: ./docs/development.md
+[contributing]: ./CONTRIBUTING.md
+[conduct]: ./CODE_OF_CONDUCT.md
+[security]: ./SECURITY.md
+[mismatch]: https://github.com/M-Compressors/mbrotli/issues/new?template=output_mismatch.yml
 [architecture]: ./architecture/README.md
 [benchmarks]: ./docs/benchmarks/README.md
 [bench-qualities]: ./docs/benchmarks/encoders/README.md

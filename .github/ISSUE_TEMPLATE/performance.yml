@@ -1,0 +1,41 @@
+name: Performance regression
+description: mbrotli is slower than Google Brotli, or slower than an earlier mbrotli release, on a workload.
+labels: ["performance"]
+body:
+  - type: textarea
+    id: workload
+    attributes:
+      label: Workload
+      description: The input (or a description of it), its size, the API, and the configuration (quality, window).
+    validations:
+      required: true
+  - type: textarea
+    id: measurements
+    attributes:
+      label: Measurements
+      description: |
+        The command or benchmark you ran, and the before/after or
+        mbrotli/Google Brotli numbers for both throughput and compressed size.
+        Release builds only.
+      render: text
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: mbrotli version or commit
+      placeholder: 0.5.16
+    validations:
+      required: true
+  - type: input
+    id: features
+    attributes:
+      label: Enabled crate features
+      placeholder: default
+  - type: input
+    id: platform
+    attributes:
+      label: Target, CPU, compiler, and OS
+      placeholder: x86_64-unknown-linux-gnu, AMD Ryzen 9 7950X, rustc 1.89, Ubuntu 24.04
+    validations:
+      required: true

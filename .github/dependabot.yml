@@ -1,0 +1,40 @@
+version: 2
+
+# Not covered on purpose:
+# - `brotli-ffi/vendor/brotli` (git submodule): it is the pinned Google Brotli
+#   v1.2.0 reference the encoder is byte-identical to, so it moves only in a
+#   deliberate vendor update.
+# - `benchmarks/comparison`: its exact pins are the implementation versions the
+#   published comparison was recorded against.
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      cargo-minor-and-patch:
+        update-types: [minor, patch]
+
+  # Excluded from the workspace, so it has its own lockfile.
+  - package-ecosystem: cargo
+    directory: /fuzz/afl
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    ignore:
+      # `afl` must stay on the release line of the `cargo-afl` that CI installs
+      # (`--version 0.18.2`); bump both together by hand.
+      - dependency-name: afl
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+    groups:
+      fuzz-minor-and-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      github-actions:
+        patterns: ["*"]

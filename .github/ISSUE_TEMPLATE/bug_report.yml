@@ -1,0 +1,82 @@
+name: Bug report
+description: A crash, panic, wrong result, or error from mbrotli.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. If the bug could be a security problem (memory
+        unsafety, a panic or unbounded resource use on untrusted input), do not
+        file it here; follow [SECURITY.md](https://github.com/M-Compressors/mbrotli/blob/master/SECURITY.md).
+
+        If compressed output differs from Google Brotli but still decodes, use
+        the "Output differs from Google Brotli" template instead.
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: |
+        A self-contained Rust snippet or test. Attach input files that are
+        needed to reproduce (zip them if GitHub rejects the extension).
+      render: rust
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      multiple: true
+      options:
+        - Compression (one-shot)
+        - Compression (sessions, reader, writer)
+        - Parallel compression
+        - Decompression
+        - Dictionaries
+        - Large Window Brotli
+        - Framed containers (experimental feature)
+        - C ABI (mbrotli-ffi)
+        - no_std build
+        - Documentation
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Error message or panic output
+      description: Include the full backtrace (`RUST_BACKTRACE=1`) for a panic.
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: mbrotli version or commit
+      placeholder: 0.5.16
+    validations:
+      required: true
+  - type: input
+    id: features
+    attributes:
+      label: Enabled crate features
+      placeholder: default, experimental
+  - type: input
+    id: rustc
+    attributes:
+      label: Rust version
+      description: Output of `rustc --version`.
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Target and CPU
+      description: Target triple and CPU model; the SIMD level can matter.
+      placeholder: x86_64-unknown-linux-gnu, Intel Core i7-13700KF
+    validations:
+      required: true
