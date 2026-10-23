@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- The decoder now rejects a meta-block that runs out of its single-type block
+  count with `InvalidDataKind::MetaBlock`. RFC 7932 sets that count to
+  16777216, and C Brotli rejects the same streams with
+  `BROTLI_DECODER_ERROR_FORMAT_BLOCK_SWITCH`. Earlier versions counted from
+  `u64::MAX` and accepted these RFC-invalid streams.
+
 - Clarified `ParallelTaskQueue` documentation: stopped executors can leave
   blocking I/O and writer finalization waiting indefinitely; dropping queue
   handles or tasks reports closure or abandonment errors when observed. Tasks

@@ -304,6 +304,30 @@ context map slice, whether that slice is trivial, its single tree when it is,
 the command table, and the distance table of each of the four distance
 contexts, resolved once so a distance symbol pays no bounds check) is refreshed
 at block switches rather than per command.
+
+Each category's `Block` counts down the elements left in its current block. A
+category with two or more types reads a new type and count when the count is
+zero and another element is needed. A category with one type starts at
+16777216 (RFC 7932 section 10) and has no type code to switch with, so needing
+an element after that count runs out is a meta-block error. This matches C
+Brotli's `BROTLI_DECODER_ERROR_FORMAT_BLOCK_SWITCH`, the check behind
+CVE-2026-111497 (fixed in Brotli 1.2.1). Literals cannot exceed the count,
+because a meta-block holds at most 2^24 bytes. Commands and explicit distances
+can, through transformed dictionary words that decode to nothing. The fast
+switch runs only when `switch_ready` reports a complete header and more than one
+type. Otherwise the loop pauses and `prepare` takes the byte-exact switch or
+returns the error, so the hot loop pays no extra test.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Counting: header, count = BLEN or 16777216 for one type
+    Counting --> Counting: advance (count - 1)
+    Counting --> Exhausted: count = 0
+    Exhausted --> Counting: element needed, types >= 2 (switch_fast or prepare reads type and BLEN)
+    Exhausted --> Error: element needed, one type (prepare: meta-block error)
+    Exhausted --> [*]: meta-block ends
+```
+
 For a trivial literal context map, the loop decodes three symbols per reservoir
 check when at least 45 bits are available. Each symbol consumes at most 15 bits.
 The scalar loop handles short input and the final one or two symbols; batching

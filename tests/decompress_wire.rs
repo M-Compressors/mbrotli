@@ -395,3 +395,111 @@ fn zero_length_transformed_dictionary_word_at_position_zero_matches_c() {
     let mut decoder = Decompressor::new(DecoderConfig::default()).unwrap();
     assert!(decoder.decompress(&compressed).is_err());
 }
+
+/// A meta-block with one command type and `empty` transformed dictionary
+/// words that decode to nothing, closed by one five-byte word, `.time`.
+///
+/// RFC 7932 section 10 sets a single type's block count to 16777216. Empty
+/// words are the only commands that make no progress, so this is the one way
+/// to spend that count inside a meta-block of bounded length. Each costs the
+/// fourteen extra bits of its distance, so the boundary needs 28 MiB of input.
+fn single_type_block_of_empty_words(empty: usize) -> (Vec<u8>, Vec<u8>) {
+    // Transform 42, `OmitLast4`, empties word zero; transform 32 prefixes it
+    // with a full stop. Both addresses share one fourteen-bit distance symbol.
+    const EMPTY: u64 = (42 << 10) + 1;
+    const PERIOD: u64 = (32 << 10) + 1;
+    let words = include_bytes!("../src/shared/dictionary/words.bin");
+    let expected = [b".", &words[..4]].concat();
+    let mut wire = Wire::window(16, false);
+    wire.copies(
+        4,
+        std::iter::repeat_n(EMPTY, empty).chain([PERIOD]),
+        expected.len(),
+    );
+    (wire.finish(), expected)
+}
+
+/// Decodes with the pinned C decoder and returns its error code on failure.
+fn c_decompress_status(
+    input: &[u8],
+    capacity: usize,
+) -> Result<Vec<u8>, google_brotli_ffi::BrotliDecoderErrorCode> {
+    use google_brotli_ffi as ffi;
+    let mut output = vec![0; capacity];
+    // SAFETY: input and output outlive the decoder; each cursor/length pair
+    // describes exactly its slice, and the state is released before return.
+    unsafe {
+        let state = ffi::BrotliDecoderCreateInstance(None, None, std::ptr::null_mut());
+        assert!(!state.is_null());
+        let (mut available_in, mut next_in) = (input.len(), input.as_ptr());
+        let (mut available_out, mut next_out) = (output.len(), output.as_mut_ptr());
+        let result = ffi::BrotliDecoderDecompressStream(
+            state,
+            &raw mut available_in,
+            &raw mut next_in,
+            &raw mut available_out,
+            &raw mut next_out,
+            std::ptr::null_mut(),
+        );
+        let error = ffi::BrotliDecoderGetErrorCode(state);
+        ffi::BrotliDecoderDestroyInstance(state);
+        if result != ffi::BROTLI_DECODER_RESULT_SUCCESS {
+            return Err(error);
+        }
+        output.truncate(capacity - available_out);
+    }
+    Ok(output)
+}
+
+#[test]
+fn single_type_block_count_covers_exactly_two_to_the_twenty_four_commands() {
+    let (compressed, expected) = single_type_block_of_empty_words((1 << 24) - 1);
+    assert_eq!(c_decompress_status(&compressed, 64), Ok(expected.clone()));
+    let mut decoder = Decompressor::new(DecoderConfig::default()).unwrap();
+    assert_eq!(decoder.decompress(&compressed).unwrap(), expected);
+}
+
+/// CVE-2026-111497 (Brotli 1.2.1): the C decoder ignored the failed block
+/// switch once a single type's count ran out, then kept decrementing it.
+/// Patched C rejects the command after the count; so must Rust.
+#[test]
+fn exhausted_single_type_block_count_is_rejected_like_c() {
+    let (compressed, _) = single_type_block_of_empty_words(1 << 24);
+    assert_eq!(
+        c_decompress_status(&compressed, 64),
+        Err(google_brotli_ffi::BROTLI_DECODER_ERROR_FORMAT_BLOCK_SWITCH)
+    );
+    let mut decoder = Decompressor::new(DecoderConfig::default()).unwrap();
+    assert!(matches!(
+        decoder.decompress(&compressed),
+        Err(mbrotli::DecodeError::InvalidData {
+            kind: mbrotli::InvalidDataKind::MetaBlock
+        })
+    ));
+    // The command that needs the switch is the last one; feeding the tail a
+    // byte at a time takes it through the byte-exact path instead.
+    let mut session = decoder.start(DecodeStreamConfig::default()).unwrap();
+    let mut output = [0; 64];
+    let tail = compressed.len() - 64;
+    let mut cursor = session
+        .process(&compressed[..tail], &mut output, DecodeOperation::Process)
+        .unwrap()
+        .consumed;
+    let error = loop {
+        assert!(cursor < compressed.len(), "the stream was accepted");
+        match session.process(
+            &compressed[cursor..=cursor],
+            &mut output,
+            DecodeOperation::Process,
+        ) {
+            Ok(progress) => cursor += progress.consumed,
+            Err(failure) => break failure.error,
+        }
+    };
+    assert!(matches!(
+        error,
+        mbrotli::DecodeError::InvalidData {
+            kind: mbrotli::InvalidDataKind::MetaBlock
+        }
+    ));
+}

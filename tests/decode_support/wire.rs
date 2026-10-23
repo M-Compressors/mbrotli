@@ -28,12 +28,18 @@ impl Wire {
     }
     pub fn bits(&mut self, width: u8, value: u64) {
         assert!(width <= 63 && value >> width == 0);
-        for i in 0..usize::from(width) {
+        let (mut width, mut value) = (usize::from(width), value);
+        // Whole partial bytes at a time: some fixtures write millions of fields.
+        while width > 0 {
             if self.bit.is_multiple_of(8) {
                 self.bytes.push(0);
             }
-            *self.bytes.last_mut().unwrap() |= (((value >> i) & 1) as u8) << (self.bit % 8);
-            self.bit += 1;
+            let used = self.bit % 8;
+            let take = width.min(8 - used);
+            *self.bytes.last_mut().unwrap() |= ((value & ((1 << take) - 1)) << used) as u8;
+            value >>= take;
+            width -= take;
+            self.bit += take;
         }
     }
     fn align(&mut self) {
@@ -90,6 +96,17 @@ impl Wire {
     }
     /// One insert-zero command. `decoded` can differ from length for transforms.
     pub fn copy(&mut self, length: usize, distance: u64, decoded: usize) {
+        self.copies(length, [distance], decoded);
+    }
+    /// Insert-zero commands of one copy length in one meta-block. Every
+    /// distance must share the first one's distance symbol, so all three
+    /// trees keep a single symbol and only the extra bits differ.
+    pub fn copies(
+        &mut self,
+        length: usize,
+        distances: impl IntoIterator<Item = u64>,
+        decoded: usize,
+    ) {
         self.length(decoded, false);
         self.bits(3, 0); // One block type for each stream.
         self.bits(6, 0); // NPOSTFIX = NDIRECT = 0.
@@ -110,21 +127,29 @@ impl Wire {
             _ => 384 + code - 16,
         };
         self.single(704, command as u64);
-        let (symbol, extra_width, extra) = (16..if self.large { 140 } else { 64 })
-            .find_map(|symbol| {
-                let code = symbol - 16;
-                let width = 1 + code / 2;
-                let base = ((2 + (code & 1)) << width) - 3;
-                (distance >= base && distance - base < 1 << width).then_some((
-                    symbol,
-                    width,
-                    distance.wrapping_sub(base),
-                ))
-            })
-            .unwrap();
-        self.single(if self.large { 140 } else { 64 }, symbol);
-        self.bits(widths[code], (length - bases[code]) as u64);
-        self.bits(extra_width as u8, extra);
+        let alphabet = if self.large { 140 } else { 64 };
+        let split = |distance: u64| {
+            (16..alphabet)
+                .find_map(|symbol| {
+                    let code = symbol - 16;
+                    let width = 1 + code / 2;
+                    let base = ((2 + (code & 1)) << width) - 3;
+                    (distance >= base && distance - base < 1 << width).then_some((
+                        symbol,
+                        width,
+                        distance.wrapping_sub(base),
+                    ))
+                })
+                .unwrap()
+        };
+        let mut distances = distances.into_iter().map(split).peekable();
+        let shared = distances.peek().unwrap().0;
+        self.single(alphabet, shared);
+        for (symbol, extra_width, extra) in distances {
+            assert_eq!(symbol, shared, "distances need one symbol");
+            self.bits(widths[code], (length - bases[code]) as u64);
+            self.bits(extra_width as u8, extra);
+        }
     }
     /// One insert-zero command whose distance is implicitly the most recent
     /// one; only copy codes below 16 (lengths up to 17) have such symbols.
