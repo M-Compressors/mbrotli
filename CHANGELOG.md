@@ -8,6 +8,12 @@
   `BROTLI_DECODER_ERROR_FORMAT_BLOCK_SWITCH`. Earlier versions counted from
   `u64::MAX` and accepted these RFC-invalid streams.
 
+- The `std` feature now enables `branches/std`. Without it, `branches` calls
+  `core::intrinsics::abort_immediate` on any nightly compiler, so default
+  builds failed on nightlies older than that intrinsic, such as the
+  `nightly-2025-09-05` in the ClusterFuzzLite image. `no_std` builds on those
+  nightlies still fail inside `branches`.
+
 - Continuous fuzzing with ClusterFuzzLite. `fuzz/libfuzzer` wraps 25 of the
   AFL target bodies (19 stable, 6 experimental) as libFuzzer targets, which
   `.clusterfuzzlite/build.sh` builds with AddressSanitizer, debug assertions
