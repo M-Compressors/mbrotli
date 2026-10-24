@@ -27,7 +27,7 @@ jobs:
       # is not committed and a fresh checkout has none to honour. The
       # repository's own checks use it because a working tree has one.
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
-      - run: cargo clippy --workspace --all-targets --features experimental,diagnostics,hotpath-cpu,hotpath-alloc -- -D warnings
+      - run: cargo clippy --workspace --all-targets --features experimental,diagnostics,hotpath-cpu,hotpath-alloc,hotpath-callgrind,hotpath-cloud -- -D warnings
       - run: cargo doc --workspace --all-features --no-deps
         env:
           RUSTDOCFLAGS: -D warnings

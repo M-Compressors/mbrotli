@@ -1,0 +1,39 @@
+# hotpath Cloud performance regression and budgets config for the
+# `compressor` benchmark: `examples/profile_compressor.rs` on `alice29.txt`,
+# run under Valgrind Callgrind, so reports carry instruction counts and
+# allocations instead of timing.
+#
+# Docs: https://hotpath.rs/cloud
+
+[functions]
+# Instruction counts are near-deterministic down to the smallest functions, so
+# this only drops rows too small to matter. It keeps the q0/q1 fast path
+# (0.07% of the run) in view; the HQ and greedy encoders are 3-77%.
+min_percent_total = 0.05
+
+# Six Callgrind runs of one commit (Valgrind 3.26.0, linux-x86_64) moved
+# function instruction counts by at most 0.045% (`driver::acquire`, 0.07% of
+# the run); the encoders that carry the run moved by 0.03-0.04%
+# (`greedy::encoder::encode_block_with`, `create_backward_references`). The
+# residue comes from allocation addresses, not the workload. The bar sits more
+# than 10x above it.
+[functions.icount]
+judged = true
+min_percent_change = 0.5
+metrics = ["avg", "total"]
+min_calls = 1
+
+# The same six runs allocated byte-identical totals in every library function,
+# so any change past the bar is real.
+[functions.alloc]
+judged = true
+min_percent_change = 1
+metrics = ["avg", "total"]
+min_calls = 1
+
+# Under Valgrind no durations are measured, so there is no timing to judge.
+[functions.timing]
+judged = false
+min_percent_change = 50
+metrics = ["avg", "total"]
+min_calls = 1

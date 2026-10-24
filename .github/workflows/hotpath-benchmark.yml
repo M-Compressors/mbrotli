@@ -1,0 +1,120 @@
+name: hotpath benchmark
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+# `examples/profile_compressor.rs` compresses at every quality and then
+# `alice29.txt` at Q5, Q7 and Q9 while hotpath profiles the encoder's hot paths.
+# It runs under Valgrind Callgrind, so the report carries instruction counts
+# and allocations instead of timing; `hotpath/policy.toml` judges them.
+#
+# Pushes upload in process with the job's OIDC token. Fork pull requests get no
+# `id-token: write`, so pull requests write the report to an artifact and
+# `hotpath-relay.yml` uploads it. The relay matches this workflow by `name:`,
+# so renaming it silently stops pull request reports.
+#
+# Instruction counts depend on the Valgrind build, and reports only compare
+# within one (`tool`), so both jobs pin the image and the package: an upgrade
+# is a deliberate bump, not a silent gap in verdicts.
+jobs:
+  upload:
+    name: hotpath benchmark (push)
+    if: github.event_name == 'push'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write # the upload authenticates with the job's OIDC token
+    steps:
+      # The examples link the vendored C library through the
+      # `google-brotli-ffi` dev-dependency, and the corpus lives in it too.
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Record rustc version
+        id: rustc
+        run: echo "version=$(rustc --version | cut -d' ' -f2)" >> "$GITHUB_OUTPUT"
+      - uses: Swatinem/rust-cache@v2
+      - name: Install valgrind
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y valgrind=1:3.26.0-0ubuntu1
+          valgrind --version
+      - name: Build benchmark
+        run: >
+          cargo build -q --release --example profile_compressor
+          --features hotpath-alloc,hotpath-callgrind,hotpath-cloud
+      # Run from the repository root (git info, policy lookup); the Callgrind
+      # dump goes to the runner's temp dir, named by HOTPATH_CALLGRIND_OUT_FILE.
+      - name: Run benchmark under Callgrind and upload report
+        env:
+          HOTPATH_UPLOAD: fail-on-error
+          HOTPATH_UPLOAD_RESPONSE_PATH: ${{ github.workspace }}/upload-response.json
+          HOTPATH_BENCHMARK: compressor
+          HOTPATH_USER_METADATA: runner=${{ runner.os }}-${{ runner.arch }},toolchain=stable,rustc=${{ steps.rustc.outputs.version }},profile=release
+          HOTPATH_OUTPUT_FORMAT: none
+          HOTPATH_CALLGRIND_OUT_FILE: ${{ runner.temp }}/callgrind.out.%p
+        run: |
+          valgrind -q --tool=callgrind --instr-atstart=no \
+            --callgrind-out-file="$HOTPATH_CALLGRIND_OUT_FILE" \
+            target/release/examples/profile_compressor \
+            brotli-ffi/vendor/brotli/tests/testdata/alice29.txt
+          test -s "$HOTPATH_UPLOAD_RESPONSE_PATH"
+
+  # Runs pull request code, possibly from a fork: no `id-token: write` and no
+  # `HOTPATH_UPLOAD` here. The relay uploads the artifact from a job that never
+  # checks out or runs this code.
+  report:
+    name: hotpath benchmark (pull request)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The pull request's head commit, not the default merge commit.
+          ref: ${{ github.event.pull_request.head.sha }}
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Record rustc version
+        id: rustc
+        run: echo "version=$(rustc --version | cut -d' ' -f2)" >> "$GITHUB_OUTPUT"
+      - uses: Swatinem/rust-cache@v2
+      - name: Install valgrind
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y valgrind=1:3.26.0-0ubuntu1
+          valgrind --version
+      # `hotpath-cloud` adds the commit, pull request, benchmark name and
+      # policy file to the JSON report even though this job does not upload.
+      - name: Build benchmark
+        run: >
+          cargo build -q --release --example profile_compressor
+          --features hotpath-alloc,hotpath-callgrind,hotpath-cloud
+      - name: Run benchmark under Callgrind and write report
+        env:
+          HOTPATH_BENCHMARK: compressor
+          HOTPATH_USER_METADATA: runner=${{ runner.os }}-${{ runner.arch }},toolchain=stable,rustc=${{ steps.rustc.outputs.version }},profile=release
+          HOTPATH_OUTPUT_FORMAT: json
+          HOTPATH_OUTPUT_PATH: ${{ github.workspace }}/compressor-report.json
+          HOTPATH_CALLGRIND_OUT_FILE: ${{ runner.temp }}/callgrind.out.%p
+        run: |
+          valgrind -q --tool=callgrind --instr-atstart=no \
+            --callgrind-out-file="$HOTPATH_CALLGRIND_OUT_FILE" \
+            target/release/examples/profile_compressor \
+            brotli-ffi/vendor/brotli/tests/testdata/alice29.txt
+          test -s "$HOTPATH_OUTPUT_PATH"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: compressor-report
+          path: compressor-report.json
+          retention-days: 1
+          if-no-files-found: error

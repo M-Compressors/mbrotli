@@ -1,0 +1,23 @@
+name: hotpath relay
+
+on:
+  workflow_run:
+    # The `name:` of the benchmark workflow; a rename silently stops the relay.
+    workflows: ["hotpath benchmark"]
+    types: [completed]
+
+# Uploads the report a pull request run of `hotpath-benchmark.yml` stored as an
+# artifact, from a job that never checks out pull request code. `workflow_run`
+# runs this file from the default branch only, so edits take effect once
+# merged. Pinned to the release tag of the reusable workflow.
+jobs:
+  relay:
+    uses: hotpath-rs/hotpath/.github/workflows/hotpath-relay.yml@v0.29.0
+    permissions:
+      actions: read # download the artifact of the benchmark run
+      id-token: write # authenticate the upload
+      pull-requests: read # find the pull request the run belongs to
+    with:
+      benchmark: compressor
+      artifact_name: compressor-report
+      report_file: compressor-report.json
