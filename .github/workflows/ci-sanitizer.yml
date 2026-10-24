@@ -11,6 +11,22 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
+  simd-uninit:
+    name: SIMD and uninitialized memory (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@nightly
+      # Natively, the tests reach every SIMD level the runner detects. The
+      # script adds `-Zsanitizer=address` and the explicit host target.
+      - run: python3 scripts/check_simd_uninit.py asan
+
   address-sanitizer:
     name: address sanitizer
     runs-on: ubuntu-latest

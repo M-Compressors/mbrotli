@@ -12,8 +12,10 @@ All checkouts include vendored submodules. Local commands are in
 | `ci-coverage.yml` | Manual | Std and no_std function coverage; 100% gate and HTML report |
 | `ci-benchmarks.yml` | Manual | Criterion validation and timing on Linux x86-64 and ARM64 |
 | `ci-fuzz.yml` | Every tag, manual | Bounded AFL campaigns in stable and experimental profiles |
-| `ci-miri.yml` | Every tag, manual | Retained-storage checks and pure Rust decoder goldens |
-| `ci-sanitizer.yml` | Every tag, manual | AddressSanitizer integration tests |
+| `ci-cflite-pr.yml` | Pull request touching code, fuzz or build files | ClusterFuzzLite libFuzzer/ASan run on the changed code |
+| `ci-cflite-cron.yml` | Daily, manual | ClusterFuzzLite batch fuzzing, corpus pruning and coverage report |
+| `ci-miri.yml` | Every tag, manual | SIMD and uninitialized-memory tests at `target-cpu=native` on x86-64 and ARM64; experimental decoder goldens |
+| `ci-sanitizer.yml` | Every tag, manual | AddressSanitizer: SIMD and uninitialized-memory tests on x86-64 and ARM64, plus integration tests |
 | `ci-decompressor-heavy.yml` | `v*` tag, manual | Actual 25–30-bit history and counters beyond 4 GiB in four decoder profiles |
 | `release.yml` | Manual, from a `v*` tag | Publishes `mbrotli` to crates.io through trusted publishing |
 
@@ -24,6 +26,10 @@ flowchart TD
     Build --> Docs[deny rustdoc warnings: all-features and std with experimental]
     Routine --> Features[std, no_std and isolated codec consumers]
     Routine --> Tests[platform tests and AFL regression replay]
+    Routine --> LibFuzzer[libFuzzer adapter fmt and Clippy]
+    Branch -->|pull request touching code| CFPR[ci-cflite-pr.yml: code-change fuzzing]
+    Daily[daily schedule] --> CFCron[ci-cflite-cron.yml: batch, prune, coverage]
+    CFCron -. coverage report selects targets .-> CFPR
     Tag[any pushed tag] --> HeavyTools[fuzz, Miri and ASan]
     Release[v* tag] --> Decoder[ignored heavy decoder tests]
     Manual[workflow_dispatch] --> HeavyTools
@@ -73,6 +79,58 @@ sequenceDiagram
     GH->>CIO: cargo publish --package mbrotli
 ```
 
+## Miri and AddressSanitizer
+
+Both tools run `scripts/check_simd_uninit.py`, which owns the list of unit-test
+modules (every module with a SIMD kernel, a backend dispatch or a
+`MaybeUninit` destination), integration binaries and the `uninit` doc tests.
+It builds once, lists each binary's tests with `--list`, keeps the names that
+start with a listed prefix, and runs each test in its own process with
+`--exact`, in parallel. A prefix that selects no test, or whose tests are all
+ignored, fails the run: `cargo test` itself passes when a filter matches
+nothing, and a substring filter such as `compressor::core::stream` would also
+match `decompressor::core::stream`.
+
+Miri reports runtime-detected CPU features as absent, so it interprets only the
+SIMD levels compiled in. The Miri jobs set `RUSTFLAGS=-Ctarget-cpu=native`,
+which makes `Backend::available()` list every level the runner has: SSE2,
+SSE4.2 and AVX2 (and AVX-512 when present) on x86-64, Neon on ARM64. The script
+sets `-Zmiri-deterministic-floats`, without which Miri perturbs `log2` and
+exact cost comparisons fail. Miri lacks shims for the Neon `vsliq_n_u8` and
+`vminq_f64` intrinsics behind `fearless_simd`'s `mask8x32::to_bitmask` and
+`f64x2::min`; tests reaching them, and three doc tests the script skips by
+name, do not run under Miri on ARM64. Tests that call the C oracle, read files,
+or are scalar-only and slow carry `cfg_attr(miri, ignore)`; differential SIMD
+tests shrink their inputs under `cfg!(miri)` instead. `tests/uninit_output.rs`
+reads back only reported prefixes of destinations that start uninitialized, so
+Miri checks that every reported byte was written.
+
+AddressSanitizer runs the same list natively in release mode, with real feature
+detection, which reaches the Neon paths Miri cannot. Its integration list also
+includes the C-oracle tests `encode_uninit` and `decode_uninit`. The older
+ASan job keeps its integration-test list.
+
+```mermaid
+flowchart TD
+    Tag[v* tag or manual] --> Miri[ci-miri.yml]
+    Tag --> Asan[ci-sanitizer.yml]
+    Miri --> MX86[x86-64 runner, target-cpu=native]
+    Miri --> MArm[ARM64 runner, target-cpu=native]
+    Miri --> Exp[experimental goldens and wire tests]
+    Asan --> AX86[x86-64 runner]
+    Asan --> AArm[ARM64 runner]
+    Asan --> Legacy[integration-test list]
+    MX86 --> Script[scripts/check_simd_uninit.py]
+    MArm --> Script
+    AX86 --> Script
+    AArm --> Script
+    Script --> List[list tests, select by prefix]
+    List --> Empty{every prefix has a test?}
+    Empty -->|no| Fail[fail]
+    Empty -->|yes| Run[one process per test, in parallel]
+    Run --> Report[per-module pass count and slowest test]
+```
+
 ## AFL execution and artifacts
 
 AFL jobs cache Cargo downloads/tools but disable target caching: instrumented
@@ -108,6 +166,56 @@ Saved crashes or hangs fail the job. Findings are archived as tar.gz and uploade
 when present, including after failures; this preserves AFL filenames with colons.
 Regression replay does not start a campaign or require host core-dump configuration.
 
+## ClusterFuzzLite
+
+Both ClusterFuzzLite workflows build `.clusterfuzzlite/Dockerfile` with
+`google/clusterfuzzlite/actions/build_fuzzers@v1` and run the binaries that
+`build.sh` produces from `fuzz/libfuzzer` (see
+[fuzzing](fuzzing.md#libfuzzer-adapters-and-clusterfuzzlite)). The actions do
+their own checkout, so the workflows have no checkout step and `build.sh`
+fetches the vendored Brotli submodule itself. Runs use libFuzzer with
+AddressSanitizer, the only engine and sanitizer ClusterFuzzLite supports for
+Rust, and the coverage job builds with the coverage sanitizer. All jobs use
+read-only permissions; corpora, crashes and coverage reports are kept as
+workflow artifacts, ClusterFuzzLite's default storage on GitHub.
+
+```mermaid
+sequenceDiagram
+    participant PR as pull request
+    participant Cron as daily schedule
+    participant CF as ClusterFuzzLite actions
+    participant Store as workflow artifacts
+    PR->>CF: build (address), run code-change, 600 s
+    Store-->>CF: latest corpus and coverage report
+    CF-->>PR: job fails on a crash, with the reproducer
+    Cron->>CF: batch: build (address), fuzz 19800 s on all cores
+    CF->>Store: grown corpus, crashes
+    Cron->>CF: prune: minimize corpus, 600 s
+    CF->>Store: pruned corpus
+    Cron->>CF: coverage: build (coverage), report
+    CF->>Store: coverage report
+```
+
+`ci-cflite-pr.yml` runs only when a pull request touches `src/`,
+`brotli-ffi/`, `mbrotli-ffi/`, `fuzz/`, `Cargo.toml`, `.clusterfuzzlite/`,
+`.dockerignore` or the workflow itself, and a newer push cancels the run in
+progress. Code-change mode runs only the targets whose coverage reaches the
+changed lines once a coverage report exists, and every target before that.
+The 600 seconds are split among the targets it runs.
+
+Batch fuzzing gets 19800 seconds (5.5 hours) with `parallel-fuzzing`, which
+runs targets side by side on every runner core. GitHub-hosted jobs stop at six
+hours including the image and fuzzer builds, so the job's `timeout-minutes: 360`
+leaves about half an hour for building and uploading the corpus.
+
+In `ci-cflite-cron.yml` the jobs are chained: pruning follows batch fuzzing
+(ClusterFuzzLite requires pruning whenever batch fuzzing runs), and coverage
+follows pruning, so the report reflects the pruned corpus. A failed batch job
+still lets pruning and coverage run.
+
+`.dockerignore` keeps target directories and local AFL seeds and findings out of
+the image, but keeps `.git`, which the submodule fetch needs.
+
 ## Coverage and limitations
 
 Coverage cleans workspace profiles first, then accumulates a std workspace run
@@ -116,8 +224,9 @@ unit/API run. Both use test optimization level 1 and `CARGO_INCREMENTAL=1` to ke
 coverage code generation consistent. The report enforces 100% function coverage;
 HTML rendering and upload run even if tests or the gate fail.
 
-There is no scheduled workflow, and publishing never starts on its own: a
-pushed tag runs checks only. Each manual dispatch starts only its selected
-workflow. Ordinary branches do not run heavy tools; coverage and benchmarks
-always require explicit dispatch. Bounded fuzz campaigns and shared-runner timings
+The only scheduled workflow is `ci-cflite-cron.yml`, and publishing never
+starts on its own: a pushed tag runs checks only. Each manual dispatch starts only its selected
+workflow. Apart from ten minutes of ClusterFuzzLite fuzzing on pull requests
+that touch code, ordinary branches do not run heavy tools; coverage and
+benchmarks always require explicit dispatch. Bounded fuzz campaigns and shared-runner timings
 provide limited evidence, not exhaustive verification or stable speed guarantees.

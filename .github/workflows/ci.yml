@@ -138,3 +138,25 @@ jobs:
         run: |
           cargo afl test --no-default-features
           cargo afl test --no-default-features --features experimental
+
+  libfuzzer:
+    name: libFuzzer adapters
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fuzz/libfuzzer
+      # The sanitizer build itself needs nightly and runs in ClusterFuzzLite's
+      # image (ci-cflite-pr.yml); stable is enough to lint the adapters.
+      - name: check
+        working-directory: fuzz/libfuzzer
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy --all-targets --locked -- -D warnings
+          cargo clippy --all-targets --locked --features experimental -- -D warnings

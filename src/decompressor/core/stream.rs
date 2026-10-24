@@ -2282,7 +2282,7 @@ mod tests {
     #[test]
     fn scalar_and_host_backends_decode_goldens_with_output_backpressure() {
         use crate::{Backend, DecodeOperation, DecodeStreamConfig, DecoderStatus, Decompressor};
-        let cases: &[(&[u8], &[u8])] = &[
+        let large: &[(&[u8], &[u8])] = &[
             (
                 include_bytes!(
                     "../../../brotli-ffi/vendor/brotli/tests/testdata/alice29.txt.compressed"
@@ -2298,6 +2298,22 @@ mod tests {
                 ),
             ),
         ];
+        // Miri decodes small goldens: literals and copies, and one long run.
+        let small: &[(&[u8], &[u8])] = &[
+            (
+                include_bytes!(
+                    "../../../brotli-ffi/vendor/brotli/tests/testdata/monkey.compressed"
+                ),
+                include_bytes!("../../../brotli-ffi/vendor/brotli/tests/testdata/monkey"),
+            ),
+            (
+                include_bytes!(
+                    "../../../brotli-ffi/vendor/brotli/tests/testdata/zerosukkanooa.compressed"
+                ),
+                include_bytes!("../../../brotli-ffi/vendor/brotli/tests/testdata/zerosukkanooa"),
+            ),
+        ];
+        let cases = if cfg!(miri) { small } else { large };
         for backend in Backend::available() {
             let mut decoder = Decompressor::builder(DecoderConfig::default())
                 .with_backend(backend)
@@ -2330,8 +2346,14 @@ mod tests {
 
     #[test]
     fn vector_copies_match_snapshots_for_every_host_backend_and_ring_boundary() {
+        // Miri keeps the sizes around both vector widths.
+        let sizes: &[usize] = if cfg!(miri) {
+            &[0, 1, 15, 16, 17, 31, 32, 33]
+        } else {
+            &[0, 1, 15, 16, 17, 31, 32, 33, 63, 64, 65, 97]
+        };
         for backend in crate::Backend::available() {
-            for size in [0, 1, 15, 16, 17, 31, 32, 33, 63, 64, 65, 97] {
+            for &size in sizes {
                 let original: Vec<u8> = (0..size).map(|i| (i * 37) as u8).collect();
                 for src in 0..=size + 1 {
                     for dst in 0..=size + 1 {

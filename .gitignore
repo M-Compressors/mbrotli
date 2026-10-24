@@ -13,6 +13,12 @@ fuzz/afl/seeds/
 # The fuzz package pins its dependencies so a campaign is reproducible; the
 # bare `Cargo.lock` rule above would otherwise swallow it.
 !fuzz/afl/Cargo.lock
+# `cargo fuzz run` keeps its queue and crashes beside the libFuzzer package.
+fuzz/libfuzzer/target/
+fuzz/libfuzzer/corpus/
+fuzz/libfuzzer/artifacts/
+fuzz/libfuzzer/coverage/
+!fuzz/libfuzzer/Cargo.lock
 
 # The independent implementation comparison owns its dependency pins and output.
 benchmarks/comparison/target/

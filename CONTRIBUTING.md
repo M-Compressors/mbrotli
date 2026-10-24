@@ -69,6 +69,68 @@ The full rules are in [`AGENTS.md`](AGENTS.md); the essentials:
 - Encoder and decoder changes need differential tests against Google's C
   implementation; optimized paths need differential tests against the
   baseline.
+- **SIMD and uninitialized memory are covered by Miri and AddressSanitizer.**
+  Any change that adds or touches a SIMD kernel (`fearless_simd` code,
+  `dispatch!`, a `Simd`-generic function) or code that writes to or reads from
+  `MaybeUninit` memory (`*_uninit` APIs, `shared::uninit`, `BorrowedBuf`)
+  needs tests that run under both tools, and the pull request must name the
+  Miri and ASan commands it ran. A new module or test binary goes into the
+  lists in `scripts/check_simd_uninit.py`, which `ci-miri.yml` and
+  `ci-sanitizer.yml` run on every tag.
+
+### Miri and AddressSanitizer
+
+`scripts/check_simd_uninit.py` runs every SIMD and uninitialized-memory test,
+one process per test. It selects tests by name prefix from the binary's own
+`--list` and fails a prefix that runs no test, since `cargo test` passes
+when a filter matches nothing.
+
+```sh
+# Miri, at every SIMD level this machine has
+RUSTFLAGS=-Ctarget-cpu=native python3 scripts/check_simd_uninit.py miri
+# Miri on x86-64 from an Apple Silicon Mac: SSE2 through AVX2
+RUSTFLAGS=-Ctarget-cpu=x86-64-v3 CARGO_TARGET_DIR=target/miri-v3 \
+  python3 scripts/check_simd_uninit.py miri --target x86_64-apple-darwin
+# AddressSanitizer, natively
+python3 scripts/check_simd_uninit.py asan
+```
+
+- Miri reports runtime-detected CPU features as absent, so it only reaches
+  the SIMD levels the build enables at compile time: plain x86-64 gets SSE2
+  and the scalar fallback, never SSE4.2 or AVX2. CI sets
+  `RUSTFLAGS=-Ctarget-cpu=native`; locally, pick a CPU with `-Ctarget-cpu`
+  and give each one its own `CARGO_TARGET_DIR`. Miri interprets the target,
+  so an x86-64 run needs no x86 machine.
+- The script sets `-Zmiri-deterministic-floats`, which a manual
+  `cargo miri test` needs too. By default Miri adds random rounding error to
+  `log2` and other float functions, so exact bit-cost assertions and
+  scalar/SIMD comparisons fail for no real reason.
+- Miri cannot interpret every Neon intrinsic `fearless_simd` uses. Today it
+  stops with `unsupported operation` at `mask8x32::to_bitmask`
+  (`vsliq_n_u8`) and `f64x2::min` (`vminq_f64`), which qualities 10 and 11
+  reach through the binary-tree matcher, the static dictionary search and the
+  block splitter. Tests that reach them carry
+  `#[cfg_attr(all(miri, target_arch = "aarch64"), ignore = "...")]`; those
+  Neon paths are covered only by AddressSanitizer, and their x86-64 paths
+  still run under Miri.
+- Miri cannot call the C oracle (`google-brotli-ffi`) or open files with
+  isolation enabled. Such tests, and slow scalar-only ones, carry
+  `#[cfg_attr(miri, ignore = "...")]`. A Miri test compares a SIMD level
+  against `Backend::SCALAR` on inline data.
+- Iterate `Backend::available()` (or `Backend::levels()` in a unit test) so
+  each run covers every level its target allows; `Level::try_detect()` alone
+  reaches one.
+- Keep each test small enough for Miri, at most a minute or two: shrink its
+  input under `cfg!(miri)` while keeping the vector, tail and chunk
+  boundaries. The script reports each module's slowest test.
+- Read uninitialized output back only up to the count the codec reported,
+  from a buffer that starts as `MaybeUninit::uninit()`. A sentinel-filled
+  buffer catches writes past the count but is already initialized, so Miri
+  cannot tell whether the codec wrote what it reported; `tests/uninit_output.rs`
+  checks that.
+
+AddressSanitizer runs natively, with real CPU feature detection, so it
+reaches every level the host has, including the Neon paths Miri cannot.
 
 ## Checks to run before opening a pull request
 

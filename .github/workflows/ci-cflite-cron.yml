@@ -1,0 +1,73 @@
+name: CI ClusterFuzzLite cron
+
+# Daily continuous fuzzing. Corpora, crashes and coverage reports are kept as
+# workflow artifacts, which is ClusterFuzzLite's default storage on GitHub.
+# The jobs run in sequence: batch fuzzing grows the corpus, pruning keeps it
+# minimal (ClusterFuzzLite requires pruning whenever batch fuzzing runs), and
+# coverage reports on the pruned corpus for PR code-change mode to use.
+on:
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+
+permissions: read-all
+
+jobs:
+  batch:
+    name: batch fuzzing
+    runs-on: ubuntu-latest
+    # GitHub-hosted jobs stop at six hours, image and fuzzer builds included;
+    # 5.5 hours of fuzzing leaves room for the build and the corpus upload.
+    timeout-minutes: 360
+    steps:
+      - name: build fuzzers
+        uses: google/clusterfuzzlite/actions/build_fuzzers@v1
+        with:
+          language: rust
+          sanitizer: address
+      - name: run fuzzers
+        uses: google/clusterfuzzlite/actions/run_fuzzers@v1
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          fuzz-seconds: 19800
+          mode: batch
+          sanitizer: address
+          # Fuzz targets side by side on every runner core instead of one at
+          # a time; the budget is shared by all targets either way.
+          parallel-fuzzing: true
+
+  prune:
+    name: corpus pruning
+    needs: batch
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: build fuzzers
+        uses: google/clusterfuzzlite/actions/build_fuzzers@v1
+        with:
+          language: rust
+      - name: prune corpora
+        uses: google/clusterfuzzlite/actions/run_fuzzers@v1
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          fuzz-seconds: 600
+          mode: prune
+
+  coverage:
+    name: coverage report
+    needs: prune
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: build fuzzers
+        uses: google/clusterfuzzlite/actions/build_fuzzers@v1
+        with:
+          language: rust
+          sanitizer: coverage
+      - name: report coverage
+        uses: google/clusterfuzzlite/actions/run_fuzzers@v1
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          fuzz-seconds: 600
+          mode: coverage
+          sanitizer: coverage

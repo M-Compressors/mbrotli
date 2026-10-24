@@ -274,13 +274,9 @@ mod tests {
 
     use super::*;
 
-    /// The detected level, the baseline and the scalar fallback.
-    fn levels() -> [Level; 3] {
-        [
-            Level::try_detect().unwrap_or_else(Level::baseline),
-            Level::baseline(),
-            Level::fallback(),
-        ]
+    /// Every level the host runs, and the scalar fallback.
+    fn levels() -> Vec<Level> {
+        crate::backend::Backend::levels()
     }
 
     /// Arrays with sparse entries, full chunks, long runs and ragged tails.
@@ -293,7 +289,13 @@ mod tests {
             state
         };
         let mut shapes = Vec::new();
-        for len in [0usize, 1, 15, 16, 17, 31, 32, 33, 64, 70, 256, 704] {
+        // Miri keeps the chunk and tail boundaries but not the long arrays.
+        let lens: &[usize] = if cfg!(miri) {
+            &[0, 1, 15, 16, 17, 31, 32, 33, 64, 70]
+        } else {
+            &[0, 1, 15, 16, 17, 31, 32, 33, 64, 70, 256, 704]
+        };
+        for &len in lens {
             shapes.push((0..len).map(|_| u32::from(next() % 9 == 0) * 3).collect());
             shapes.push((0..len).map(|_| next() % 5 + 1).collect());
             shapes.push((0..len).map(|i| (i / 23 % 3) as u32).collect());

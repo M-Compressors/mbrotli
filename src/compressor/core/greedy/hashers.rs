@@ -4220,6 +4220,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        miri,
+        ignore = "checks the sparse-to-dense layout policy, not memory safety, and fills an 8 MiB table twice; `a_dense_table_keeps_its_blocks_and_clears_only_its_counters` covers the dense table under Miri"
+    )]
     fn a_deep_shape_takes_the_dense_table_once_it_is_reused() {
         // A quarter-mebibyte hint is below an eighth of the 8 MiB table, so
         // the first stream stays on demand; the second stream, a sixty-fourth
@@ -5025,13 +5029,14 @@ mod tests {
         let query = query(data, cache, cur_ix);
         let expected =
             dispatch!(Level::fallback(), simd => probe_on::<_, BLOCK>(simd, &query, out));
-        let level = Level::try_detect().unwrap_or_else(Level::baseline);
-        let actual = dispatch!(level, simd => probe_on::<_, BLOCK>(simd, &query, out));
-        assert_eq!(
-            actual, expected,
-            "block {BLOCK}, cur_ix {cur_ix}, cache {cache:?}, incoming {}",
-            out.len
-        );
+        for level in crate::backend::Backend::levels() {
+            let actual = dispatch!(level, simd => probe_on::<_, BLOCK>(simd, &query, out));
+            assert_eq!(
+                actual, expected,
+                "block {BLOCK}, cur_ix {cur_ix}, cache {cache:?}, incoming {}",
+                out.len
+            );
+        }
     }
 
     #[test]
@@ -5054,7 +5059,8 @@ mod tests {
                 data.extend_from_slice(&stretch);
             }
         }
-        for _ in 0..4000 {
+        let rounds = if cfg!(miri) { 300 } else { 4000 };
+        for _ in 0..rounds {
             let cur_ix = (next() % (data.len() as u64 - 64)) as usize;
             let mut cache = INITIAL_DISTANCE_CACHE;
             for entry in &mut cache[..NUM_REMEMBERED_DISTANCES] {

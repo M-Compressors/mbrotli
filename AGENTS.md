@@ -139,6 +139,16 @@ explicitly an upstream-vendor update.
 - Add regression tests before fixing a bug. For optimized code, add differential
   tests against the baseline implementation and, where appropriate, Google's C
   Brotli implementation.
+- Every SIMD kernel and every path that writes to or reads from `MaybeUninit`
+  memory must be exercised under both Miri and AddressSanitizer through
+  `scripts/check_simd_uninit.py`, which `ci-miri.yml` and `ci-sanitizer.yml`
+  run; add a new module or test binary to its lists. Miri reaches only the
+  SIMD levels enabled at compile time, so CI runs it with
+  `RUSTFLAGS=-Ctarget-cpu=native`; locally, also run x86-64 with
+  `-Ctarget-cpu=x86-64-v3`. Shrink inputs under `cfg!(miri)` rather than
+  ignoring a SIMD test, and read uninitialized output from buffers that start
+  `MaybeUninit::uninit()`. Neon paths Miri cannot interpret are covered by
+  ASan alone. The commands and known Miri limits are in `CONTRIBUTING.md`.
 - Use `cargo llvm-cov` (or an equivalent Rust coverage tool) to check function
   coverage. Generated coverage reports are local artifacts and should not be
   committed.
@@ -216,6 +226,20 @@ cargo afl test --no-default-features --features experimental
 runtime, so plain `cargo test` cannot link them. It replays the committed
 regression corpus in `fuzz/afl/regressions/` through the target bodies, which
 carry no AFL dependency of their own.
+
+`fuzz/libfuzzer` is excluded from the workspace too. It wraps the same target
+bodies for ClusterFuzzLite. After changing it, or a target body it wraps, run
+from `fuzz/libfuzzer/`:
+
+```sh
+cargo fmt --all -- --check
+cargo clippy --all-targets --locked -- -D warnings
+cargo clippy --all-targets --locked --features experimental -- -D warnings
+```
+
+A new AFL target that ClusterFuzzLite should run needs a matching adapter in
+`fuzz/libfuzzer/fuzz_targets/`, its `[[bin]]` entry, and, if it reads a
+generated corpus, a case in `.clusterfuzzlite/build.sh`'s `seeds_for`.
 
 Fix warnings and formatting issues rather than suppressing them. If a Clippy
 lint is a demonstrated false positive, use the narrowest possible

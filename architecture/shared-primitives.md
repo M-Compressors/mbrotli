@@ -77,7 +77,11 @@ out-of-line call, so `baseline::run` hands a `Kernel` (a value with a generic
 this crate. It emits `prefetcht0` on x86-64 and x86 with SSE, `prfm
 pldl1keep` on AArch64, the targets' own prefetch on riscv64 with `zicbop`,
 s390x and PowerPC, and the LLVM intrinsic on nightly; elsewhere it does
-nothing. There is no write variant: the hinted bucket is read by the next
+nothing. The crate's `std` feature enables `branches/std`; without it,
+`branches` builds its unused `abort` on `core::intrinsics::abort_immediate`
+under any nightly, which older nightlies lack. A `no_std` build on such a
+nightly still fails inside `branches`; stable is unaffected. There is no
+write variant: the hinted bucket is read by the next
 search before its store, and a line read by the encoder's single thread
 arrives exclusive, so the store needs no second request. `scan` holds the sixteen-lane mask walks the prefix-code builders use
 ([fast-encoder.md](fast-encoder.md) §6.1); each is tested on the scalar,

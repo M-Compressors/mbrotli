@@ -8,10 +8,35 @@
   `BROTLI_DECODER_ERROR_FORMAT_BLOCK_SWITCH`. Earlier versions counted from
   `u64::MAX` and accepted these RFC-invalid streams.
 
+- The `std` feature now enables `branches/std`. Without it, `branches` calls
+  `core::intrinsics::abort_immediate` on any nightly compiler, so default
+  builds failed on nightlies older than that intrinsic, such as the
+  `nightly-2025-09-05` in the ClusterFuzzLite image. `no_std` builds on those
+  nightlies still fail inside `branches`.
+
+- Continuous fuzzing with ClusterFuzzLite. `fuzz/libfuzzer` wraps 25 of the
+  AFL target bodies (19 stable, 6 experimental) as libFuzzer targets, which
+  `.clusterfuzzlite/build.sh` builds with AddressSanitizer, debug assertions
+  and overflow checks. Pull requests that touch code get a ten-minute run on
+  the changed code (`ci-cflite-pr.yml`). A daily workflow runs 5.5 hours of
+  batch fuzzing on every runner core, then corpus pruning and a coverage report
+  (`ci-cflite-cron.yml`). The published crate is unchanged.
+
 - Clarified `ParallelTaskQueue` documentation: stopped executors can leave
   blocking I/O and writer finalization waiting indefinitely; dropping queue
   handles or tasks reports closure or abandonment errors when observed. Tasks
   already held by executors must still be run or dropped.
+
+- Miri and AddressSanitizer now cover every SIMD kernel and every
+  uninitialized-output path. `scripts/check_simd_uninit.py` runs those tests
+  one per process, fails a module that runs none, and is what `ci-miri.yml`
+  and `ci-sanitizer.yml` run on x86-64 and ARM64. Miri builds with
+  `-Ctarget-cpu=native`, since it reaches only the SIMD levels compiled in;
+  before, it ran on x86-64 at SSE2 only and reached neither SSE4.2, AVX2 nor
+  Neon. Unit tests that compared a few levels now iterate every available
+  backend. A new `uninit_output` test reads back only the reported prefix of
+  destinations that start uninitialized, so Miri checks that the codecs
+  initialize every byte they report. The published crate is unchanged.
 
 ## [v0.5.16](https://github.com/M-Compressors/mbrotli/releases/tag/v0.5.16) - 2026-10-17
 

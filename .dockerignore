@@ -1,0 +1,7 @@
+# The ClusterFuzzLite image copies the checkout. Build output and local fuzz
+# artifacts stay out of it; `.git` stays in, so build.sh can fetch the pinned
+# Brotli submodule when the checkout left it empty.
+**/target
+fuzz/afl/seeds
+fuzz/afl/findings
+fuzz/afl/artifacts
