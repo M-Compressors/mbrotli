@@ -13,7 +13,8 @@ The `no_std` feature enables the optional `libm` dependency and
 Cargo features are additive. `no_std` overrides the library's std-only API and
 instrumentation gates even if `std` or profiling features are also enabled, but
 cannot remove dependencies enabled by those features. Bare-metal applications
-must omit `std`, `hotpath`, `hotpath-cpu`, and `hotpath-alloc` throughout their
+must omit `std` and every `hotpath*` feature (`hotpath`, `hotpath-cpu`,
+`hotpath-alloc`, `hotpath-callgrind`, `hotpath-cloud`) throughout their
 resolved dependency graph. Disabling defaults alone does not select `no_std`.
 
 ```mermaid

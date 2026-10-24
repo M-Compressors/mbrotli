@@ -1,0 +1,99 @@
+name: hotpath benchmark
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+# Pull requests upload through `hotpath-relay.yml`, which matches this
+# workflow by name. Counts depend on the Valgrind build, so it is pinned.
+jobs:
+  upload:
+    name: hotpath benchmark (push)
+    if: github.event_name == 'push'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Record rustc version
+        id: rustc
+        run: echo "version=$(rustc --version | cut -d' ' -f2)" >> "$GITHUB_OUTPUT"
+      - uses: Swatinem/rust-cache@v2
+      - name: Install valgrind
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y valgrind=1:3.26.0-0ubuntu1
+          valgrind --version
+      - name: Build benchmark
+        run: >
+          cargo build -q --release --example profile_compressor
+          --features hotpath-alloc,hotpath-callgrind,hotpath-cloud
+      - name: Run benchmark under Callgrind and upload report
+        env:
+          HOTPATH_UPLOAD: fail-on-error
+          HOTPATH_UPLOAD_RESPONSE_PATH: ${{ github.workspace }}/upload-response.json
+          HOTPATH_BENCHMARK: compressor
+          HOTPATH_USER_METADATA: runner=${{ runner.os }}-${{ runner.arch }},toolchain=stable,rustc=${{ steps.rustc.outputs.version }},profile=release
+          HOTPATH_OUTPUT_FORMAT: none
+          HOTPATH_CALLGRIND_OUT_FILE: ${{ runner.temp }}/callgrind.out.%p
+        run: |
+          valgrind -q --tool=callgrind --instr-atstart=no \
+            --callgrind-out-file="$HOTPATH_CALLGRIND_OUT_FILE" \
+            target/release/examples/profile_compressor \
+            brotli-ffi/vendor/brotli/tests/testdata/alice29.txt
+          test -s "$HOTPATH_UPLOAD_RESPONSE_PATH"
+
+  report:
+    name: hotpath benchmark (pull request)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Record rustc version
+        id: rustc
+        run: echo "version=$(rustc --version | cut -d' ' -f2)" >> "$GITHUB_OUTPUT"
+      - uses: Swatinem/rust-cache@v2
+      - name: Install valgrind
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y valgrind=1:3.26.0-0ubuntu1
+          valgrind --version
+      - name: Build benchmark
+        run: >
+          cargo build -q --release --example profile_compressor
+          --features hotpath-alloc,hotpath-callgrind,hotpath-cloud
+      - name: Run benchmark under Callgrind and write report
+        env:
+          HOTPATH_BENCHMARK: compressor
+          HOTPATH_USER_METADATA: runner=${{ runner.os }}-${{ runner.arch }},toolchain=stable,rustc=${{ steps.rustc.outputs.version }},profile=release
+          HOTPATH_OUTPUT_FORMAT: json
+          HOTPATH_OUTPUT_PATH: ${{ github.workspace }}/compressor-report.json
+          HOTPATH_CALLGRIND_OUT_FILE: ${{ runner.temp }}/callgrind.out.%p
+        run: |
+          valgrind -q --tool=callgrind --instr-atstart=no \
+            --callgrind-out-file="$HOTPATH_CALLGRIND_OUT_FILE" \
+            target/release/examples/profile_compressor \
+            brotli-ffi/vendor/brotli/tests/testdata/alice29.txt
+          test -s "$HOTPATH_OUTPUT_PATH"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: compressor-report
+          path: compressor-report.json
+          retention-days: 1
+          if-no-files-found: error
