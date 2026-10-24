@@ -270,3 +270,5 @@ Record revision, lockfile, compilers, CPU, target flags, affinity, corpus identi
 settings, API mode, sizes, and timing intervals. Generated Criterion and coverage
 files are local artifacts. Short runs on shared hosts provide exploratory
 evidence, not universal performance claims.
+
+The benchmark name is `compressor`; its reports are compared only within that series.
