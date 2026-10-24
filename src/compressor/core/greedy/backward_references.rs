@@ -828,6 +828,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        miri,
+        ignore = "restarts the search at every position, which is level-independent and too slow for Miri"
+    )]
     fn a_search_resumed_at_every_checkpoint_emits_the_same_commands() {
         let mut data: Vec<u8> = b"the quick brown fox jumps over the lazy dog; "
             .iter()

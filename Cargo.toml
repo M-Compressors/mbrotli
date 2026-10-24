@@ -95,8 +95,10 @@ default = ["std", "compression", "decompression"]
 # Independently selectable public codecs and their private implementations.
 compression = ["dep:branches", "dep:fearless_simd", "dep:fearless_simd_macros", "dep:thiserror"]
 decompression = ["dep:fearless_simd", "dep:thiserror", "dep:borrowed-buf"]
-# Dependency runtime detection for ordinary builds.
-std = ["fearless_simd?/std", "thiserror?/std"]
+# Dependency runtime detection for ordinary builds. `branches` without `std`
+# calls `core::intrinsics::abort_immediate` on nightly, which older nightlies
+# (such as the ClusterFuzzLite image's) lack.
+std = ["fearless_simd?/std", "thiserror?/std", "branches?/std"]
 # Opt-in alloc-backed support; overrides std-only APIs and instrumentation.
 # Disable default features too when targeting a platform without std.
 no_std = ["dep:libm", "fearless_simd?/libm"]

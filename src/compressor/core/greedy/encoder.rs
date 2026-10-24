@@ -1101,15 +1101,12 @@ mod tests {
 
     #[test]
     fn every_backend_produces_the_same_stream() {
-        let data: Vec<u8> = (0..200_000u32).map(|i| (i * 7 % 253) as u8).collect();
+        let len = if cfg!(miri) { 20_000 } else { 200_000 };
+        let data: Vec<u8> = (0..len).map(|i| (i * 7 % 253) as u8).collect();
         for quality in [QualityLevel::Q3, QualityLevel::Q4, QualityLevel::Q5] {
             let params = CompressParams::new(quality, WindowBits::DEFAULT);
             let mut streams = Vec::new();
-            for backend in [
-                Backend::default(),
-                Backend(fearless_simd::Level::baseline()),
-                Backend::SCALAR,
-            ] {
+            for backend in Backend::available() {
                 let mut encoder = GreedyEncoder::<false>::new(backend, &params, data.len())
                     .expect("supported quality");
                 let limit = encoder.block_size_limit();

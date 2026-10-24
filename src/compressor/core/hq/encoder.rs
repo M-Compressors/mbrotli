@@ -831,6 +831,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        all(miri, target_arch = "aarch64"),
+        ignore = "Miri has no shim for the Neon intrinsics this reaches; see CONTRIBUTING.md"
+    )]
     fn both_qualities_produce_a_non_empty_stream() {
         for quality in [QualityLevel::Q10, QualityLevel::Q11] {
             let stream = compress(quality, b"hello hello hello hello hello hello");
@@ -857,15 +861,16 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        all(miri, target_arch = "aarch64"),
+        ignore = "Miri has no shim for the Neon intrinsics this reaches; see CONTRIBUTING.md"
+    )]
     fn every_backend_produces_the_same_stream() {
-        let data: Vec<u8> = (0..120_000u32).map(|i| (i * 7 % 253) as u8).collect();
+        let len = if cfg!(miri) { 3000 } else { 120_000 };
+        let data: Vec<u8> = (0..len).map(|i| (i * 7 % 253) as u8).collect();
         for quality in [QualityLevel::Q10, QualityLevel::Q11] {
             let mut streams = Vec::new();
-            for backend in [
-                Backend::default(),
-                Backend(fearless_simd::Level::baseline()),
-                Backend::SCALAR,
-            ] {
+            for backend in Backend::available() {
                 streams.push(compress_with(backend, quality, &data));
             }
             assert!(
@@ -913,6 +918,7 @@ mod tests {
     const COLLISION_REGRESSION: &[u8] = include_bytes!("collision_regression.bin");
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot call the C oracle")]
     fn the_collision_regression_matches_the_c_encoder() {
         for quality in [QualityLevel::Q10, QualityLevel::Q11] {
             let expected = c_compress(usize::from(quality) as i32, 22, COLLISION_REGRESSION);
@@ -928,6 +934,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot call the C oracle")]
     fn a_collision_pattern_matches_the_c_encoder() {
         // Five identical bytes then a random one: every position shares a
         // four-byte prefix, which is what makes the binary tree deep and the
@@ -958,6 +965,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot call the C oracle")]
     fn a_copy_continued_into_the_next_input_block_matches_the_c_encoder() {
         // A period no window position breaks: the copy that reaches the end of
         // each 256 KiB input block runs on into the next one, where the
@@ -973,6 +981,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        miri,
+        ignore = "measures compression ratio, not memory safety, and is too slow for Miri"
+    )]
     fn quality_eleven_compresses_at_least_as_well_as_quality_ten() {
         let mut data = Vec::new();
         while data.len() < 200_000 {

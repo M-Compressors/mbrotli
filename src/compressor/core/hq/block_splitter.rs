@@ -896,9 +896,22 @@ mod tests {
     use alloc::boxed::Box;
 
     #[test]
+    #[cfg_attr(
+        all(miri, target_arch = "aarch64"),
+        ignore = "Miri has no shim for the Neon intrinsics this reaches; see CONTRIBUTING.md"
+    )]
     fn assignments_match_scalar_bits_ties_tails_and_prologue_on_every_backend() {
-        for count in [1usize, 2, 7, 8, 9, 15, 16, 17, 31, 32, 33, 50, 99, 100] {
-            for length in [0, 1, 127, PROLOGUE_LENGTH - 1, PROLOGUE_LENGTH + 3] {
+        // Miri keeps the vector, tail and prologue boundaries.
+        let (counts, lengths): (&[usize], &[usize]) = if cfg!(miri) {
+            (&[1, 7, 8, 9, 17], &[0, 1, 127, PROLOGUE_LENGTH + 3])
+        } else {
+            (
+                &[1, 2, 7, 8, 9, 15, 16, 17, 31, 32, 33, 50, 99, 100],
+                &[0, 1, 127, PROLOGUE_LENGTH - 1, PROLOGUE_LENGTH + 3],
+            )
+        };
+        for &count in counts {
+            for &length in lengths {
                 let data: Vec<u16> = (0..length).map(|i| ((i * 73 + i / 7) % 3) as u16).collect();
                 for pattern in 0..4 {
                     let prices: Vec<f64> = (0..3 * count)
@@ -957,8 +970,17 @@ mod tests {
     /// `find_blocks` pads its rows with NaN-cost lanes; those lanes must not
     /// change an id, a switch bit, or a real lane's cost.
     #[test]
+    #[cfg_attr(
+        all(miri, target_arch = "aarch64"),
+        ignore = "Miri has no shim for the Neon intrinsics this reaches; see CONTRIBUTING.md"
+    )]
     fn nan_padding_lanes_leave_the_assignment_unchanged() {
-        for count in [2usize, 5, 9, 50, 100] {
+        let counts: &[usize] = if cfg!(miri) {
+            &[2, 9]
+        } else {
+            &[2, 5, 9, 50, 100]
+        };
+        for &count in counts {
             let lanes = padded_histograms(count);
             let length = PROLOGUE_LENGTH + 3;
             let data: Vec<u16> = (0..length).map(|i| ((i * 73 + i / 7) % 3) as u16).collect();
@@ -1028,6 +1050,10 @@ mod tests {
     /// A tie across chunks goes to the smaller id, not the lower lane: id 5
     /// sits in lane 5 of the first chunk, id 11 in lane 3 of the second.
     #[test]
+    #[cfg_attr(
+        all(miri, target_arch = "aarch64"),
+        ignore = "Miri has no shim for the Neon intrinsics this reaches; see CONTRIBUTING.md"
+    )]
     fn tied_minima_in_different_chunks_pick_the_smallest_id() {
         for backend in crate::Backend::available() {
             let mut cost = vec![10.0; 16];
@@ -1247,6 +1273,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        miri,
+        ignore = "scalar-only and too slow for Miri; the kernels it reaches have their own tests"
+    )]
     fn a_stream_that_changes_character_is_split() {
         // Two halves drawn from disjoint alphabets: one code cannot serve both.
         let mut data = vec![7u16; 6000];
@@ -1257,6 +1287,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        miri,
+        ignore = "scalar-only and too slow for Miri; the kernels it reaches have their own tests"
+    )]
     fn an_alternating_stream_reuses_its_block_types() {
         // Four runs from two alphabets: the partition should reuse two types
         // rather than inventing four.
@@ -1272,6 +1306,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        miri,
+        ignore = "scalar-only and too slow for Miri; the kernels it reaches have their own tests"
+    )]
     fn every_partition_is_well_formed() {
         let mut rng = 0x1357_9BDF_2468_ACE0u64;
         let mut data = Vec::new();
@@ -1302,6 +1340,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        miri,
+        ignore = "scalar-only and too slow for Miri; the kernels it reaches have their own tests"
+    )]
     fn splitting_is_deterministic() {
         let mut data = Vec::new();
         for segment in 0..6u16 {
@@ -1315,6 +1357,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        miri,
+        ignore = "scalar-only and too slow for Miri; the kernels it reaches have their own tests"
+    )]
     fn the_iteration_count_can_change_the_partition() {
         // Quality ten refines three times and quality eleven ten times; on a
         // stream with structure to find, that is visible in the result.
@@ -1329,6 +1375,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        miri,
+        ignore = "scalar-only and too slow for Miri; the kernels it reaches have their own tests"
+    )]
     fn all_three_streams_are_split_together() {
         let dist = crate::shared::distance::DistanceParams::default();
         let data: Vec<u8> = (0..40_000u32).map(|i| (i % 251) as u8).collect();
@@ -1360,6 +1410,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot call the C oracle")]
     fn every_partition_matches_the_c_splitter() {
         let dist = crate::shared::distance::DistanceParams::default();
         let cases: Vec<(&str, Fixture, Vec<Command>)> = vec![
@@ -1430,6 +1481,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        miri,
+        ignore = "scalar-only and too slow for Miri; the kernels it reaches have their own tests"
+    )]
     fn a_reused_splitter_produces_the_same_partition() {
         let dist = crate::shared::distance::DistanceParams::default();
         let data: Vec<u8> = (0..30_000u32).map(|i| (i * 7 % 253) as u8).collect();

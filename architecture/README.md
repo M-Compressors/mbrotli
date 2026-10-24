@@ -96,4 +96,4 @@ FFI do not appear in public signatures. Each codec compiles independently.
 | --- | --- |
 | [Implementation comparison](benchmark-comparison.md) | Isolated Criterion suites, validation, recorded-run provenance and encoder/decoder charts. |
 | [Fuzzing](fuzzing.md) | Target inputs, oracles, campaigns, regression replay, and the libFuzzer adapters ClusterFuzzLite builds. |
-| [Continuous integration](ci.md) | Triggers, checks, strict alloc/std documentation builds, framed fuzz campaigns, ClusterFuzzLite PR and daily fuzzing, artifacts, coverage gating and crates.io release publishing. |
+| [Continuous integration](ci.md) | Triggers, checks, strict alloc/std documentation builds, Miri and AddressSanitizer coverage of SIMD and uninitialized memory, framed fuzz campaigns, ClusterFuzzLite PR and daily fuzzing, artifacts, coverage gating and crates.io release publishing. |

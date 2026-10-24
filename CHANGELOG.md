@@ -21,6 +21,17 @@
   handles or tasks reports closure or abandonment errors when observed. Tasks
   already held by executors must still be run or dropped.
 
+- Miri and AddressSanitizer now cover every SIMD kernel and every
+  uninitialized-output path. `scripts/check_simd_uninit.py` runs those tests
+  one per process, fails a module that runs none, and is what `ci-miri.yml`
+  and `ci-sanitizer.yml` run on x86-64 and ARM64. Miri builds with
+  `-Ctarget-cpu=native`, since it reaches only the SIMD levels compiled in;
+  before, it ran on x86-64 at SSE2 only and reached neither SSE4.2, AVX2 nor
+  Neon. Unit tests that compared a few levels now iterate every available
+  backend. A new `uninit_output` test reads back only the reported prefix of
+  destinations that start uninitialized, so Miri checks that the codecs
+  initialize every byte they report. The published crate is unchanged.
+
 ## [v0.5.16](https://github.com/M-Compressors/mbrotli/releases/tag/v0.5.16) - 2026-10-17
 
 Faster compression of small inputs and at qualities 5-11, and faster decoding

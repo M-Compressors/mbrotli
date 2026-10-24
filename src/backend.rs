@@ -71,6 +71,19 @@ impl Backend {
         backends
     }
 
+    /// The SIMD level of every backend [`Self::available`] lists, scalar
+    /// first, for unit tests that dispatch a kernel directly.
+    ///
+    /// Under Miri this is every level the build enables at compile time, since
+    /// Miri reports runtime-detected features as absent.
+    #[cfg(test)]
+    pub(crate) fn levels() -> Vec<Level> {
+        Self::available()
+            .into_iter()
+            .map(|backend| backend.0)
+            .collect()
+    }
+
     /// Stable diagnostic name, available without allocating or formatting.
     pub const fn name(self) -> &'static str {
         match self.0 {
@@ -174,8 +187,21 @@ mod tests {
     fn every_host_backend_matches_scalar_across_qualities_windows_and_boundaries() {
         let backends = Backend::available();
         let payload: Vec<u8> = (0..4096).map(|index| (index % 251) as u8).collect();
-        for quality in 0..=11 {
-            for bits in [10, 22] {
+        // Miri keeps the vector boundaries but not the large window or input.
+        let (windows, lens): (&[u8], &[usize]) = if cfg!(miri) {
+            (&[10], &[0, 1, 15, 16, 17, 31, 32, 33, 63, 64, 65])
+        } else {
+            (&[10, 22], &[0, 1, 15, 16, 17, 31, 32, 33, 63, 64, 65, 4096])
+        };
+        // Miri has no shim for two Neon intrinsics qualities 10 and 11 reach
+        // (see `CONTRIBUTING.md`); on aarch64 it stops at quality 9.
+        let qualities = if cfg!(all(miri, target_arch = "aarch64")) {
+            0..=9
+        } else {
+            0..=11
+        };
+        for quality in qualities {
+            for &bits in windows {
                 let config = EncoderConfig::default()
                     .with_quality(Quality::try_from(quality).expect("quality"))
                     .with_window(Window::standard(bits).expect("window"));
@@ -188,7 +214,7 @@ mod tests {
                         .with_backend(*backend)
                         .build()
                         .expect("host encoder");
-                    for len in [0, 1, 15, 16, 17, 31, 32, 33, 63, 64, 65, 4096] {
+                    for &len in lens {
                         let input = &payload[..len];
                         assert_eq!(
                             encoder.compress(input).expect("host compression"),

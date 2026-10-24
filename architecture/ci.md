@@ -14,8 +14,8 @@ All checkouts include vendored submodules. Local commands are in
 | `ci-fuzz.yml` | Every tag, manual | Bounded AFL campaigns in stable and experimental profiles |
 | `ci-cflite-pr.yml` | Pull request touching code, fuzz or build files | ClusterFuzzLite libFuzzer/ASan run on the changed code |
 | `ci-cflite-cron.yml` | Daily, manual | ClusterFuzzLite batch fuzzing, corpus pruning and coverage report |
-| `ci-miri.yml` | Every tag, manual | Retained-storage checks and pure Rust decoder goldens |
-| `ci-sanitizer.yml` | Every tag, manual | AddressSanitizer integration tests |
+| `ci-miri.yml` | Every tag, manual | SIMD and uninitialized-memory tests at `target-cpu=native` on x86-64 and ARM64; experimental decoder goldens |
+| `ci-sanitizer.yml` | Every tag, manual | AddressSanitizer: SIMD and uninitialized-memory tests on x86-64 and ARM64, plus integration tests |
 | `ci-decompressor-heavy.yml` | `v*` tag, manual | Actual 25–30-bit history and counters beyond 4 GiB in four decoder profiles |
 | `release.yml` | Manual, from a `v*` tag | Publishes `mbrotli` to crates.io through trusted publishing |
 
@@ -77,6 +77,58 @@ sequenceDiagram
     GH->>CIO: OIDC token (id-token: write)
     CIO-->>GH: short-lived publish token
     GH->>CIO: cargo publish --package mbrotli
+```
+
+## Miri and AddressSanitizer
+
+Both tools run `scripts/check_simd_uninit.py`, which owns the list of unit-test
+modules (every module with a SIMD kernel, a backend dispatch or a
+`MaybeUninit` destination), integration binaries and the `uninit` doc tests.
+It builds once, lists each binary's tests with `--list`, keeps the names that
+start with a listed prefix, and runs each test in its own process with
+`--exact`, in parallel. A prefix that selects no test, or whose tests are all
+ignored, fails the run: `cargo test` itself passes when a filter matches
+nothing, and a substring filter such as `compressor::core::stream` would also
+match `decompressor::core::stream`.
+
+Miri reports runtime-detected CPU features as absent, so it interprets only the
+SIMD levels compiled in. The Miri jobs set `RUSTFLAGS=-Ctarget-cpu=native`,
+which makes `Backend::available()` list every level the runner has: SSE2,
+SSE4.2 and AVX2 (and AVX-512 when present) on x86-64, Neon on ARM64. The script
+sets `-Zmiri-deterministic-floats`, without which Miri perturbs `log2` and
+exact cost comparisons fail. Miri lacks shims for the Neon `vsliq_n_u8` and
+`vminq_f64` intrinsics behind `fearless_simd`'s `mask8x32::to_bitmask` and
+`f64x2::min`; tests reaching them, and three doc tests the script skips by
+name, do not run under Miri on ARM64. Tests that call the C oracle, read files,
+or are scalar-only and slow carry `cfg_attr(miri, ignore)`; differential SIMD
+tests shrink their inputs under `cfg!(miri)` instead. `tests/uninit_output.rs`
+reads back only reported prefixes of destinations that start uninitialized, so
+Miri checks that every reported byte was written.
+
+AddressSanitizer runs the same list natively in release mode, with real feature
+detection, which reaches the Neon paths Miri cannot. Its integration list also
+includes the C-oracle tests `encode_uninit` and `decode_uninit`. The older
+ASan job keeps its integration-test list.
+
+```mermaid
+flowchart TD
+    Tag[v* tag or manual] --> Miri[ci-miri.yml]
+    Tag --> Asan[ci-sanitizer.yml]
+    Miri --> MX86[x86-64 runner, target-cpu=native]
+    Miri --> MArm[ARM64 runner, target-cpu=native]
+    Miri --> Exp[experimental goldens and wire tests]
+    Asan --> AX86[x86-64 runner]
+    Asan --> AArm[ARM64 runner]
+    Asan --> Legacy[integration-test list]
+    MX86 --> Script[scripts/check_simd_uninit.py]
+    MArm --> Script
+    AX86 --> Script
+    AArm --> Script
+    Script --> List[list tests, select by prefix]
+    List --> Empty{every prefix has a test?}
+    Empty -->|no| Fail[fail]
+    Empty -->|yes| Run[one process per test, in parallel]
+    Run --> Report[per-module pass count and slowest test]
 ```
 
 ## AFL execution and artifacts

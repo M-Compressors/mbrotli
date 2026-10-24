@@ -118,6 +118,12 @@ ClusterFuzzLite fuzzing, which runs daily as well. Separate workflows cover cove
 also trigger Miri, sanitizers, fuzz campaigns and heavy decoder checks. See [CI mechanics](../architecture/ci.md) and
 [benchmark commands](benchmarking.md).
 
+SIMD kernels and uninitialized-output paths run under Miri and
+AddressSanitizer with `python3 scripts/check_simd_uninit.py miri` and
+`python3 scripts/check_simd_uninit.py asan`; the
+[contributing guide](../CONTRIBUTING.md#miri-and-addresssanitizer) covers the
+`-Ctarget-cpu` flags that select Miri's SIMD levels and its known limits.
+
 Codec feature isolation is checked with `python3 scripts/check_codec_features.py`.
 It compiles independent consumers for all codec combinations in std and no_std,
 with and without experimental APIs, including imports that must fail. Run

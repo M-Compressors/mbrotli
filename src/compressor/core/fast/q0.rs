@@ -722,10 +722,17 @@ mod tests {
     use super::*;
 
     fn check_small_fragments<S: Simd, const INDEPENDENT: bool>(simd: S) {
+        // Miri keeps both ends of the bit offsets and the lengths around the
+        // minimum match and the vector widths.
+        let (offsets, lens): (Vec<usize>, Vec<usize>) = if cfg!(miri) {
+            (vec![0, 7], vec![1, 5, 6, 15, 16, 17, 32, 33, 64, 80])
+        } else {
+            ((0..8).collect(), (1..=80).collect())
+        };
         for trained in [false, true] {
-            for offset in 0..8 {
+            for &offset in &offsets {
                 for pattern in [0u8, 1, 2] {
-                    for len in 1..=80 {
+                    for &len in &lens {
                         for is_last in [false, true] {
                             let mut actual_arena = OnePassArena::default();
                             let mut reference_arena = OnePassArena::default();

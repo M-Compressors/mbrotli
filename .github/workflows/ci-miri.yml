@@ -11,8 +11,32 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
-  miri:
-    name: interpreter checks for retained storage
+  simd-uninit:
+    name: SIMD and uninitialized memory (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm]
+    env:
+      # Miri reports runtime-detected CPU features as absent, so it reaches
+      # only the SIMD levels the build enables at compile time. `native`
+      # enables every level the runner has: SSE2 through AVX2, or AVX-512 when
+      # the runner supports it, on x86-64, and Neon on Arm.
+      RUSTFLAGS: -Ctarget-cpu=native
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri
+      # Selects tests by name prefix and fails a prefix that runs no test;
+      # see the script for the module list.
+      - run: python3 scripts/check_simd_uninit.py miri
+
+  experimental:
+    name: experimental decoder
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -21,25 +45,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@nightly
         with:
           components: miri
-      # Filters name modules rather than single tests: a renamed test would
-      # leave a single-name filter matching nothing, and `cargo miri test`
-      # exits successfully when it runs no tests at all. A filter is a
-      # substring, so check it does not also match an unrelated module.
-      - run: cargo miri test --lib shared::ringbuffer::tests
-      - run: cargo miri test --lib compressor::core::hq::zopfli::tests::prefix_merge_preserves_prior_arena_entries_and_tree_ties
-      # The skipped test checks the sparse-to-dense layout policy, not memory
-      # safety, and fills an 8 MiB dense table twice: under Miri it alone takes
-      # longer than the other 46 hasher tests together. The dense table's
-      # retained blocks stay covered by
-      # `a_dense_table_keeps_its_blocks_and_clears_only_its_counters`.
-      - run: cargo miri test --lib compressor::core::greedy::hashers::tests -- --skip a_deep_shape_takes_the_dense_table_once_it_is_reused
-      - run: cargo miri test --lib compressor::core::fast::workspace::tests
-      # `compressor::core::stream::tests` is also a substring of
-      # `decompressor::core::stream::tests`, whose golden and ring-boundary
-      # tests take hours under Miri; skip them.
-      - run: cargo miri test --lib compressor::core::stream::tests -- --skip decompressor::core::stream
-
-      - run: cargo miri test --test decompress_golden
       - run: cargo miri test --test decompress_golden --features experimental
-
+        env:
+          MIRIFLAGS: -Zmiri-deterministic-floats
       - run: cargo miri test --lib --features experimental decompressor::framing::core::wire::tests
+        env:
+          MIRIFLAGS: -Zmiri-deterministic-floats

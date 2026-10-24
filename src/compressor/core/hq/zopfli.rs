@@ -1542,6 +1542,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot call the C oracle")]
     fn the_command_stream_matches_the_c_search() {
         let mut rng = 0x243F_6A88_85A3_08D3u64;
         let mut next = move || {
@@ -1584,6 +1585,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot call the C oracle")]
     fn every_prefix_of_a_repetitive_block_matches_the_c_search() {
         // The lengths around a repeat period are where a copy that just fits
         // and one that just does not are priced against each other.
