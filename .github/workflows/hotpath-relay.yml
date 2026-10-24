@@ -7,7 +7,7 @@ on:
 
 jobs:
   relay:
-    uses: hotpath-rs/hotpath/.github/workflows/hotpath-relay.yml@v0.29.1
+    uses: hotpath-rs/hotpath/.github/workflows/hotpath-relay.yml@a9b63a7472d299ed43f0f25dd30b6c969f636814 # v0.29.1
     permissions:
       actions: read
       id-token: write

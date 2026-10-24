@@ -9,7 +9,8 @@ env:
   CARGO_TERM_COLOR: always
 
 # Pull requests upload through `hotpath-relay.yml`, which matches this
-# workflow by name. Counts depend on the Valgrind build, so it is pinned.
+# workflow by name. Counts depend on the Valgrind build and the Rust toolchain,
+# so both are pinned. Bump the toolchain in a separate PR to refresh the baseline.
 jobs:
   upload:
     name: hotpath benchmark (push)
@@ -23,7 +24,9 @@ jobs:
       - uses: actions/checkout@v7
         with:
           submodules: recursive
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.99.1"
       - name: Record rustc version
         id: rustc
         run: echo "version=$(rustc --version | cut -d' ' -f2)" >> "$GITHUB_OUTPUT"
@@ -42,7 +45,7 @@ jobs:
           HOTPATH_UPLOAD: fail-on-error
           HOTPATH_UPLOAD_RESPONSE_PATH: ${{ github.workspace }}/upload-response.json
           HOTPATH_BENCHMARK: compressor
-          HOTPATH_USER_METADATA: runner=${{ runner.os }}-${{ runner.arch }},toolchain=stable,rustc=${{ steps.rustc.outputs.version }},profile=release
+          HOTPATH_USER_METADATA: runner=${{ runner.os }}-${{ runner.arch }},toolchain=1.99.1,rustc=${{ steps.rustc.outputs.version }},profile=release
           HOTPATH_OUTPUT_FORMAT: none
           HOTPATH_CALLGRIND_OUT_FILE: ${{ runner.temp }}/callgrind.out.%p
         run: |
@@ -64,7 +67,9 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           submodules: recursive
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.99.1"
       - name: Record rustc version
         id: rustc
         run: echo "version=$(rustc --version | cut -d' ' -f2)" >> "$GITHUB_OUTPUT"
@@ -81,7 +86,7 @@ jobs:
       - name: Run benchmark under Callgrind and write report
         env:
           HOTPATH_BENCHMARK: compressor
-          HOTPATH_USER_METADATA: runner=${{ runner.os }}-${{ runner.arch }},toolchain=stable,rustc=${{ steps.rustc.outputs.version }},profile=release
+          HOTPATH_USER_METADATA: runner=${{ runner.os }}-${{ runner.arch }},toolchain=1.99.1,rustc=${{ steps.rustc.outputs.version }},profile=release
           HOTPATH_OUTPUT_FORMAT: json
           HOTPATH_OUTPUT_PATH: ${{ github.workspace }}/compressor-report.json
           HOTPATH_CALLGRIND_OUT_FILE: ${{ runner.temp }}/callgrind.out.%p
