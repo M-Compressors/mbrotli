@@ -136,7 +136,7 @@ sequenceDiagram
     PR->>CF: build (address), run code-change, 600 s
     Store-->>CF: latest corpus and coverage report
     CF-->>PR: job fails on a crash, with the reproducer
-    Cron->>CF: batch: build (address), fuzz 3600 s
+    Cron->>CF: batch: build (address), fuzz 19800 s on all cores
     CF->>Store: grown corpus, crashes
     Cron->>CF: prune: minimize corpus, 600 s
     CF->>Store: pruned corpus
@@ -150,6 +150,11 @@ sequenceDiagram
 progress. Code-change mode runs only the targets whose coverage reaches the
 changed lines once a coverage report exists, and every target before that.
 The 600 seconds are split among the targets it runs.
+
+Batch fuzzing gets 19800 seconds (5.5 hours) with `parallel-fuzzing`, which
+runs targets side by side on every runner core. GitHub-hosted jobs stop at six
+hours including the image and fuzzer builds, so the job's `timeout-minutes: 360`
+leaves about half an hour for building and uploading the corpus.
 
 In `ci-cflite-cron.yml` the jobs are chained: pruning follows batch fuzzing
 (ClusterFuzzLite requires pruning whenever batch fuzzing runs), and coverage

@@ -12,8 +12,8 @@
   AFL target bodies (19 stable, 6 experimental) as libFuzzer targets, which
   `.clusterfuzzlite/build.sh` builds with AddressSanitizer, debug assertions
   and overflow checks. Pull requests that touch code get a ten-minute run on
-  the changed code (`ci-cflite-pr.yml`). A daily workflow runs an hour of
-  batch fuzzing, then corpus pruning and a coverage report
+  the changed code (`ci-cflite-pr.yml`). A daily workflow runs 5.5 hours of
+  batch fuzzing on every runner core, then corpus pruning and a coverage report
   (`ci-cflite-cron.yml`). The published crate is unchanged.
 
 - Clarified `ParallelTaskQueue` documentation: stopped executors can leave

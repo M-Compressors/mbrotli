@@ -16,6 +16,9 @@ jobs:
   batch:
     name: batch fuzzing
     runs-on: ubuntu-latest
+    # GitHub-hosted jobs stop at six hours, image and fuzzer builds included;
+    # 5.5 hours of fuzzing leaves room for the build and the corpus upload.
+    timeout-minutes: 360
     steps:
       - name: build fuzzers
         uses: google/clusterfuzzlite/actions/build_fuzzers@v1
@@ -26,9 +29,12 @@ jobs:
         uses: google/clusterfuzzlite/actions/run_fuzzers@v1
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          fuzz-seconds: 3600
+          fuzz-seconds: 19800
           mode: batch
           sanitizer: address
+          # Fuzz targets side by side on every runner core instead of one at
+          # a time; the budget is shared by all targets either way.
+          parallel-fuzzing: true
 
   prune:
     name: corpus pruning
