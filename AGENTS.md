@@ -217,6 +217,20 @@ runtime, so plain `cargo test` cannot link them. It replays the committed
 regression corpus in `fuzz/afl/regressions/` through the target bodies, which
 carry no AFL dependency of their own.
 
+`fuzz/libfuzzer` is excluded from the workspace too. It wraps the same target
+bodies for ClusterFuzzLite. After changing it, or a target body it wraps, run
+from `fuzz/libfuzzer/`:
+
+```sh
+cargo fmt --all -- --check
+cargo clippy --all-targets --locked -- -D warnings
+cargo clippy --all-targets --locked --features experimental -- -D warnings
+```
+
+A new AFL target that ClusterFuzzLite should run needs a matching adapter in
+`fuzz/libfuzzer/fuzz_targets/`, its `[[bin]]` entry, and, if it reads a
+generated corpus, a case in `.clusterfuzzlite/build.sh`'s `seeds_for`.
+
 Fix warnings and formatting issues rather than suppressing them. If a Clippy
 lint is a demonstrated false positive, use the narrowest possible
 `#[expect(clippy::lint_name)]` with a comment explaining why. Do not add a broad

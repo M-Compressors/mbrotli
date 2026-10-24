@@ -14,6 +14,9 @@ instrumentation and its runtime never reach an ordinary root `cargo test` or
 `cargo clippy`. It depends on `mbrotli` and on `google-brotli-ffi` by path.
 Backend selection goes through `mbrotli::Backend` using production backends;
 the fuzz package has no direct dependency on the SIMD implementation crate.
+A second excluded package, `fuzz/libfuzzer`, runs the same target bodies under
+libFuzzer for ClusterFuzzLite; see
+[libFuzzer adapters and ClusterFuzzLite](#libfuzzer-adapters-and-clusterfuzzlite).
 
 The fuzz package has no default features. Its opt-in `experimental` feature
 forwards to both `mbrotli/experimental` and `google-brotli-ffi/experimental`,
@@ -332,6 +335,89 @@ memory before deciding whether the cause is search cost, allocation or a loop.
 - **`prepare-seeds.sh` does not emit a `compressor_lifecycle` corpus.** That
   target's committed cases are hand-written command sequences; a campaign starts
   from those rather than from the vendored test data.
+- **ClusterFuzzLite does not run the fixed-quality `q*_roundtrip` targets.**
+  `params_roundtrip` and `differential_c` reach every quality through the
+  parameter header; the fixed-quality targets remain AFL-only.
+
+## libFuzzer adapters and ClusterFuzzLite
+
+`fuzz/libfuzzer` is a cargo-fuzz package excluded from the root workspace, like
+`fuzz/afl`. It owns no target logic: each of its 25 `fuzz_targets/*.rs` files
+is a `libfuzzer_sys::fuzz_target!` adapter around the body the AFL binary of
+the same name runs, taken from the `mbrotli-afl` library by path. That library
+names no AFL symbol; only `fuzz/afl/src/bin/` calls `afl::fuzz!`, and nothing
+in the libFuzzer package links those binaries. A libFuzzer finding therefore
+replays through `cargo afl test` once its input is committed under
+`fuzz/afl/regressions/<target>/`.
+
+```mermaid
+graph TD
+    subgraph afl["fuzz/afl"]
+        aflbins["src/bin/ — afl::fuzz! adapters"]
+        bodies["library: TARGETS bodies, Context, C oracles"]
+        regs["regressions/ and tests/regressions.rs"]
+    end
+    subgraph lf["fuzz/libfuzzer"]
+        lfbins["fuzz_targets/ — fuzz_target! adapters<br/>19 stable, 6 experimental"]
+    end
+    subgraph cflite[".clusterfuzzlite"]
+        docker["Dockerfile: base-builder-rust"]
+        build["build.sh"]
+    end
+    aflbins --> bodies
+    regs --> bodies
+    lfbins --> bodies
+    docker --> build
+    build -->|cargo fuzz build| lfbins
+    build -->|prepare-seeds.sh, regressions| corpora["OUT/target_seed_corpus.zip"]
+```
+
+Each adapter holds the `Context` in a `LazyLock` static, so backend detection
+runs once per process as it does in the AFL adapters. The experimental
+adapters carry `required-features = ["experimental"]`, the gate their bodies
+already share; the package's `experimental` feature only forwards to
+`mbrotli-afl/experimental`.
+
+The 19 stable targets are every stable AFL target except the eleven
+fixed-quality round trips. The six experimental ones are `decode_serialized`,
+`framed_decode`, `framed_encode`, `framed_roundtrip`, `framing` and
+`serialized_dictionary`.
+
+### Build and corpora
+
+`build.sh` runs inside ClusterFuzzLite's Rust image. It fetches the pinned
+Brotli submodule when the checkout left it empty, because every C oracle needs
+it. It then builds twice, each time with `-O --debug-assertions`, which also
+turns on overflow checks:
+
+```mermaid
+flowchart TD
+    Start[build.sh] --> Sub{vendored Brotli present?}
+    Sub -->|no| Fetch[git submodule update at the pinned commit]
+    Sub -->|yes| Stable
+    Fetch --> Stable[cargo fuzz build into WORK/stable]
+    Stable --> ShipS[copy every built target to OUT]
+    ShipS --> Exp[cargo fuzz build --features experimental into WORK/experimental]
+    Exp --> ShipE[copy only targets not yet in OUT]
+    ShipE --> Seeds[prepare-seeds.sh and prepare-decoder-seeds.sh]
+    Seeds --> Zip[per target: mapped seeds plus regressions, each at most 64 KiB, zipped]
+    Zip --> Dict[framed.dict copied as framed_decode.dict]
+```
+
+The stable binaries come from a build without `experimental`, so they fuzz
+the default surface a dependant gets; the experimental build's copies of the
+same targets are not shipped. The two builds use separate target directories.
+
+Seed selection follows the AFL campaigns: parameter-header targets take
+`seeds/params`; `decompress`, `decode_streaming`, `decode_io_limits` and
+`decoder_session` take `seeds/decoder`; `dictionary`, `large_window` and
+`serialized_dictionary` take their own generated corpora. Every target also
+gets its committed `regressions/<target>/` inputs. Files get a `seeds-` or
+`regressions-` prefix so equal names cannot collide. Seeds over 64 KiB are
+left out, since every target caps its payload at 128 KiB or less.
+
+The workflows that run these binaries are described in
+[continuous integration](ci.md#clusterfuzzlite).
 ## Parallel boundary target
 
 `parallel` uses the public task API, 64 KiB segments and at most 128 KiB of input. It compares one-task and reverse three-task output, all available host backends, retained workers, and independent C decoding. Each backend runs four batches: original quality, adjacent quality, original quality again, and unchanged quality. Output is compared per configuration; rejected Large Window reconfiguration must preserve settings and retained bytes. The engine-neutral body and per-quality seeds are replayed by the existing regression runner.

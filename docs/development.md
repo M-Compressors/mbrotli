@@ -76,6 +76,19 @@ cargo afl test --no-default-features --features experimental
 See the [AFL guide](../fuzz/afl/README.md) for installation, corpora, campaigns,
 and crash minimization.
 
+The libFuzzer package in `fuzz/libfuzzer/` wraps the same target bodies for
+ClusterFuzzLite. After changes there, or to a target body it wraps, run from
+`fuzz/libfuzzer/`:
+
+```sh
+cargo fmt --all -- --check
+cargo clippy --all-targets --locked -- -D warnings
+cargo clippy --all-targets --locked --features experimental -- -D warnings
+```
+
+The [libFuzzer guide](../fuzz/libfuzzer/README.md) covers local sanitizer
+builds and reproducing ClusterFuzzLite findings.
+
 ## Repository map
 
 | Path | Contents |
@@ -87,6 +100,8 @@ and crash minimization.
 | `benchmarks/comparison/` | Isolated, pinned comparison of five Brotli implementations |
 | `brotli-ffi/` | C bindings, build, and test shims |
 | `fuzz/afl/` | Isolated fuzz package and regression corpus |
+| `fuzz/libfuzzer/` | libFuzzer adapters over the AFL target bodies |
+| `.clusterfuzzlite/` | ClusterFuzzLite image and build script |
 | `docs/` | User and contributor guides |
 | `architecture/` | Current subsystem specifications and diagrams |
 | `specifications/` | Externally authored source specifications |
@@ -98,7 +113,8 @@ Vendored upstream files and externally authored specifications are maintained
 separately.
 
 Routine CI runs formatting, lint, documentation, packaging, tests, and AFL
-regression replay. Separate workflows cover coverage and benchmarks; release tags
+regression replay; pull requests that touch code also get ten minutes of
+ClusterFuzzLite fuzzing, which runs daily as well. Separate workflows cover coverage and benchmarks; release tags
 also trigger Miri, sanitizers, fuzz campaigns and heavy decoder checks. See [CI mechanics](../architecture/ci.md) and
 [benchmark commands](benchmarking.md).
 

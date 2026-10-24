@@ -1,0 +1,40 @@
+name: CI ClusterFuzzLite PR
+
+# Fuzz the code a pull request changes. Once the daily coverage job in
+# ci-cflite-cron.yml has published a report, code-change mode runs only the
+# targets that reach the changed lines; before that, it runs all of them.
+on:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'brotli-ffi/**'
+      - 'mbrotli-ffi/**'
+      - 'fuzz/**'
+      - 'Cargo.toml'
+      - '.clusterfuzzlite/**'
+      - '.dockerignore'
+      - '.github/workflows/ci-cflite-pr.yml'
+
+permissions: read-all
+
+jobs:
+  pr:
+    name: libFuzzer on changed code
+    runs-on: ubuntu-latest
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - name: build fuzzers
+        uses: google/clusterfuzzlite/actions/build_fuzzers@v1
+        with:
+          language: rust
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          sanitizer: address
+      - name: run fuzzers
+        uses: google/clusterfuzzlite/actions/run_fuzzers@v1
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          fuzz-seconds: 600
+          mode: code-change
+          sanitizer: address

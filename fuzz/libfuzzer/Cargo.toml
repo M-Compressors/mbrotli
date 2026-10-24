@@ -1,0 +1,208 @@
+[package]
+name = "mbrotli-libfuzzer"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "libFuzzer adapters over the engine-neutral mbrotli AFL target bodies, for ClusterFuzzLite"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+# The target bodies, oracles and C reference live in the AFL package's library,
+# which names no AFL symbol: only its own `src/bin/` adapters do, and nothing
+# here links those.
+[dependencies.mbrotli-afl]
+path = "../afl"
+
+[features]
+default = []
+# Enable the RFC 9841 targets and their independent C parser/decoder oracle.
+experimental = ["mbrotli-afl/experimental"]
+
+[profile.release]
+debug = true
+codegen-units = 1
+
+[[bin]]
+name = "c_abi"
+path = "fuzz_targets/c_abi.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "compressor_lifecycle"
+path = "fuzz_targets/compressor_lifecycle.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "decode_dictionary"
+path = "fuzz_targets/decode_dictionary.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "decode_io_limits"
+path = "fuzz_targets/decode_io_limits.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "decode_lifecycle"
+path = "fuzz_targets/decode_lifecycle.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "decode_roundtrip"
+path = "fuzz_targets/decode_roundtrip.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "decode_streaming"
+path = "fuzz_targets/decode_streaming.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "decoder_session"
+path = "fuzz_targets/decoder_session.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "decompress"
+path = "fuzz_targets/decompress.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "dictionary"
+path = "fuzz_targets/dictionary.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "differential_c"
+path = "fuzz_targets/differential_c.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "encoder_session"
+path = "fuzz_targets/encoder_session.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "large_window"
+path = "fuzz_targets/large_window.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "output_capacity"
+path = "fuzz_targets/output_capacity.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "parallel"
+path = "fuzz_targets/parallel.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "parameter_parsing"
+path = "fuzz_targets/parameter_parsing.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "params_roundtrip"
+path = "fuzz_targets/params_roundtrip.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "simd_equivalence"
+path = "fuzz_targets/simd_equivalence.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "streaming_equivalence"
+path = "fuzz_targets/streaming_equivalence.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "decode_serialized"
+path = "fuzz_targets/decode_serialized.rs"
+required-features = ["experimental"]
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "framed_decode"
+path = "fuzz_targets/framed_decode.rs"
+required-features = ["experimental"]
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "framed_encode"
+path = "fuzz_targets/framed_encode.rs"
+required-features = ["experimental"]
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "framed_roundtrip"
+path = "fuzz_targets/framed_roundtrip.rs"
+required-features = ["experimental"]
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "framing"
+path = "fuzz_targets/framing.rs"
+required-features = ["experimental"]
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "serialized_dictionary"
+path = "fuzz_targets/serialized_dictionary.rs"
+required-features = ["experimental"]
+test = false
+doc = false
+bench = false

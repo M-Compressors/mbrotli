@@ -8,6 +8,14 @@
   `BROTLI_DECODER_ERROR_FORMAT_BLOCK_SWITCH`. Earlier versions counted from
   `u64::MAX` and accepted these RFC-invalid streams.
 
+- Continuous fuzzing with ClusterFuzzLite. `fuzz/libfuzzer` wraps 25 of the
+  AFL target bodies (19 stable, 6 experimental) as libFuzzer targets, which
+  `.clusterfuzzlite/build.sh` builds with AddressSanitizer, debug assertions
+  and overflow checks. Pull requests that touch code get a ten-minute run on
+  the changed code (`ci-cflite-pr.yml`). A daily workflow runs an hour of
+  batch fuzzing, then corpus pruning and a coverage report
+  (`ci-cflite-cron.yml`). The published crate is unchanged.
+
 - Clarified `ParallelTaskQueue` documentation: stopped executors can leave
   blocking I/O and writer finalization waiting indefinitely; dropping queue
   handles or tasks reports closure or abandonment errors when observed. Tasks
