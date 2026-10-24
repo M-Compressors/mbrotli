@@ -1,6 +1,6 @@
 # Changelog
 
-## [v0.5.17](https://github.com/M-Compressors/mbrotli/releases/tag/v0.5.17) - Unreleased
+## [v0.5.17](https://github.com/M-Compressors/mbrotli/releases/tag/v0.5.17) - 2026-10-24
 
 - The decoder now rejects a meta-block that runs out of its single-type block
   count with `InvalidDataKind::MetaBlock`. RFC 7932 sets that count to
