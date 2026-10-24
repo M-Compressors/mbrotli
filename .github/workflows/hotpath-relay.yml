@@ -12,7 +12,7 @@ on:
 # merged. Pinned to the release tag of the reusable workflow.
 jobs:
   relay:
-    uses: hotpath-rs/hotpath/.github/workflows/hotpath-relay.yml@v0.29.0
+    uses: hotpath-rs/hotpath/.github/workflows/hotpath-relay.yml@v0.29.1
     permissions:
       actions: read # download the artifact of the benchmark run
       id-token: write # authenticate the upload

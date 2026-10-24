@@ -61,8 +61,7 @@ optional = true
 # the proc-macro crate into its tree; every `#[hotpath::measure]` anchor in
 # `src/` is written as `#[cfg_attr(feature = "hotpath", hotpath::measure)]`.
 [dependencies.hotpath]
-git = "https://github.com/hotpath-rs/hotpath"
-branch = "main"
+version = "0.29.1"
 optional = true
 
 [dev-dependencies]
