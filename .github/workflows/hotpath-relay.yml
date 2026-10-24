@@ -1,0 +1,18 @@
+name: hotpath relay
+
+on:
+  workflow_run:
+    workflows: ["hotpath benchmark"]
+    types: [completed]
+
+jobs:
+  relay:
+    uses: hotpath-rs/hotpath/.github/workflows/hotpath-relay.yml@a9b63a7472d299ed43f0f25dd30b6c969f636814 # v0.29.1
+    permissions:
+      actions: read
+      id-token: write
+      pull-requests: read
+    with:
+      benchmark: compressor
+      artifact_name: compressor-report
+      report_file: compressor-report.json

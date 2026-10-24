@@ -253,6 +253,19 @@ cargo run --release --features hotpath-cpu --example profile_compressor -- brotl
 cargo run --release --features hotpath-alloc --example profile_compressor -- brotli-ffi/vendor/brotli/tests/testdata/alice29.txt
 ```
 
+On x86_64 Linux, `hotpath-callgrind` replaces timing with per-function
+instruction counts from Valgrind Callgrind, which are reproducible across runs
+of one commit (at most 0.05% apart). The `hotpath benchmark` workflow runs this
+on every pull request and uploads the report to hotpath Cloud, judged by
+`hotpath/policy.toml`; compare counts only within one Valgrind version, Rust
+toolchain and runner image:
+
+```sh
+cargo build --release --example profile_compressor --features hotpath-alloc,hotpath-callgrind
+valgrind -q --tool=callgrind --instr-atstart=no \
+  target/release/examples/profile_compressor brotli-ffi/vendor/brotli/tests/testdata/alice29.txt
+```
+
 Record revision, lockfile, compilers, CPU, target flags, affinity, corpus identity,
 settings, API mode, sizes, and timing intervals. Generated Criterion and coverage
 files are local artifacts. Short runs on shared hosts provide exploratory

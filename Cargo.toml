@@ -61,7 +61,7 @@ optional = true
 # the proc-macro crate into its tree; every `#[hotpath::measure]` anchor in
 # `src/` is written as `#[cfg_attr(feature = "hotpath", hotpath::measure)]`.
 [dependencies.hotpath]
-version = "0.28"
+version = "0.29"
 optional = true
 
 [dev-dependencies]
@@ -128,6 +128,8 @@ diagnostics = []
 hotpath = ["dep:hotpath", "hotpath/hotpath"]
 hotpath-cpu = ["hotpath", "hotpath/hotpath-cpu"]
 hotpath-alloc = ["hotpath", "hotpath/hotpath-alloc"]
+hotpath-callgrind = ["hotpath", "hotpath/hotpath-callgrind"]
+hotpath-cloud = ["hotpath", "hotpath/hotpath-cloud"]
 
 [workspace]
 members = ["brotli-ffi", "mbrotli-ffi"]
