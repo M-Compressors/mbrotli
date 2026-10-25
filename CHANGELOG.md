@@ -36,6 +36,14 @@
   the optional `hotpath` dependency is updated to 0.29. Pull requests are
   benchmarked on hotpath Cloud with Callgrind instruction counts.
 
+- The daily ClusterFuzzLite workflow's pruning and coverage jobs work. Pruning
+  gets 7200 seconds instead of 600, since the budget is split among the 25
+  targets and 24 seconds could not merge the first grown corpus. The coverage
+  build compiles the libFuzzer package with `cargo build`, because the
+  ClusterFuzzLite image turns `cargo fuzz build` into a build of the root
+  crate, which has no fuzz targets, under the coverage sanitizer. The
+  published crate is unchanged.
+
 ## [v0.5.17](https://github.com/M-Compressors/mbrotli/releases/tag/v0.5.17) - 2026-10-24
 
 - The decoder now rejects a meta-block that runs out of its single-type block

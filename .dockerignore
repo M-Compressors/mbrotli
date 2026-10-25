@@ -5,3 +5,5 @@
 fuzz/afl/seeds
 fuzz/afl/findings
 fuzz/afl/artifacts
+# Lean's package cache (Mathlib's build, several GB) is local only.
+verification/lean/.lake

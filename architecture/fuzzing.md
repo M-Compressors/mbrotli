@@ -368,7 +368,7 @@ graph TD
     regs --> bodies
     lfbins --> bodies
     docker --> build
-    build -->|cargo fuzz build| lfbins
+    build -->|"cargo fuzz build, or cargo build under coverage"| lfbins
     build -->|prepare-seeds.sh, regressions| corpora["OUT/target_seed_corpus.zip"]
 ```
 
@@ -388,7 +388,7 @@ fixed-quality round trips. The six experimental ones are `decode_serialized`,
 `build.sh` runs inside ClusterFuzzLite's Rust image. It fetches the pinned
 Brotli submodule when the checkout left it empty, because every C oracle needs
 it. It then builds twice, each time with `-O --debug-assertions`, which also
-turns on overflow checks:
+turns on overflow checks (the coverage build differs, as described below):
 
 ```mermaid
 flowchart TD
@@ -407,6 +407,24 @@ flowchart TD
 The stable binaries come from a build without `experimental`, so they fuzz
 the default surface a dependant gets; the experimental build's copies of the
 same targets are not shipped. The two builds use separate target directories.
+
+Under the coverage sanitizer the image's `cargo` wrapper rewrites
+`cargo fuzz build` into `cargo build --bins` run from `fuzz/`. It drops
+`--fuzz-dir`, `--target-dir` and `--features`, and the build then reaches the
+root crate, which has no binaries. The coverage build therefore runs
+`cargo build --bins` inside `fuzz/libfuzzer` directly, with the same target
+directories and features. It relies on the image's `RUSTFLAGS` for
+`--cfg fuzzing` and the coverage instrumentation, adds the wrapper's
+`--remap-path-prefix` for `fuzz_targets/`, stays unoptimized as the wrapper
+does, and ships from `debug/` instead of `<host>/release/`.
+
+```mermaid
+flowchart LR
+    San{SANITIZER} -->|address| Fuzz["cargo fuzz build -O --debug-assertions<br/>ships WORK/build/host/release"]
+    San -->|coverage| Plain["cd fuzz/libfuzzer; cargo build --bins<br/>ships WORK/build/debug"]
+    Fuzz --> Out[OUT]
+    Plain --> Out
+```
 
 Seed selection follows the AFL campaigns: parameter-header targets take
 `seeds/params`; `decompress`, `decode_streaming`, `decode_io_limits` and

@@ -19,15 +19,36 @@ if [ ! -f brotli-ffi/vendor/brotli/c/include/brotli/decode.h ]; then
     git submodule update --init --depth 1 brotli-ffi/vendor/brotli
 fi
 
-# Debug assertions also turn on overflow checks, which AFL's builds have too.
-build() {
-    cargo fuzz build -O --debug-assertions --fuzz-dir fuzz/libfuzzer "$@"
-}
-
 host=$(rustc -vV | sed -n 's/^host: //p')
 
+# Under the coverage sanitizer the image's cargo wrapper replaces
+# `cargo fuzz build` with a plain `cargo build --bins` run from `fuzz/`, which
+# drops --fuzz-dir, --target-dir and --features and finds the root crate, which
+# has no binaries. The coverage build is therefore a plain cargo build of the
+# package: the image's RUSTFLAGS already carry `--cfg fuzzing` and the coverage
+# instrumentation, and the wrapper's remap for the package's own relative
+# source paths is repeated here. It stays unoptimized, as in the wrapper, to
+# avoid malformed profile data.
+if [ "$SANITIZER" = "coverage" ]; then
+    profile=debug
+    build() {
+        (
+            cd fuzz/libfuzzer
+            RUSTFLAGS="$RUSTFLAGS --remap-path-prefix fuzz_targets=$PWD/fuzz_targets" \
+                cargo build --bins "$@"
+        )
+    }
+else
+    profile="$host/release"
+    # Debug assertions also turn on overflow checks, which AFL's builds have
+    # too.
+    build() {
+        cargo fuzz build -O --debug-assertions --fuzz-dir fuzz/libfuzzer "$@"
+    }
+fi
+
 ship() {
-    local release="$1/$host/release"
+    local release="$1/$profile"
     for source in fuzz/libfuzzer/fuzz_targets/*.rs; do
         local target
         target=$(basename "$source" .rs)
