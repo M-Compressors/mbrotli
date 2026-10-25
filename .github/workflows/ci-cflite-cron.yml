@@ -32,8 +32,8 @@ jobs:
           fuzz-seconds: 19800
           mode: batch
           sanitizer: address
-          # Fuzz targets side by side on every runner core instead of one at
-          # a time; the budget is shared by all targets either way.
+          # Run one libFuzzer process per runner core for each target; the
+          # targets still take turns and share the budget evenly.
           parallel-fuzzing: true
 
   prune:
@@ -50,7 +50,11 @@ jobs:
         uses: google/clusterfuzzlite/actions/run_fuzzers@v1
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          fuzz-seconds: 600
+          # The budget is split evenly among the targets and bounds each
+          # corpus merge: 600 s left 24 s per target, and the first merge of
+          # c_abi's 5035 inputs timed out. 7200 s gives each target about
+          # five minutes.
+          fuzz-seconds: 7200
           mode: prune
 
   coverage:

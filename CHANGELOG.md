@@ -2,10 +2,48 @@
 
 ## Unreleased
 
+- Machine-checked Lean 4 proofs of the distance prefix codes. Charon and
+  Aeneas translate `prefix_encode_copy_distance`, `DistanceParams::new`,
+  `log2_floor_non_zero` and the decoder's distance layout into Lean
+  (`scripts/extract_lean.py`); `verification/lean` proves that none of them
+  panics or overflows on its valid inputs, that the decoder computes the RFC
+  7932 section 4 formula, and that every distance the encoder emits decodes
+  back to itself in standard and large-window (RFC 9841) streams, within the
+  alphabet the encoder declares. The converse holds too: the encoder's pair is
+  the only explicit symbol and extra field that decode to that distance, so any
+  encoder writing an explicit distance code writes the same bits.
+  The insert-and-copy length codes of section 5 are proved the same way
+  against the RFC's own tables, transcribed in `verification/lean`: the
+  length code tables and the decoder's command table equal the RFC's, the
+  encoder picks the code whose range holds each length and the cell symbol for
+  the pair, the decoder's entry for that symbol reads both lengths back with
+  the section 7.2 distance context, and no other symbol with the same distance
+  choice describes the same lengths. Commands are covered end to end: `Command::new`
+  packs the copy length delta so `copy_len_code` gets it back for every delta
+  from -64 to 63, reuses the last distance only for distance code 0, and
+  `extra_bits` and `distance_context` give exactly the fields and context the
+  decoder's table entry for the command's symbol reads. On the decoder side the
+  sixteen short distance codes and the ring of last distances follow section
+  4: the ring starts at `4, 11, 15, 16`, `push` and `pop` behave as the RFC's
+  ring, `short` adds the listed offset to the listed past distance and rejects
+  exactly the values outside `1..=2^63 - 4`, and `resolve` gives the RFC
+  distance for every symbol, failing for an explicit symbol only where
+  `validate_symbol` would have rejected it. `ci-lean.yml` checks that the translation
+  matches the Rust source and that the proofs build. The published crate is
+  unchanged.
+
 - New opt-in `hotpath-callgrind` and `hotpath-cloud` profiling features, and
   the optional `hotpath` dependency is updated to 0.29.2. Pull requests are
   benchmarked on hotpath Cloud in merged mode: native timing and allocations
   plus Callgrind instruction counts in one report.
+
+- The daily ClusterFuzzLite workflow's pruning and coverage jobs work. Pruning
+  gets 7200 seconds instead of 600, since the budget is split among the 25
+  targets and 24 seconds could not merge the first grown corpus. The coverage
+  build compiles the libFuzzer package with `cargo build`, because the
+  ClusterFuzzLite image turns `cargo fuzz build` into a build of the root
+  crate, which has no fuzz targets, under the coverage sanitizer. The
+  published crate is unchanged.
 
 ## [v0.5.17](https://github.com/M-Compressors/mbrotli/releases/tag/v0.5.17) - 2026-10-24
 

@@ -9,6 +9,7 @@ All checkouts include vendored submodules. Local commands are in
 | Workflow | Trigger | Scope |
 | --- | --- | --- |
 | `ci.yml` | Push to master, pull request | Formatting, Clippy, docs, packaging, API compatibility, feature checks, tests and AFL replay |
+| `ci-lean.yml` | Push to master, pull request | Lean translation drift check and Lean proofs with axiom audit; see [formal verification](formal-verification.md) |
 | `ci-coverage.yml` | Manual | Std and no_std function coverage; 100% gate and HTML report |
 | `ci-benchmarks.yml` | Manual | Criterion validation and timing on Linux x86-64 and ARM64 |
 | `ci-fuzz.yml` | Every tag, manual | Bounded AFL campaigns in stable and experimental profiles |
@@ -27,6 +28,7 @@ flowchart TD
     Routine --> Features[std, no_std and isolated codec consumers]
     Routine --> Tests[platform tests and AFL regression replay]
     Routine --> LibFuzzer[libFuzzer adapter fmt and Clippy]
+    Branch --> Lean[ci-lean.yml: translation check and proofs]
     Branch -->|pull request touching code| CFPR[ci-cflite-pr.yml: code-change fuzzing]
     Daily[daily schedule] --> CFCron[ci-cflite-cron.yml: batch, prune, coverage]
     CFCron -. coverage report selects targets .-> CFPR
@@ -212,7 +214,7 @@ sequenceDiagram
     CF-->>PR: job fails on a crash, with the reproducer
     Cron->>CF: batch: build (address), fuzz 19800 s on all cores
     CF->>Store: grown corpus, crashes
-    Cron->>CF: prune: minimize corpus, 600 s
+    Cron->>CF: prune: minimize corpus, 7200 s
     CF->>Store: pruned corpus
     Cron->>CF: coverage: build (coverage), report
     CF->>Store: coverage report
@@ -226,17 +228,24 @@ changed lines once a coverage report exists, and every target before that.
 The 600 seconds are split among the targets it runs.
 
 Batch fuzzing gets 19800 seconds (5.5 hours) with `parallel-fuzzing`, which
-runs targets side by side on every runner core. GitHub-hosted jobs stop at six
-hours including the image and fuzzer builds, so the job's `timeout-minutes: 360`
-leaves about half an hour for building and uploading the corpus.
+runs one libFuzzer process per runner core for each target; the targets still
+take turns, 792 seconds each. GitHub-hosted jobs stop at six hours including
+the image and fuzzer builds, so the job's `timeout-minutes: 360` leaves about
+half an hour for building and uploading the corpus.
+
+Pruning gets 7200 seconds. ClusterFuzzLite splits the budget evenly among the
+targets and uses each share as the timeout of that target's corpus merge, so
+600 seconds left 24 seconds per target. That was not enough to merge `c_abi`'s
+5035 inputs after the first batch run, and the job stopped at that target.
 
 In `ci-cflite-cron.yml` the jobs are chained: pruning follows batch fuzzing
 (ClusterFuzzLite requires pruning whenever batch fuzzing runs), and coverage
 follows pruning, so the report reflects the pruned corpus. A failed batch job
 still lets pruning and coverage run.
 
-`.dockerignore` keeps target directories and local AFL seeds and findings out of
-the image, but keeps `.git`, which the submodule fetch needs.
+`.dockerignore` keeps target directories, local AFL seeds and findings, and
+Lean's `verification/lean/.lake` package cache out of the image, but keeps
+`.git`, which the submodule fetch needs.
 
 ## Coverage and limitations
 
