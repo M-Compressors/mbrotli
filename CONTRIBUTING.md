@@ -186,6 +186,24 @@ Turn every minimized crash into a regression input under
 `fuzz/afl/regressions/` before fixing it. Never commit AFL findings or output
 directories.
 
+### Formal verification
+
+`verification/lean/` holds Lean 4 proofs about the Aeneas translation of a few
+Rust items (see `START` in `scripts/extract_lean.py`). If you change one of
+them, or code they call, regenerate the translation and rebuild the proofs:
+
+```sh
+python3 scripts/extract_lean.py
+cd verification/lean && lake exe cache get && lake build
+```
+
+Never edit the generated `verification/lean/Mbrotli/Code/Types.lean` and
+`Code/Funs.lean` by hand. If the script reports a new unmodelled
+standard-library item, model it in `Code/FunsExternal.lean` and add it to
+`EXTERNALS`. If a proof no longer
+goes through, the change either broke the specified behaviour or needs the
+proof updated; say which in the pull request.
+
 ### Benchmarks
 
 Performance claims need evidence. Criterion benchmarks compare mbrotli with

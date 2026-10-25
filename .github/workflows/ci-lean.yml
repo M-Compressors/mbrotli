@@ -1,0 +1,36 @@
+name: CI Lean
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  translation:
+    name: Lean translation matches the Rust source
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      # The pinned Aeneas release bundles Charon and names the nightly
+      # toolchain it needs; the script downloads the one and installs the other.
+      - run: python3 scripts/extract_lean.py --check
+
+  proofs:
+    name: Lean proofs
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: verification/lean
+    steps:
+      - uses: actions/checkout@v7
+      - run: |
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh \
+            | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      # Mathlib and the Aeneas library come prebuilt; only the proofs compile.
+      # Their 7 GiB of build products would not fit the Actions cache.
+      - run: lake exe cache get
+      # `Mbrotli.Audit` fails the build if a headline theorem gains an axiom.
+      - run: lake build

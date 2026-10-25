@@ -89,6 +89,27 @@ cargo clippy --all-targets --locked --features experimental -- -D warnings
 The [libFuzzer guide](../fuzz/libfuzzer/README.md) covers local sanitizer
 builds and reproducing ClusterFuzzLite findings.
 
+## Formal verification
+
+The distance prefix codes are proved correct in Lean 4 against a translation
+of the Rust source. After changing an item listed in `START` of
+`scripts/extract_lean.py`, or anything it calls, regenerate the translation
+and rebuild the proofs:
+
+```sh
+python3 scripts/extract_lean.py           # rewrites verification/lean/Mbrotli/Code/
+cd verification/lean
+lake exe cache get                        # once: prebuilt Mathlib
+lake build                                # proofs and axiom audit
+```
+
+The script downloads the pinned Aeneas release into `target/aeneas/` and
+installs the nightly toolchain Charon needs; Lean comes from
+[elan](https://github.com/leanprover/elan). `--check` only verifies that the
+committed translation is current. See
+[formal verification](../architecture/formal-verification.md) for what is
+proved and what is trusted.
+
 ## Repository map
 
 | Path | Contents |
@@ -101,6 +122,7 @@ builds and reproducing ClusterFuzzLite findings.
 | `brotli-ffi/` | C bindings, build, and test shims |
 | `fuzz/afl/` | Isolated fuzz package and regression corpus |
 | `fuzz/libfuzzer/` | libFuzzer adapters over the AFL target bodies |
+| `verification/lean/` | Lean 4 translation of selected Rust items and proofs about it |
 | `.clusterfuzzlite/` | ClusterFuzzLite image and build script |
 | `docs/` | User and contributor guides |
 | `architecture/` | Current subsystem specifications and diagrams |

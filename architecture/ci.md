@@ -9,6 +9,7 @@ All checkouts include vendored submodules. Local commands are in
 | Workflow | Trigger | Scope |
 | --- | --- | --- |
 | `ci.yml` | Push to master, pull request | Formatting, Clippy, docs, packaging, API compatibility, feature checks, tests and AFL replay |
+| `ci-lean.yml` | Push to master, pull request | Lean translation drift check and Lean proofs with axiom audit; see [formal verification](formal-verification.md) |
 | `ci-coverage.yml` | Manual | Std and no_std function coverage; 100% gate and HTML report |
 | `ci-benchmarks.yml` | Manual | Criterion validation and timing on Linux x86-64 and ARM64 |
 | `ci-fuzz.yml` | Every tag, manual | Bounded AFL campaigns in stable and experimental profiles |
@@ -27,6 +28,7 @@ flowchart TD
     Routine --> Features[std, no_std and isolated codec consumers]
     Routine --> Tests[platform tests and AFL regression replay]
     Routine --> LibFuzzer[libFuzzer adapter fmt and Clippy]
+    Branch --> Lean[ci-lean.yml: translation check and proofs]
     Branch -->|pull request touching code| CFPR[ci-cflite-pr.yml: code-change fuzzing]
     Daily[daily schedule] --> CFCron[ci-cflite-cron.yml: batch, prune, coverage]
     CFCron -. coverage report selects targets .-> CFPR
