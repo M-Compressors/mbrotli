@@ -8,6 +8,8 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+# Merged mode: one build runs natively for timing and allocations, then under
+# Callgrind, which adds instruction counts and writes one merged report.
 # Pull requests upload through `hotpath-relay.yml`, which matches this
 # workflow by name. Counts depend on the Valgrind build and the Rust toolchain,
 # so both are pinned. Bump the toolchain in a separate PR to refresh the baseline.
@@ -16,10 +18,15 @@ jobs:
     name: hotpath benchmark (push)
     if: github.event_name == 'push'
     runs-on: ubuntu-26.04
-    timeout-minutes: 20
+    timeout-minutes: 30
     permissions:
       contents: read
       id-token: write
+    # Shared by both runs, so their reports describe one benchmark.
+    env:
+      HOTPATH_BENCHMARK: compressor
+      HOTPATH_USER_METADATA: runner=Linux-X64,toolchain=1.99.1,profile=release,valgrind=3.26.0
+      HOTPATH_OUTPUT_FORMAT: json
     steps:
       - uses: actions/checkout@v7
         with:
@@ -27,9 +34,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: "1.99.1"
-      - name: Record rustc version
-        id: rustc
-        run: echo "version=$(rustc --version | cut -d' ' -f2)" >> "$GITHUB_OUTPUT"
       - uses: Swatinem/rust-cache@v2
       - name: Install valgrind
         run: |
@@ -40,13 +44,18 @@ jobs:
         run: >
           cargo build -q --release --example profile_compressor
           --features hotpath-alloc,hotpath-callgrind,hotpath-cloud
-      - name: Run benchmark under Callgrind and upload report
+      - name: Run benchmark natively
+        env:
+          HOTPATH_OUTPUT_PATH: ${{ runner.temp }}/native.json
+        run: >
+          target/release/examples/profile_compressor
+          brotli-ffi/vendor/brotli/tests/testdata/alice29.txt
+      - name: Run benchmark under Callgrind and upload the merged report
         env:
           HOTPATH_UPLOAD: fail-on-error
           HOTPATH_UPLOAD_RESPONSE_PATH: ${{ github.workspace }}/upload-response.json
-          HOTPATH_BENCHMARK: compressor
-          HOTPATH_USER_METADATA: runner=${{ runner.os }}-${{ runner.arch }},toolchain=1.99.1,rustc=${{ steps.rustc.outputs.version }},profile=release
-          HOTPATH_OUTPUT_FORMAT: none
+          HOTPATH_OUTPUT_PATH: ${{ runner.temp }}/merged.json
+          HOTPATH_MERGE_REPORT: ${{ runner.temp }}/native.json
           HOTPATH_CALLGRIND_OUT_FILE: ${{ runner.temp }}/callgrind.out.%p
         run: |
           valgrind -q --tool=callgrind --instr-atstart=no \
@@ -54,14 +63,20 @@ jobs:
             target/release/examples/profile_compressor \
             brotli-ffi/vendor/brotli/tests/testdata/alice29.txt
           test -s "$HOTPATH_UPLOAD_RESPONSE_PATH"
+          jq -e '.meta.run == "merged" and (.functions_icount.data | length > 0) and (.functions_timing.data | length > 0)' \
+            "$HOTPATH_OUTPUT_PATH" > /dev/null
 
   report:
     name: hotpath benchmark (pull request)
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-26.04
-    timeout-minutes: 20
+    timeout-minutes: 30
     permissions:
       contents: read
+    env:
+      HOTPATH_BENCHMARK: compressor
+      HOTPATH_USER_METADATA: runner=Linux-X64,toolchain=1.99.1,profile=release,valgrind=3.26.0
+      HOTPATH_OUTPUT_FORMAT: json
     steps:
       - uses: actions/checkout@v7
         with:
@@ -70,9 +85,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: "1.99.1"
-      - name: Record rustc version
-        id: rustc
-        run: echo "version=$(rustc --version | cut -d' ' -f2)" >> "$GITHUB_OUTPUT"
       - uses: Swatinem/rust-cache@v2
       - name: Install valgrind
         run: |
@@ -83,12 +95,16 @@ jobs:
         run: >
           cargo build -q --release --example profile_compressor
           --features hotpath-alloc,hotpath-callgrind,hotpath-cloud
-      - name: Run benchmark under Callgrind and write report
+      - name: Run benchmark natively
         env:
-          HOTPATH_BENCHMARK: compressor
-          HOTPATH_USER_METADATA: runner=${{ runner.os }}-${{ runner.arch }},toolchain=1.99.1,rustc=${{ steps.rustc.outputs.version }},profile=release
-          HOTPATH_OUTPUT_FORMAT: json
+          HOTPATH_OUTPUT_PATH: ${{ runner.temp }}/native.json
+        run: >
+          target/release/examples/profile_compressor
+          brotli-ffi/vendor/brotli/tests/testdata/alice29.txt
+      - name: Run benchmark under Callgrind and write the merged report
+        env:
           HOTPATH_OUTPUT_PATH: ${{ github.workspace }}/compressor-report.json
+          HOTPATH_MERGE_REPORT: ${{ runner.temp }}/native.json
           HOTPATH_CALLGRIND_OUT_FILE: ${{ runner.temp }}/callgrind.out.%p
         run: |
           valgrind -q --tool=callgrind --instr-atstart=no \
@@ -96,6 +112,8 @@ jobs:
             target/release/examples/profile_compressor \
             brotli-ffi/vendor/brotli/tests/testdata/alice29.txt
           test -s "$HOTPATH_OUTPUT_PATH"
+          jq -e '.meta.run == "merged" and (.functions_icount.data | length > 0) and (.functions_timing.data | length > 0)' \
+            "$HOTPATH_OUTPUT_PATH" > /dev/null
       - uses: actions/upload-artifact@v7
         with:
           name: compressor-report
