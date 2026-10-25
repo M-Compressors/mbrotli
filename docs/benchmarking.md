@@ -253,16 +253,21 @@ cargo run --release --features hotpath-cpu --example profile_compressor -- brotl
 cargo run --release --features hotpath-alloc --example profile_compressor -- brotli-ffi/vendor/brotli/tests/testdata/alice29.txt
 ```
 
-On x86_64 Linux, `hotpath-callgrind` replaces timing with per-function
-instruction counts from Valgrind Callgrind, which are reproducible across runs
-of one commit (at most 0.05% apart). The `hotpath benchmark` workflow runs this
-on every pull request and uploads the report to hotpath Cloud, judged by
-`hotpath/policy.toml`; compare counts only within one Valgrind version, Rust
-toolchain and runner image:
+On x86_64 Linux, `hotpath-callgrind` adds per-function instruction counts from
+Valgrind Callgrind, which are reproducible across runs of one commit (at most
+0.05% apart). The `hotpath benchmark` workflow runs in merged mode on every
+pull request: one build runs natively for timing and allocations, then under
+Callgrind, which merges its instruction counts into the native report and
+uploads it to hotpath Cloud, judged by `hotpath/policy.toml`. Counts are
+judged, timing is shown but not judged; compare counts only within one
+Valgrind version, Rust toolchain and runner image:
 
 ```sh
 cargo build --release --example profile_compressor --features hotpath-alloc,hotpath-callgrind
-valgrind -q --tool=callgrind --instr-atstart=no \
+HOTPATH_OUTPUT_FORMAT=json HOTPATH_OUTPUT_PATH=native.json \
+  target/release/examples/profile_compressor brotli-ffi/vendor/brotli/tests/testdata/alice29.txt
+HOTPATH_OUTPUT_FORMAT=json HOTPATH_MERGE_REPORT=native.json HOTPATH_OUTPUT_PATH=merged.json \
+  valgrind -q --tool=callgrind --instr-atstart=no \
   target/release/examples/profile_compressor brotli-ffi/vendor/brotli/tests/testdata/alice29.txt
 ```
 

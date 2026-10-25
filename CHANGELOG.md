@@ -3,8 +3,9 @@
 ## Unreleased
 
 - New opt-in `hotpath-callgrind` and `hotpath-cloud` profiling features, and
-  the optional `hotpath` dependency is updated to 0.29. Pull requests are
-  benchmarked on hotpath Cloud with Callgrind instruction counts.
+  the optional `hotpath` dependency is updated to 0.29.2. Pull requests are
+  benchmarked on hotpath Cloud in merged mode: native timing and allocations
+  plus Callgrind instruction counts in one report.
 
 ## [v0.5.17](https://github.com/M-Compressors/mbrotli/releases/tag/v0.5.17) - 2026-10-24
 
