@@ -304,7 +304,7 @@ mod tests {
         let ring: Vec<u8> = (0..256).map(|_| (next() % 3) as u8).collect();
         let around =
             |anchor: i64, next: &mut dyn FnMut() -> u64| (anchor + (next() % 13) as i64 - 6) as i32;
-        let rounds = if cfg!(miri) { 500 } else { 20_000 };
+        let rounds = if cfg!(miri) { 150 } else { 20_000 };
         for level in levels() {
             for round in 0..rounds {
                 // Short windows model a ring holding less than its mask admits.

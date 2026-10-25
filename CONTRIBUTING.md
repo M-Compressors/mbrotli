@@ -80,15 +80,18 @@ The full rules are in [`AGENTS.md`](AGENTS.md); the essentials:
 
 ### Miri and AddressSanitizer
 
-`scripts/check_simd_uninit.py` runs every SIMD and uninitialized-memory test,
-one process per test. It selects tests by name prefix from the binary's own
-`--list` and fails a prefix that runs no test, since `cargo test` passes
-when a filter matches nothing.
+`scripts/check_simd_uninit.py` runs every SIMD and uninitialized-memory test.
+It selects tests by name prefix from the binary's own `--list`, drops the
+ones this configuration ignores, and fails a prefix that has none left, since
+`cargo test` passes when a filter matches nothing. Starting `cargo miri`
+costs seconds, so each process runs a batch of up to `--batch` tests (4 by
+default); `--shard K/N` runs one of N slices, which is how CI splits Miri
+across runners. The script ends with the slowest batches.
 
 ```sh
-# Miri, at every SIMD level this machine has
-RUSTFLAGS=-Ctarget-cpu=native python3 scripts/check_simd_uninit.py miri
-# Miri on x86-64 from an Apple Silicon Mac: SSE2 through AVX2
+# Miri on ARM64: Neon is part of the baseline
+python3 scripts/check_simd_uninit.py miri
+# Miri on x86-64, also from an Apple Silicon Mac: SSE2 through AVX2
 RUSTFLAGS=-Ctarget-cpu=x86-64-v3 CARGO_TARGET_DIR=target/miri-v3 \
   python3 scripts/check_simd_uninit.py miri --target x86_64-apple-darwin
 # AddressSanitizer, natively
@@ -97,10 +100,13 @@ python3 scripts/check_simd_uninit.py asan
 
 - Miri reports runtime-detected CPU features as absent, so it only reaches
   the SIMD levels the build enables at compile time: plain x86-64 gets SSE2
-  and the scalar fallback, never SSE4.2 or AVX2. CI sets
-  `RUSTFLAGS=-Ctarget-cpu=native`; locally, pick a CPU with `-Ctarget-cpu`
-  and give each one its own `CARGO_TARGET_DIR`. Miri interprets the target,
-  so an x86-64 run needs no x86 machine.
+  and the scalar fallback, never SSE4.2 or AVX2. CI builds x86-64 with
+  `-Ctarget-cpu=x86-64-v3`, not `native`: Miri has no shims for the AVX-512
+  intrinsics, and some runners have AVX-512. Give each CPU its own
+  `CARGO_TARGET_DIR`. The script copies `RUSTFLAGS` into an unset
+  `RUSTDOCFLAGS`, since a doc test built without the library's features calls
+  its kernels without them. Miri interprets the target, so an x86-64 run
+  needs no x86 machine.
 - The script sets `-Zmiri-deterministic-floats`, which a manual
   `cargo miri test` needs too. By default Miri adds random rounding error to
   `log2` and other float functions, so exact bit-cost assertions and
@@ -120,9 +126,13 @@ python3 scripts/check_simd_uninit.py asan
 - Iterate `Backend::available()` (or `Backend::levels()` in a unit test) so
   each run covers every level its target allows; `Level::try_detect()` alone
   reaches one.
-- Keep each test small enough for Miri, at most a minute or two: shrink its
-  input under `cfg!(miri)` while keeping the vector, tail and chunk
-  boundaries. The script reports each module's slowest test.
+- Keep each test small enough for Miri, under a minute on a laptop: CI
+  runners are about twice as slow, and a shard must finish in ten minutes.
+  Shrink its input under `cfg!(miri)` while keeping the vector, tail and
+  chunk boundaries, and do not repeat work the assertions do not need, such
+  as a scalar reference per backend. On x86-64, Miri walks every level from
+  SSE2 to AVX2, so a test costs about twice its ARM64 time there, and
+  qualities 10 and 11 cost minutes even on short inputs.
 - Read uninitialized output back only up to the count the codec reported,
   from a buffer that starts as `MaybeUninit::uninit()`. A sentinel-filled
   buffer catches writes past the count but is already initialized, so Miri

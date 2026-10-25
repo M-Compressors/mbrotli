@@ -722,34 +722,57 @@ mod tests {
     use super::*;
 
     fn check_small_fragments<S: Simd, const INDEPENDENT: bool>(simd: S) {
-        // Miri keeps both ends of the bit offsets and the lengths around the
-        // minimum match and the vector widths.
-        let (offsets, lens): (Vec<usize>, Vec<usize>) = if cfg!(miri) {
-            (vec![0, 7], vec![1, 5, 6, 15, 16, 17, 32, 33, 64, 80])
-        } else {
-            ((0..8).collect(), (1..=80).collect())
+        // Miri keeps both ends of the bit offsets, one per arena state, and
+        // the lengths around the minimum match and the vector widths, each
+        // with one pattern and one last-block flag: six lengths still pair
+        // every pattern with both flags.
+        let offsets = |trained: bool| -> Vec<usize> {
+            match (cfg!(miri), trained) {
+                (true, false) => vec![0],
+                (true, true) => vec![7],
+                (false, _) => (0..8).collect(),
+            }
         };
+        let lens: Vec<usize> = if cfg!(miri) {
+            vec![1, 6, 16, 17, 33, 80]
+        } else {
+            (1..=80).collect()
+        };
+        let patterns = |len_index: usize| -> Vec<u8> {
+            if cfg!(miri) {
+                vec![(len_index % 3) as u8]
+            } else {
+                vec![0, 1, 2]
+            }
+        };
+        let last_flags = |len_index: usize| -> Vec<bool> {
+            if cfg!(miri) {
+                vec![len_index % 2 == 1]
+            } else {
+                vec![false, true]
+            }
+        };
+        // Training is deterministic, so both sides start from one copy of
+        // the trained arena instead of retraining every case.
+        let mut trained_arena = OnePassArena::default();
+        compress_fragment_impl::<S, 11, 2048, INDEPENDENT>(
+            simd,
+            &mut trained_arena,
+            &b"a small repeated prefix ".repeat(40),
+            false,
+            &mut [0; 2048],
+            &mut BitWriter::append(&mut Vec::new(), 0),
+        );
         for trained in [false, true] {
-            for &offset in &offsets {
-                for pattern in [0u8, 1, 2] {
-                    for &len in &lens {
-                        for is_last in [false, true] {
-                            let mut actual_arena = OnePassArena::default();
-                            let mut reference_arena = OnePassArena::default();
-                            if trained {
-                                let prefix = b"a small repeated prefix ".repeat(40);
-                                for arena in [&mut actual_arena, &mut reference_arena] {
-                                    let mut storage = Vec::new();
-                                    compress_fragment_impl::<S, 11, 2048, INDEPENDENT>(
-                                        simd,
-                                        arena,
-                                        &prefix,
-                                        false,
-                                        &mut [0; 2048],
-                                        &mut BitWriter::append(&mut storage, 0),
-                                    );
-                                }
-                            }
+            for offset in offsets(trained) {
+                for (len_index, &len) in lens.iter().enumerate() {
+                    for pattern in patterns(len_index) {
+                        for is_last in last_flags(len_index) {
+                            let (mut actual_arena, mut reference_arena) = if trained {
+                                (trained_arena.clone(), trained_arena.clone())
+                            } else {
+                                (OnePassArena::default(), OnePassArena::default())
+                            };
                             let data: Vec<u8> = (0..len)
                                 .map(|i| match pattern {
                                     0 => b'a',

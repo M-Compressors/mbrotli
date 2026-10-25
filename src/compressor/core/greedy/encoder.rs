@@ -1041,6 +1041,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        miri,
+        ignore = "a scalar heuristic over 200 KB, too slow for Miri; it reaches no SIMD kernel"
+    )]
     fn random_literals_are_stored_uncompressed() {
         let mut rng = 0x1234_5678u64;
         let data: Vec<u8> = (0..200_000)

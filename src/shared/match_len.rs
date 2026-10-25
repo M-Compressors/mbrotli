@@ -530,7 +530,7 @@ mod tests {
         // Every level the host runs, and the scalar fallback.
         // Miri samples positions sparsely, with prime steps so they still
         // land at every offset within a vector.
-        let (cur_step, prev_step) = if cfg!(miri) { (151, 67) } else { (5, 3) };
+        let (cur_step, prev_step) = if cfg!(miri) { (293, 131) } else { (5, 3) };
         for level in crate::backend::Backend::levels() {
             for cur_ix in (0..data.len()).step_by(cur_step) {
                 for max_length in [0, 1, 7, 8, 9, 16, 17, 63, 200] {

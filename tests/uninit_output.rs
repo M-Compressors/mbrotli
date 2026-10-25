@@ -23,6 +23,24 @@ use support::{IMPLEMENTED_QUALITIES, Rng, encoder};
 /// Output windows: single bytes, an odd size, and room for whole blocks.
 const WINDOWS: [usize; 3] = [1, 13, 4096];
 
+/// The output windows and input chunk sizes a streaming test pairs: each
+/// window with both chunk sizes, or under Miri with one of them, alternating,
+/// which halves its cost there and still runs every window and every chunk.
+fn schedules(small_chunk: usize, whole: usize) -> Vec<(usize, usize)> {
+    WINDOWS
+        .iter()
+        .enumerate()
+        .flat_map(|(index, &window)| {
+            let chunks = match (cfg!(miri), index % 2) {
+                (false, _) => vec![small_chunk, whole],
+                (true, 0) => vec![small_chunk],
+                (true, _) => vec![whole],
+            };
+            chunks.into_iter().map(move |chunk| (window, chunk))
+        })
+        .collect()
+}
+
 /// Text, runs and noise, so streams carry literals, copies and dictionary
 /// references.
 fn payload(len: usize) -> Vec<u8> {
@@ -54,17 +72,19 @@ fn read(bytes: &[MaybeUninit<u8>]) -> Vec<u8> {
         .collect()
 }
 
-/// The qualities of `wanted` this run can execute.
+/// The qualities of `wanted` this run can afford.
 ///
-/// Miri has no shim for two Neon intrinsics that qualities 10 and 11 reach
-/// (see `CONTRIBUTING.md`), so under Miri on aarch64 those two are left to
-/// AddressSanitizer.
+/// Under Miri, every quality 10 or 11 stream costs most of a minute of
+/// histogram clustering, and on aarch64 Miri has no shim for two Neon
+/// intrinsics they reach (see `CONTRIBUTING.md`). Their blocks reach the
+/// destination through the same driver code as those of qualities 2 to 9, so
+/// Miri leaves them to AddressSanitizer, and `hq::encoder`'s unit tests run
+/// their kernels.
 fn runnable(wanted: &[Quality]) -> Vec<Quality> {
-    let neon_gap = cfg!(all(miri, target_arch = "aarch64"));
     wanted
         .iter()
         .copied()
-        .filter(|quality| !neon_gap || quality.get() < 10)
+        .filter(|quality| !cfg!(miri) || quality.get() < 10)
         .collect()
 }
 
@@ -108,37 +128,35 @@ fn encoder_process_uninit_initializes_every_reported_prefix() {
     let data = payload(1500);
     for quality in runnable(&[Quality::Q0, Quality::Q1, Quality::Q5, Quality::Q11]) {
         let expected = compress(quality, &data);
-        for window in WINDOWS {
-            for chunk in [97, data.len()] {
-                let mut compressor = encoder(quality, 16);
-                let config = InputSize::Exact(data.len() as u64).into();
-                let mut session = compressor.start(config).expect("a legal stream");
-                let mut output = uninit(window);
-                let mut stream = Vec::new();
-                let mut offset = 0;
-                loop {
-                    let end = (offset + chunk).min(data.len());
-                    let operation = if end == data.len() {
-                        Operation::Finish
-                    } else {
-                        Operation::Process
-                    };
-                    let progress = session
-                        .process_uninit(&data[offset..end], &mut output, operation)
-                        .expect("the session failed");
-                    offset += progress.consumed;
-                    stream.extend(read(&output[..progress.produced]));
-                    if progress.status == EncoderStatus::Finished {
-                        break;
-                    }
+        for (window, chunk) in schedules(97, data.len()) {
+            let mut compressor = encoder(quality, 16);
+            let config = InputSize::Exact(data.len() as u64).into();
+            let mut session = compressor.start(config).expect("a legal stream");
+            let mut output = uninit(window);
+            let mut stream = Vec::new();
+            let mut offset = 0;
+            loop {
+                let end = (offset + chunk).min(data.len());
+                let operation = if end == data.len() {
+                    Operation::Finish
+                } else {
+                    Operation::Process
+                };
+                let progress = session
+                    .process_uninit(&data[offset..end], &mut output, operation)
+                    .expect("the session failed");
+                offset += progress.consumed;
+                stream.extend(read(&output[..progress.produced]));
+                if progress.status == EncoderStatus::Finished {
+                    break;
                 }
-                assert_eq!(
-                    stream,
-                    expected,
-                    "q{} window {window} chunk {chunk}",
-                    quality.get()
-                );
             }
+            assert_eq!(
+                stream,
+                expected,
+                "q{} window {window} chunk {chunk}",
+                quality.get()
+            );
         }
     }
 }
@@ -252,38 +270,36 @@ fn decoder_process_uninit_initializes_every_reported_prefix() {
     let data = payload(1500);
     for quality in runnable(&[Quality::Q0, Quality::Q5, Quality::Q11]) {
         let compressed = compress(quality, &data);
-        for window in WINDOWS {
-            for chunk in [31, compressed.len()] {
-                let mut decoder = Decompressor::new(Default::default()).expect("a decoder");
-                let mut session = decoder
-                    .start(DecodeStreamConfig::default())
-                    .expect("starts");
-                let mut output = uninit(window);
-                let mut decoded = Vec::new();
-                let mut offset = 0;
-                loop {
-                    let end = (offset + chunk).min(compressed.len());
-                    let operation = if end == compressed.len() {
-                        DecodeOperation::Finish
-                    } else {
-                        DecodeOperation::Process
-                    };
-                    let progress = session
-                        .process_uninit(&compressed[offset..end], &mut output, operation)
-                        .expect("decodes");
-                    offset += progress.consumed;
-                    decoded.extend(read(&output[..progress.produced]));
-                    if progress.status == DecoderStatus::Finished {
-                        break;
-                    }
+        for (window, chunk) in schedules(31, compressed.len()) {
+            let mut decoder = Decompressor::new(Default::default()).expect("a decoder");
+            let mut session = decoder
+                .start(DecodeStreamConfig::default())
+                .expect("starts");
+            let mut output = uninit(window);
+            let mut decoded = Vec::new();
+            let mut offset = 0;
+            loop {
+                let end = (offset + chunk).min(compressed.len());
+                let operation = if end == compressed.len() {
+                    DecodeOperation::Finish
+                } else {
+                    DecodeOperation::Process
+                };
+                let progress = session
+                    .process_uninit(&compressed[offset..end], &mut output, operation)
+                    .expect("decodes");
+                offset += progress.consumed;
+                decoded.extend(read(&output[..progress.produced]));
+                if progress.status == DecoderStatus::Finished {
+                    break;
                 }
-                assert_eq!(
-                    decoded,
-                    data,
-                    "q{} window {window} chunk {chunk}",
-                    quality.get()
-                );
             }
+            assert_eq!(
+                decoded,
+                data,
+                "q{} window {window} chunk {chunk}",
+                quality.get()
+            );
         }
     }
 }

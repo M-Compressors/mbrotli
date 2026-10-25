@@ -804,7 +804,7 @@ mod tests {
         corpora.push(repeated());
 
         // Miri samples positions, on both sides of the ring's wrap.
-        let step = if cfg!(miri) { 53 } else { 1 };
+        let step = if cfg!(miri) { 157 } else { 1 };
         for level in crate::backend::Backend::levels() {
             for data in &corpora {
                 // No wrap, then a ring of 512 whose positions wrap around it.

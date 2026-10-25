@@ -2035,11 +2035,30 @@ mod tests {
         assert_eq!(&written, b"abcd\xAA\xAA");
     }
 
-    /// Decodes alice29 in one call asking for linear delivery into `bytes`.
+    /// The golden a linear request decodes, and its decoded bytes: alice29,
+    /// or under Miri the much smaller monkey.
+    fn linear_golden() -> (&'static [u8], &'static [u8]) {
+        if cfg!(miri) {
+            (
+                include_bytes!(
+                    "../../../brotli-ffi/vendor/brotli/tests/testdata/monkey.compressed"
+                ),
+                include_bytes!("../../../brotli-ffi/vendor/brotli/tests/testdata/monkey"),
+            )
+        } else {
+            (
+                include_bytes!(
+                    "../../../brotli-ffi/vendor/brotli/tests/testdata/alice29.txt.compressed"
+                ),
+                include_bytes!("../../../brotli-ffi/vendor/brotli/tests/testdata/alice29.txt"),
+            )
+        }
+    }
+
+    /// Decodes [`linear_golden`] in one call asking for linear delivery into
+    /// `bytes`.
     fn decode_linear_request<'a, O: Sink<'a>>(stream: &mut Stream, bytes: O) -> usize {
-        let encoded = include_bytes!(
-            "../../../brotli-ffi/vendor/brotli/tests/testdata/alice29.txt.compressed"
-        );
+        let (encoded, _) = linear_golden();
         let config = DecoderConfig::default();
         stream.reset(config);
         let mut input = Input::new(encoded, 0, None);
@@ -2069,8 +2088,7 @@ mod tests {
     #[test]
     fn a_linear_request_decodes_into_an_initialized_sink_without_a_ring() {
         const { assert!(<&mut [u8] as Sink>::LINEAR) };
-        let expected =
-            include_bytes!("../../../brotli-ffi/vendor/brotli/tests/testdata/alice29.txt");
+        let (_, expected) = linear_golden();
         let mut bytes = alloc::vec![0; expected.len()];
         let mut stream = Stream::default();
         let produced = decode_linear_request(&mut stream, &mut bytes[..]);
@@ -2083,8 +2101,7 @@ mod tests {
     #[test]
     fn a_linear_request_decodes_through_the_ring_for_an_uninitialized_sink() {
         const { assert!(!<&mut [MaybeUninit<u8>] as Sink>::LINEAR) };
-        let expected =
-            include_bytes!("../../../brotli-ffi/vendor/brotli/tests/testdata/alice29.txt");
+        let (_, expected) = linear_golden();
         let mut bytes = alloc::vec![MaybeUninit::new(0); expected.len()];
         let mut stream = Stream::default();
         let produced = decode_linear_request(&mut stream, &mut bytes[..]);
@@ -2225,7 +2242,7 @@ mod tests {
         };
         for backend in crate::Backend::available() {
             for size in [64usize, 256] {
-                for _ in 0..400 {
+                for _ in 0..if cfg!(miri) { 60 } else { 400 } {
                     let mut expected = alloc::vec![0u8; size];
                     for byte in &mut expected {
                         *byte = random() as u8;
@@ -2298,7 +2315,9 @@ mod tests {
                 ),
             ),
         ];
-        // Miri decodes small goldens: literals and copies, and one long run.
+        // Miri decodes small goldens: literals and copies, and one run. A
+        // long run is too slow there: at a one-byte capacity every output
+        // byte costs a `process` call.
         let small: &[(&[u8], &[u8])] = &[
             (
                 include_bytes!(
@@ -2307,10 +2326,8 @@ mod tests {
                 include_bytes!("../../../brotli-ffi/vendor/brotli/tests/testdata/monkey"),
             ),
             (
-                include_bytes!(
-                    "../../../brotli-ffi/vendor/brotli/tests/testdata/zerosukkanooa.compressed"
-                ),
-                include_bytes!("../../../brotli-ffi/vendor/brotli/tests/testdata/zerosukkanooa"),
+                include_bytes!("../../../brotli-ffi/vendor/brotli/tests/testdata/64x.compressed"),
+                include_bytes!("../../../brotli-ffi/vendor/brotli/tests/testdata/64x"),
             ),
         ];
         let cases = if cfg!(miri) { small } else { large };
@@ -2346,9 +2363,10 @@ mod tests {
 
     #[test]
     fn vector_copies_match_snapshots_for_every_host_backend_and_ring_boundary() {
-        // Miri keeps the sizes around both vector widths.
+        // Miri keeps the sizes around the narrow width and one past the wide
+        // one.
         let sizes: &[usize] = if cfg!(miri) {
-            &[0, 1, 15, 16, 17, 31, 32, 33]
+            &[0, 1, 15, 16, 17, 33]
         } else {
             &[0, 1, 15, 16, 17, 31, 32, 33, 63, 64, 65, 97]
         };

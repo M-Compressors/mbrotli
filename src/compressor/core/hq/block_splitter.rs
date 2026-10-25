@@ -901,9 +901,11 @@ mod tests {
         ignore = "Miri has no shim for the Neon intrinsics this reaches; see CONTRIBUTING.md"
     )]
     fn assignments_match_scalar_bits_ties_tails_and_prologue_on_every_backend() {
-        // Miri keeps the vector, tail and prologue boundaries.
+        // Miri keeps the vector and tail boundaries. Crossing the prologue
+        // takes two thousand positions, hours there; the native run checks
+        // it.
         let (counts, lengths): (&[usize], &[usize]) = if cfg!(miri) {
-            (&[1, 7, 8, 9, 17], &[0, 1, 127, PROLOGUE_LENGTH + 3])
+            (&[1, 7, 8, 9, 17], &[0, 1, 31])
         } else {
             (
                 &[1, 2, 7, 8, 9, 15, 16, 17, 31, 32, 33, 50, 99, 100],
@@ -982,7 +984,9 @@ mod tests {
         };
         for &count in counts {
             let lanes = padded_histograms(count);
-            let length = PROLOGUE_LENGTH + 3;
+            // Padding lanes behave the same at every position; Miri cannot
+            // afford the walk past the prologue.
+            let length = if cfg!(miri) { 31 } else { PROLOGUE_LENGTH + 3 };
             let data: Vec<u16> = (0..length).map(|i| ((i * 73 + i / 7) % 3) as u16).collect();
             let prices: Vec<f64> = (0..3 * count)
                 .map(|i| ((i * 71 + i / 3) % 151) as f64 / 13.0)
@@ -1265,6 +1269,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        miri,
+        ignore = "scalar-only and too slow for Miri; the kernels it reaches have their own tests"
+    )]
     fn a_uniform_stream_stays_one_block_type() {
         let data = vec![42u16; 8000];
         let split = split_literals(&data, 3);

@@ -33,6 +33,22 @@
   handles or tasks reports closure or abandonment errors when observed. Tasks
   already held by executors must still be run or dropped.
 
+- The Miri workflow fits in ten minutes again; the first run of the new
+  checks took 66 minutes on ARM64 and timed out after almost three hours on
+  x86-64. x86-64 now builds with `-Ctarget-cpu=x86-64-v3` instead of
+  `native`: on runners with AVX-512, `native` reached AVX-512 intrinsics Miri
+  cannot interpret. Each architecture runs in four shards with a 15-minute
+  timeout. `scripts/check_simd_uninit.py` runs up to four tests per process
+  (`--batch`), takes `--shard K/N`, skips tests the configuration ignores
+  before running anything, and copies `RUSTFLAGS` into an unset
+  `RUSTDOCFLAGS` under Miri, which the doc tests needed on x86-64. Under Miri,
+  the slowest tests encode fewer streams at qualities 10 and 11, each of which
+  takes Miri most of a minute, decode short goldens, encode the scalar
+  reference once rather than once per backend, and stop before the block
+  splitter's 2000-symbol prologue. Six slow scalar-only tests no longer run
+  there, nor, on ARM64, two hasher tests that reach a Neon intrinsic Miri
+  lacks. The published crate is unchanged.
+
 - Miri and AddressSanitizer now cover every SIMD kernel and every
   uninitialized-output path. `scripts/check_simd_uninit.py` runs those tests
   one per process, fails a module that runs none, and is what `ci-miri.yml`

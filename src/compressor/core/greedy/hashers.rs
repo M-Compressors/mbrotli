@@ -3719,6 +3719,10 @@ mod tests {
 
     #[cfg(not(feature = "no_std"))]
     #[test]
+    #[cfg_attr(
+        miri,
+        ignore = "scalar run detection over 64 KiB histories, too slow for Miri; it reaches no SIMD kernel or uninitialized memory"
+    )]
     fn history_runs_keep_only_their_last_four_periods() {
         let total = |ranges: &[(usize, usize)]| ranges.iter().map(|(s, e)| e - s).sum::<usize>();
         // Zeros repeat every byte: the start and the last four positions.
@@ -4359,6 +4363,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        miri,
+        ignore = "checks the sparse-to-dense layout policy, not memory safety, over 64 KiB inputs; `a_dense_table_keeps_its_blocks_and_clears_only_its_counters` covers the dense table under Miri"
+    )]
     fn a_reused_tagged_shape_takes_the_dense_table_from_a_sixty_fourth() {
         fn is_dense<const H: bool, const B: usize, const K: usize, const S: usize>(
             matcher: &BucketMatcher<H, B, K, S>,
@@ -4467,6 +4475,10 @@ mod tests {
     type Q6Bucket = BucketMatcher<false, { 1 << 14 }, 32, { (1 << 14) * 32 }>;
 
     #[test]
+    #[cfg_attr(
+        all(miri, target_arch = "aarch64"),
+        ignore = "Miri has no shim for the Neon intrinsics this reaches; see CONTRIBUTING.md"
+    )]
     fn a_tagged_shape_needs_twice_the_store_rate_of_a_deep_one() {
         let data = repeated();
         let expected = search_at(&mut primed(Q6Bucket::new(1 << 20), &data), &data, REPEAT_AT);
@@ -4642,6 +4654,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        miri,
+        ignore = "scalar map against a `BTreeMap`, too slow for Miri; `the_key_map_keeps_colliding_keys_through_growth_and_reset` covers its storage there"
+    )]
     fn key_map_growth_from_empty_and_overwrites_match_an_ordered_map() {
         let mut map = KeyMap::default();
         map.grow();
@@ -4711,6 +4727,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        all(miri, target_arch = "aarch64"),
+        ignore = "Miri has no shim for the Neon intrinsics this reaches; see CONTRIBUTING.md"
+    )]
     fn tag_equality_matches_scalar_comparison_on_every_backend() {
         fn check<const N: usize>(backend: crate::compressor::Backend) {
             let tags: [u8; N] = ::core::array::from_fn(|i| (i % 5) as u8);
@@ -5059,7 +5079,7 @@ mod tests {
                 data.extend_from_slice(&stretch);
             }
         }
-        let rounds = if cfg!(miri) { 300 } else { 4000 };
+        let rounds = if cfg!(miri) { 100 } else { 4000 };
         for _ in 0..rounds {
             let cur_ix = (next() % (data.len() as u64 - 64)) as usize;
             let mut cache = INITIAL_DISTANCE_CACHE;

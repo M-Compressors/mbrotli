@@ -143,9 +143,11 @@ explicitly an upstream-vendor update.
   memory must be exercised under both Miri and AddressSanitizer through
   `scripts/check_simd_uninit.py`, which `ci-miri.yml` and `ci-sanitizer.yml`
   run; add a new module or test binary to its lists. Miri reaches only the
-  SIMD levels enabled at compile time, so CI runs it with
-  `RUSTFLAGS=-Ctarget-cpu=native`; locally, also run x86-64 with
-  `-Ctarget-cpu=x86-64-v3`. Shrink inputs under `cfg!(miri)` rather than
+  SIMD levels enabled at compile time, so CI runs x86-64 with
+  `RUSTFLAGS=-Ctarget-cpu=x86-64-v3` (Miri has no AVX-512 shims) and ARM64
+  at its Neon baseline; run both locally. CI splits the Miri run into shards
+  that must each finish within ten minutes, so keep every test under a
+  minute under Miri on a laptop. Shrink inputs under `cfg!(miri)` rather than
   ignoring a SIMD test, and read uninitialized output from buffers that start
   `MaybeUninit::uninit()`. Neon paths Miri cannot interpret are covered by
   ASan alone. The commands and known Miri limits are in `CONTRIBUTING.md`.

@@ -810,6 +810,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        miri,
+        ignore = "a scalar heuristic over 200 KB, too slow for Miri; it reaches no SIMD kernel"
+    )]
     fn random_literals_are_stored_uncompressed() {
         let mut rng = 0x1234_5678u64;
         let data: Vec<u8> = (0..200_000)
@@ -834,6 +838,10 @@ mod tests {
     #[cfg_attr(
         all(miri, target_arch = "aarch64"),
         ignore = "Miri has no shim for the Neon intrinsics this reaches; see CONTRIBUTING.md"
+    )]
+    #[cfg_attr(
+        all(miri, not(target_arch = "aarch64")),
+        ignore = "each stream costs Miri most of a minute; `every_backend_produces_the_same_stream` encodes with every backend there"
     )]
     fn both_qualities_produce_a_non_empty_stream() {
         for quality in [QualityLevel::Q10, QualityLevel::Q11] {
@@ -866,11 +874,27 @@ mod tests {
         ignore = "Miri has no shim for the Neon intrinsics this reaches; see CONTRIBUTING.md"
     )]
     fn every_backend_produces_the_same_stream() {
-        let len = if cfg!(miri) { 3000 } else { 120_000 };
+        // Clustering the histograms of even a short stream costs Miri most of
+        // a minute, so there it encodes at quality eleven, which reaches every
+        // kernel quality ten does, with the scalar and the highest backend.
+        // The kernels' own tests compare every level in between.
+        let (len, qualities, backends): (usize, &[QualityLevel], Vec<Backend>) = if cfg!(miri) {
+            (
+                600,
+                &[QualityLevel::Q11],
+                vec![Backend::SCALAR, Backend::default()],
+            )
+        } else {
+            (
+                120_000,
+                &[QualityLevel::Q10, QualityLevel::Q11],
+                Backend::available(),
+            )
+        };
         let data: Vec<u8> = (0..len).map(|i| (i * 7 % 253) as u8).collect();
-        for quality in [QualityLevel::Q10, QualityLevel::Q11] {
+        for &quality in qualities {
             let mut streams = Vec::new();
-            for backend in Backend::available() {
+            for &backend in &backends {
                 streams.push(compress_with(backend, quality, &data));
             }
             assert!(

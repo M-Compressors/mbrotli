@@ -14,7 +14,7 @@ All checkouts include vendored submodules. Local commands are in
 | `ci-fuzz.yml` | Every tag, manual | Bounded AFL campaigns in stable and experimental profiles |
 | `ci-cflite-pr.yml` | Pull request touching code, fuzz or build files | ClusterFuzzLite libFuzzer/ASan run on the changed code |
 | `ci-cflite-cron.yml` | Daily, manual | ClusterFuzzLite batch fuzzing, corpus pruning and coverage report |
-| `ci-miri.yml` | Every tag, manual | SIMD and uninitialized-memory tests at `target-cpu=native` on x86-64 and ARM64; experimental decoder goldens |
+| `ci-miri.yml` | Every tag, manual | SIMD and uninitialized-memory tests on x86-64 (`x86-64-v3`) and ARM64, four shards each; experimental decoder goldens |
 | `ci-sanitizer.yml` | Every tag, manual | AddressSanitizer: SIMD and uninitialized-memory tests on x86-64 and ARM64, plus integration tests |
 | `ci-decompressor-heavy.yml` | `v*` tag, manual | Actual 25–30-bit history and counters beyond 4 GiB in four decoder profiles |
 | `release.yml` | Manual, from a `v*` tag | Publishes `mbrotli` to crates.io through trusted publishing |
@@ -84,26 +84,44 @@ sequenceDiagram
 Both tools run `scripts/check_simd_uninit.py`, which owns the list of unit-test
 modules (every module with a SIMD kernel, a backend dispatch or a
 `MaybeUninit` destination), integration binaries and the `uninit` doc tests.
-It builds once, lists each binary's tests with `--list`, keeps the names that
-start with a listed prefix, and runs each test in its own process with
-`--exact`, in parallel. A prefix that selects no test, or whose tests are all
-ignored, fails the run: `cargo test` itself passes when a filter matches
-nothing, and a substring filter such as `compressor::core::stream` would also
-match `decompressor::core::stream`.
+It builds once, lists each binary's tests with `--list` and its ignored ones
+with `--list --ignored`, and keeps the runnable names that start with a listed
+prefix. A prefix with no runnable test fails the run: `cargo test` itself
+passes when a filter matches nothing, and a substring filter such as
+`compressor::core::stream` would also match `decompressor::core::stream`.
+`--shard K/N` deals the selected tests round-robin and keeps every N-th; shard
+1 also runs the doc tests. The tests in the script's `SLOW` list, which take
+Miri minutes each, are dealt first, so no shard draws two of the slowest, and
+each runs in a process of its own, started first. The other tests run in
+batches of up to `--batch` (4) per process, passed as `--exact` names, since
+starting `cargo miri` costs seconds per process; a batch takes every n-th
+test of its binary, so one module's tests spread across batches. Each
+selected test must report `ok` in libtest's output. The script prints a
+per-prefix summary, the five slowest processes and the slowest tests by
+libtest's `--report-time` clock, which under Miri counts interpreted work
+rather than wall time.
 
 Miri reports runtime-detected CPU features as absent, so it interprets only the
-SIMD levels compiled in. The Miri jobs set `RUSTFLAGS=-Ctarget-cpu=native`,
-which makes `Backend::available()` list every level the runner has: SSE2,
-SSE4.2 and AVX2 (and AVX-512 when present) on x86-64, Neon on ARM64. The script
-sets `-Zmiri-deterministic-floats`, without which Miri perturbs `log2` and
-exact cost comparisons fail. Miri lacks shims for the Neon `vsliq_n_u8` and
+SIMD levels compiled in. The x86-64 Miri jobs set
+`RUSTFLAGS=-Ctarget-cpu=x86-64-v3`, which makes `Backend::available()` list
+SSE2, SSE4.2 and AVX2; `native` is not used, because Miri has no shims for the
+AVX-512 intrinsics and the hosted runner pool mixes AVX2 and AVX-512 machines.
+On ARM64, Neon is part of the baseline. The script copies `RUSTFLAGS` into an
+unset `RUSTDOCFLAGS`, since a doc test built without the library's target
+features calls its kernels without them, which Miri reports as undefined
+behavior. It also sets `-Zmiri-deterministic-floats`, without which Miri
+perturbs `log2` and exact cost comparisons fail. Miri lacks shims for the Neon `vsliq_n_u8` and
 `vminq_f64` intrinsics behind `fearless_simd`'s `mask8x32::to_bitmask` and
 `f64x2::min`; tests reaching them, and three doc tests the script skips by
 name, do not run under Miri on ARM64. Tests that call the C oracle, read files,
 or are scalar-only and slow carry `cfg_attr(miri, ignore)`; differential SIMD
-tests shrink their inputs under `cfg!(miri)` instead. `tests/uninit_output.rs`
-reads back only reported prefixes of destinations that start uninitialized, so
-Miri checks that every reported byte was written.
+tests shrink their inputs under `cfg!(miri)` instead. Each quality 10 or 11
+stream spends most of a minute in histogram clustering under Miri, so only
+`hq::encoder`'s backend comparison and the hq kernel tests encode at those
+qualities there. `tests/uninit_output.rs` reads back only reported prefixes of
+destinations that start uninitialized, so Miri checks that every reported byte
+was written. Shards are sized to finish within ten minutes, under a 15-minute
+job timeout.
 
 AddressSanitizer runs the same list natively in release mode, with real feature
 detection, which reaches the Neon paths Miri cannot. Its integration list also
@@ -114,8 +132,8 @@ ASan job keeps its integration-test list.
 flowchart TD
     Tag[v* tag or manual] --> Miri[ci-miri.yml]
     Tag --> Asan[ci-sanitizer.yml]
-    Miri --> MX86[x86-64 runner, target-cpu=native]
-    Miri --> MArm[ARM64 runner, target-cpu=native]
+    Miri --> MX86[4 x86-64 shards, target-cpu=x86-64-v3]
+    Miri --> MArm[4 ARM64 shards, Neon baseline]
     Miri --> Exp[experimental goldens and wire tests]
     Asan --> AX86[x86-64 runner]
     Asan --> AArm[ARM64 runner]
@@ -124,11 +142,15 @@ flowchart TD
     MArm --> Script
     AX86 --> Script
     AArm --> Script
-    Script --> List[list tests, select by prefix]
-    List --> Empty{every prefix has a test?}
+    Script --> List[list tests and ignored tests, select runnable by prefix]
+    List --> Empty{every prefix has a runnable test?}
     Empty -->|no| Fail[fail]
-    Empty -->|yes| Run[one process per test, in parallel]
-    Run --> Report[per-module pass count and slowest test]
+    Empty -->|yes| Deal[deal SLOW tests, then the rest, round-robin]
+    Deal --> Shard[keep every N-th test for shard K]
+    Shard --> Solo[each SLOW test in its own process, started first]
+    Shard --> Batch[other tests in batches of up to 4 per process]
+    Solo --> Report[per-prefix pass count, slowest processes and tests]
+    Batch --> Report
 ```
 
 ## AFL execution and artifacts

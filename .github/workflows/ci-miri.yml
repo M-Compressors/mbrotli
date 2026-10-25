@@ -12,18 +12,28 @@ env:
 
 jobs:
   simd-uninit:
-    name: SIMD and uninitialized memory (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+    name: SIMD and uninitialized memory (${{ matrix.platform.arch }}, shard ${{ matrix.shard }}/4)
+    runs-on: ${{ matrix.platform.os }}
+    # Each shard is sized to finish within ten minutes; a longer run means a
+    # test outgrew its Miri inputs, which should fail fast rather than hold
+    # the runner for hours.
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, ubuntu-24.04-arm]
+        # Miri reports runtime-detected CPU features as absent, so it reaches
+        # only the SIMD levels the build enables at compile time. x86-64-v3
+        # enables SSE2 through AVX2, the highest level Miri can interpret: it
+        # has no shims for the AVX-512 intrinsics, and `native` would make the
+        # run depend on which runner the job lands on. Neon is part of the
+        # ARM64 baseline.
+        platform:
+          - { arch: x86-64, os: ubuntu-latest, rustflags: -Ctarget-cpu=x86-64-v3 }
+          - { arch: arm64, os: ubuntu-24.04-arm, rustflags: '' }
+        shard: [1, 2, 3, 4]
     env:
-      # Miri reports runtime-detected CPU features as absent, so it reaches
-      # only the SIMD levels the build enables at compile time. `native`
-      # enables every level the runner has: SSE2 through AVX2, or AVX-512 when
-      # the runner supports it, on x86-64, and Neon on Arm.
-      RUSTFLAGS: -Ctarget-cpu=native
+      RUSTFLAGS: ${{ matrix.platform.rustflags }}
+      RUSTDOCFLAGS: ${{ matrix.platform.rustflags }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -33,7 +43,7 @@ jobs:
           components: miri
       # Selects tests by name prefix and fails a prefix that runs no test;
       # see the script for the module list.
-      - run: python3 scripts/check_simd_uninit.py miri
+      - run: python3 scripts/check_simd_uninit.py miri --shard ${{ matrix.shard }}/4
 
   experimental:
     name: experimental decoder
