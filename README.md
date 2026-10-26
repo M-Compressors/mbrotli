@@ -464,10 +464,10 @@ from the ordinary encoder's byte-identity checks. See the [dictionary and format
 ## Validation
 
 The repository includes differential tests against the pinned C encoder and decoder,
-cross-API and cross-backend checks, AFL++ fuzz targets, Miri checks, and AddressSanitizer
+cross-API and cross-backend checks, AFL++ fuzz targets, Miri checks, AddressSanitizer and [formal verification](architecture/formal-verification.md) via lean4
 workflows. Read the [compatibility and validation guide][validation] and the
 [native decoder checks][decoder-checks] for supported configurations,
-reproduction commands, and limitations. Testing and fuzzing are evidence, not formal verification.
+reproduction commands, and limitations.
 
 The crate enforces `#![cfg_attr(not(test), forbid(unsafe_code))]`. This describes
 mbrotli's production implementation, not every transitive dependency: SIMD intrinsics
