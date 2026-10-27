@@ -52,9 +52,12 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           # The budget is split evenly among the targets and bounds each
           # corpus merge: 600 s left 24 s per target, and the first merge of
-          # c_abi's 5035 inputs timed out. 7200 s gives each target about
-          # five minutes.
-          fuzz-seconds: 7200
+          # c_abi's 5035 inputs timed out. 7200 s gave each target about five
+          # minutes, and parallel's merge (~0.5 s per input) timed out after
+          # 333 s on 539 inputs when it ran early in the shuffled order.
+          # 14400 s gives each target about ten minutes; the job still takes
+          # only as long as the merges do.
+          fuzz-seconds: 14400
           mode: prune
 
   coverage:

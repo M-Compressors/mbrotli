@@ -45,6 +45,10 @@
   crate, which has no fuzz targets, under the coverage sanitizer. The
   published crate is unchanged.
 
+- Daily ClusterFuzzLite pruning gets 14400 seconds instead of 7200. The
+  `parallel` target merges about one input per second, and when the shuffled
+  order put it early its share of 333 seconds could not merge 539 inputs.
+
 ## [v0.5.17](https://github.com/M-Compressors/mbrotli/releases/tag/v0.5.17) - 2026-10-24
 
 - The decoder now rejects a meta-block that runs out of its single-type block

@@ -214,7 +214,7 @@ sequenceDiagram
     CF-->>PR: job fails on a crash, with the reproducer
     Cron->>CF: batch: build (address), fuzz 19800 s on all cores
     CF->>Store: grown corpus, crashes
-    Cron->>CF: prune: minimize corpus, 7200 s
+    Cron->>CF: prune: minimize corpus, 14400 s
     CF->>Store: pruned corpus
     Cron->>CF: coverage: build (coverage), report
     CF->>Store: coverage report
@@ -233,10 +233,17 @@ take turns, 792 seconds each. GitHub-hosted jobs stop at six hours including
 the image and fuzzer builds, so the job's `timeout-minutes: 360` leaves about
 half an hour for building and uploading the corpus.
 
-Pruning gets 7200 seconds. ClusterFuzzLite splits the budget evenly among the
-targets and uses each share as the timeout of that target's corpus merge, so
-600 seconds left 24 seconds per target. That was not enough to merge `c_abi`'s
-5035 inputs after the first batch run, and the job stopped at that target.
+Pruning gets 14400 seconds. ClusterFuzzLite visits the targets in a shuffled
+order and gives each one the remaining budget divided by the targets still to
+run, as the timeout of that target's corpus merge; time a fast merge leaves
+unused passes to the later targets. The first timeout fails the whole job.
+600 seconds left 24 seconds per target, not enough to merge `c_abi`'s 5035
+inputs after the first batch run. 7200 seconds left about five minutes, and
+`parallel`, whose merge runs at about one input per second under
+AddressSanitizer, timed out after 333 seconds on 539 inputs when it came early
+in the order; it needs about 320 seconds for 600 inputs. 14400 seconds gives
+each target about ten minutes. The job takes only as long as the merges do,
+about 50 minutes, so the larger budget costs nothing unless a merge needs it.
 
 In `ci-cflite-cron.yml` the jobs are chained: pruning follows batch fuzzing
 (ClusterFuzzLite requires pruning whenever batch fuzzing runs), and coverage
