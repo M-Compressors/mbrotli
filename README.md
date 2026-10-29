@@ -32,6 +32,9 @@ parallel compression when a workload benefits from it.
 
 ### lzbench (independent)
 
+<details>
+<summary>lzbench 2.4 results for mbrotli 0.5.2 and Google Brotli 1.2.0</summary>
+
 [lzbench](https://github.com/inikep/lzbench) is a long-running open-source
 in-memory benchmark: every codec is built from source into one binary with the
 same compiler and flags and runs on the same data and machine. Its maintainer ran
@@ -55,13 +58,14 @@ the compressed size as a percentage of the input and matches for both.
 decompression 3–10% behind C. This historical external table measures mbrotli
 0.5.2; the current local library comparison follows below.
 
+</details>
+
 ### Our benchmarks
 
 Full library comparisons cover 432 encoding and 384 decoding cases on the
 recorded optimized checkout. Results vary by workload and quality.
 
-<details>
-<summary>Compression benchmark results and methodology</summary>
+#### Compression
 
 ![Compression speed and output size relative to Google C Brotli across qualities 0–11][bench-chart]
 
@@ -77,10 +81,7 @@ Results apply to the [recorded source and machine][bench-qualities].
 
 [Per-dataset results and methodology][benchmarks] · [Raw measurements][bench-csv] · [Reproduce][benchmarking]
 
-</details>
-
-<details>
-<summary>Decompression benchmark results and methodology</summary>
+#### Decompression
 
 ![Decompression speed relative to Google C Brotli by source quality][decoder-bench-chart]
 
@@ -98,15 +99,13 @@ output capacity and Rust Brotli includes its native 4 KiB I/O adapter.
 
 [Per-quality and dataset results][decoder-benchmarks] · [Raw measurements][decoder-bench-csv] · [Methodology and limits][decoder-bench-report]
 
-</details>
-
 ## Quick start
 
 Requires **Rust 1.89 or later**. Add it to your project:
 
 ```toml
 [dependencies]
-mbrotli = "0.5.17"
+mbrotli = "0.5.18"
 ```
 
 ```rust
@@ -413,7 +412,7 @@ features to select one codec or use `no_std` with `alloc`. For an alloc-backed d
 
 ```toml
 [dependencies]
-mbrotli = { version = "0.5.17", default-features = false, features = ["no_std", "decompression"] }
+mbrotli = { version = "0.5.18", default-features = false, features = ["no_std", "decompression"] }
 ```
 
 Add `"compression"` for both codecs, or use `"std"` instead of `"no_std"` for standard

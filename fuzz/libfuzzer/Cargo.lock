@@ -128,7 +128,7 @@ dependencies = [
 
 [[package]]
 name = "mbrotli"
-version = "0.5.17"
+version = "0.5.18"
 dependencies = [
  "borrowed-buf",
  "branches",

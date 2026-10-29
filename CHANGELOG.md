@@ -1,6 +1,9 @@
 # Changelog
 
-## Unreleased
+## [v0.5.18](https://github.com/M-Compressors/mbrotli/releases/tag/v0.5.18) - 2026-10-29
+
+- Show the current compression and decompression benchmarks in the README
+  directly and collapse the historical lzbench 0.5.2 table.
 
 - Refresh all 432 encoder and 384 decoder library comparisons on AMD, regenerate
   their charts and quality pages, and remove superseded local result snapshots.
