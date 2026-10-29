@@ -8,7 +8,7 @@ from pathlib import Path
 from statistics import median
 
 from quality_docs import (CORPORA, ENCODERS, bars, cases, dataset_order, load_rows,
-                          medians, quality_order, throughput)
+                          medians, quality_order, save_svg, throughput)
 
 DECODERS = {key: value for key, value in ENCODERS.items() if key != "simd-brotli"}
 
@@ -42,7 +42,7 @@ def overview_chart(rows, path, subtitle):
     fig.text(.5, .02, subtitle + "\nIdentical compressed inputs · equal dataset weight",
              ha="center", fontsize=10)
     fig.tight_layout(rect=(0, .09, 1, .91))
-    fig.savefig(path, metadata={"Date": None})
+    save_svg(fig, path)
     plt.close(fig)
 
 
@@ -71,7 +71,7 @@ def quality_chart(rows, quality, path):
     fig.text(.5, .015, "Cold APIs · window 22 · linear axes from zero · whiskers: 95% confidence bounds on mean timing",
              ha="center", fontsize=10)
     fig.tight_layout(rect=(0, .04, 1, .97))
-    fig.savefig(path, metadata={"Date": None})
+    save_svg(fig, path)
     plt.close(fig)
 
 

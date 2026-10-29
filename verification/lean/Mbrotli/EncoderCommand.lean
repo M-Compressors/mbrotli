@@ -1,4 +1,4 @@
-import Mbrotli.EncoderLength
+import Mbrotli.CommandExtras
 import Mbrotli.DistanceRoundTrip
 import Mbrotli.LengthRoundTrip
 
@@ -238,89 +238,131 @@ theorem from_u64_u32.spec (x : U32) :
   simp only [lift, WP.spec_ok, core.convert.num.FromU64U32.from_val_eq]
 
 /-- **Spec theorem for `mbrotli::shared::command::Command::extra_bits`**
-For a command whose insert length and reconstructed copy length `K` the format
-can carry, the extra bits are the insert field, `insertlen` minus the first
-length of its code, in the low `INS_EXTRA` bits and the copy field, `K` minus the
-first length of its code, above them: the order in which RFC 7932 section 5
-writes them, insert extra bits first. -/
+For a valid command whose symbol's RFC classes contain its stored insert length
+and reconstructed copy length, the packed lookup supplies exactly those bases
+and widths. The extra fields keep the RFC order: insert first, copy above it. -/
 @[step]
 theorem Command.extra_bits.spec (self : Command) (L : Nat) (d : Int)
     (hL : L < 2 ^ 25) (hd1 : -64 ≤ d) (hd2 : d ≤ 63)
     (hK2 : 2 ≤ (L : Int) + d) (hK : (L : Int) + d ≤ 16779333)
-    (hcl : self.copy_len.val = L + deltaField d * 2 ^ 25) (hins : self.insert_len.val ≤ 16799809) :
+    (hcl : self.copy_len.val = L + deltaField d * 2 ^ 25) (hins : self.insert_len.val ≤ 16799809)
+    (hs : self.cmd_prefix.val < commandSymbols)
+    (hic : InsertCodeOf self.insert_len.val (insertCode self.cmd_prefix.val))
+    (hcc : CopyCodeOf ((L : Int) + d).toNat (copyCode self.cmd_prefix.val)) :
     self.extra_bits ⦃ (n : U32) (bits : U64) =>
       ∃ ic cc, InsertCodeOf self.insert_len.val ic ∧ CopyCodeOf ((L : Int) + d).toNat cc ∧
         n.val = (row insertRows ic).extra + (row copyRows cc).extra ∧
         bits.val = (((L : Int) + d).toNat - (row copyRows cc).lo) * 2 ^ (row insertRows ic).extra +
           (self.insert_len.val - (row insertRows ic).lo) ⦄ := by
   have := numBits_ge
+  have h1024 : (1024#usize).val = 1024 := by scalar_tac
+  set ic := insertCode self.cmd_prefix.val
+  set cc := copyCode self.cmd_prefix.val
+  have hs704 : self.cmd_prefix.val < 704 := hs
+  have hilo : (row insertRows ic).lo ≤ self.insert_len.val := hic.2.1
+  have hihi : self.insert_len.val ≤ (row insertRows ic).hi := hic.2.2
+  have hclo : (row copyRows cc).lo ≤ ((L : Int) + d).toNat := hcc.2.1
+  have hchi : ((L : Int) + d).toNat ≤ (row copyRows cc).hi := hcc.2.2
+  obtain ⟨hpacked, hibase, hcbase, hiwidth, hwidth, hi24, hc24⟩ :=
+    commandExtrasPacked_fields ic hic.1 cc hcc.1
+  obtain ⟨hibound, hcbound, -, -⟩ := commandExtrasParts_bounds ic hic.1 cc hcc.1
   unfold Command.extra_bits
-  step with Command.copy_len_code.spec self L d hL hd1 hd2 (by agrind) hcl as ⟨ copylen_code, hcode ⟩
-  have hK' : copylen_code.val = ((L : Int) + d).toNat := by agrind
-  step as ⟨ i, i_post ⟩
-  have hi : i.val = self.insert_len.val := by
-    rw [i_post, UScalar.cast_val_eq, Nat.mod_eq_of_lt (lt_usize_pow _ (by scalar_tac))]
-  step as ⟨ inscode, hic24, hilo, hihi ⟩
-  step as ⟨ i1, i1_post ⟩
-  have hi1 : i1.val = ((L : Int) + d).toNat := by
-    rw [i1_post, UScalar.cast_val_eq, Nat.mod_eq_of_lt (lt_usize_pow _ (by scalar_tac)), hK']
-  step as ⟨ copycode, hcc ⟩
-  rw [hi1] at hcc
-  rw [hi] at hilo hihi
-  obtain ⟨hcc24, hclo, hchi⟩ := hcc
-  have hext : ∀ c < 24, (row insertRows c).extra ≤ 24 ∧ (row copyRows c).extra ≤ 24 := by decide
-  have hcu : ∀ x : U16, (UScalar.cast .Usize x).val = x.val := fun x => by
-    rw [UScalar.cast_val_eq]; exact Nat.mod_eq_of_lt (lt_usize_pow _ (by scalar_tac))
-  step as ⟨ i2, i2_post ⟩
-  have hi2 : i2.val = inscode.val := by rw [i2_post, hcu]
-  step as ⟨ insnumextra, insnumextra_post ⟩
-  step as ⟨ i3, i3_post ⟩
-  have hi3 : i3.val = inscode.val := by rw [i3_post, hcu]
-  step as ⟨ i4, i4_post ⟩
-  step as ⟨ i5, i5_post ⟩
-  step as ⟨ insextraval, insextraval_post ⟩
-  step as ⟨ i6, i6_post ⟩
-  have hi6 : i6.val = copycode.val := by rw [i6_post, hcu]
-  step as ⟨ i7, i7_post ⟩
-  step as ⟨ i8, i8_post ⟩
-  step as ⟨ copyextraval, copyextraval_post ⟩
-  step as ⟨ i9, i9_post ⟩
-  have hi9 : i9.val = copycode.val := by rw [i9_post, hcu]
-  step as ⟨ i10, i10_post ⟩
-  rw [hi2] at insnumextra_post
-  rw [hi9] at i10_post
-  have := hext _ hic24
-  have := hext _ hcc24
-  step as ⟨ i11, i11_post ⟩
-  step as ⟨ i12, i12_post ⟩
-  step as ⟨ i13, i13_post ⟩
-  have wi : ∀ c < 24, (row insertRows c).hi + 1 = (row insertRows c).lo + 2 ^ (row insertRows c).extra := by
-    decide
-  have wc : ∀ c < 24, (row copyRows c).hi + 1 = (row copyRows c).lo + 2 ^ (row copyRows c).extra := by
-    decide
-  have hwi := wi _ hic24
-  have hwc := wc _ hcc24
-  rw [hi3] at i4_post
-  rw [hi6] at i7_post
-  have hins_f : insextraval.val = self.insert_len.val - (row insertRows inscode.val).lo := by
-    rw [insextraval_post, i5_post, i4_post]
-  have hcopy_f : copyextraval.val = ((L : Int) + d).toNat - (row copyRows copycode.val).lo := by
-    rw [copyextraval_post, i8_post, i7_post, hK']
-  have hinsw : insextraval.val < 2 ^ insnumextra.val := by rw [hins_f, insnumextra_post]; agrind
-  have hcopyw : copyextraval.val < 2 ^ 24 := by
-    have : 2 ^ (row copyRows copycode.val).extra ≤ 2 ^ 24 := Nat.pow_le_pow_right (by decide) (by agrind)
-    rw [hcopy_f]; agrind
-  have hpe : 2 ^ insnumextra.val ≤ 2 ^ 24 := Nat.pow_le_pow_right (by decide) (by agrind)
-  have hi12 : i12.val = copyextraval.val * 2 ^ insnumextra.val := by
-    rw [i12_post, Nat.shiftLeft_eq, show U64.size = 2 ^ 64 by simp [U64.size, U64.numBits]]
+  step as ⟨ a, ha ⟩
+  step as ⟨ index, hindex ⟩
+  have hindexv : index.val = self.cmd_prefix.val := by
+    rw [hindex, UScalar.cast_val_eq, Nat.mod_eq_of_lt (lt_usize_pow _ (by scalar_tac))]
+  step as ⟨ masked, hmasked ⟩
+  have hmaskedv : masked.val = self.cmd_prefix.val := by
+    rw [hmasked, UScalar.val_and, hindexv]
+    change self.cmd_prefix.val &&& 1023 = self.cmd_prefix.val
+    rw [show 1023 = 2 ^ 10 - 1 from rfl, Nat.and_two_pow_sub_one_eq_mod,
+      Nat.mod_eq_of_lt (by omega)]
+  step as ⟨ fields, hfields ⟩
+  have hfieldsv : fields.val = commandExtrasPacked ic cc := by
+    have helem : fields = a[self.cmd_prefix.val]! := by
+      rw [hfields, Array.getElem!_Nat_eq, List.Inhabited_getElem_eq_getElem!]
+      · rw [hmaskedv]
+      · rw [Array.length_eq, h1024]
+        omega
+    rw [helem]
+    exact ha self.cmd_prefix.val hs
+  step as ⟨ shiftedInsertWidth, hshiftedInsertWidth ⟩
+  have hsiw : shiftedInsertWidth.val = commandExtrasPacked ic cc / 2 ^ 32 := by
+    rw [hshiftedInsertWidth, Nat.shiftRight_eq_div_pow, hfieldsv]
+  step as ⟨ maskedInsertWidth, hmaskedInsertWidth ⟩
+  have hmiw : maskedInsertWidth.val = (row insertRows ic).extra := by
+    rw [hmaskedInsertWidth, UScalar.val_and, hsiw]
+    change commandExtrasPacked ic cc / 2 ^ 32 &&& 31 = (row insertRows ic).extra
+    rw [show 31 = 2 ^ 5 - 1 from rfl, Nat.and_two_pow_sub_one_eq_mod]
+    exact hiwidth
+  step as ⟨ insertWidth, hinsertWidth ⟩
+  have hiw : insertWidth.val = (row insertRows ic).extra := by
+    rw [hinsertWidth, UScalar.cast_val_eq, Nat.mod_eq_of_lt (by change _ < 2 ^ 32; omega), hmiw]
+  step as ⟨ shiftedWidth, hshiftedWidth ⟩
+  have hsw : shiftedWidth.val = commandExtrasPacked ic cc / 2 ^ 40 := by
+    rw [hshiftedWidth, Nat.shiftRight_eq_div_pow, hfieldsv]
+  step as ⟨ maskedWidth, hmaskedWidth ⟩
+  have hmw : maskedWidth.val = (row insertRows ic).extra + (row copyRows cc).extra := by
+    rw [hmaskedWidth, UScalar.val_and, hsw]
+    change commandExtrasPacked ic cc / 2 ^ 40 &&& 63 = _
+    rw [show 63 = 2 ^ 6 - 1 from rfl, Nat.and_two_pow_sub_one_eq_mod]
+    exact hwidth
+  step as ⟨ width, hwidth32 ⟩
+  have hw : width.val = (row insertRows ic).extra + (row copyRows cc).extra := by
+    rw [hwidth32, UScalar.cast_val_eq, Nat.mod_eq_of_lt (by change _ < 2 ^ 32; omega), hmw]
+  step as ⟨ insertBase16, hinsertBase16 ⟩
+  have hib16 : insertBase16.val = (row insertRows ic).lo := by
+    rw [hinsertBase16, UScalar.cast_val_eq, hfieldsv]
+    exact hibase
+  step as ⟨ insertBase, hinsertBase ⟩
+  have hib : insertBase.val = (row insertRows ic).lo := by
+    rw [hinsertBase, UScalar.cast_val_eq, Nat.mod_eq_of_lt (by change _ < 2 ^ 32; omega), hib16]
+  step as ⟨ insertDifference, hinsertDifference ⟩
+  step as ⟨ insertExtra, hinsertExtra ⟩
+  have hie : insertExtra.val = self.insert_len.val - (row insertRows ic).lo := by
+    rw [hinsertExtra, UScalar.cast_val_eq, Nat.mod_eq_of_lt (by change _ < 2 ^ 64; omega),
+      hinsertDifference, hib]
+  step with Command.copy_len_code.spec self L d hL hd1 hd2 (by agrind) hcl as ⟨ copyCodeLength, hcode ⟩
+  have hK' : copyCodeLength.val = ((L : Int) + d).toNat := by agrind
+  step as ⟨ shiftedCopyBase, hshiftedCopyBase ⟩
+  have hscb : shiftedCopyBase.val = commandExtrasPacked ic cc / 2 ^ 16 := by
+    rw [hshiftedCopyBase, Nat.shiftRight_eq_div_pow, hfieldsv]
+  step as ⟨ copyBase16, hcopyBase16 ⟩
+  have hcb16 : copyBase16.val = (row copyRows cc).lo := by
+    rw [hcopyBase16, UScalar.cast_val_eq, hscb]
+    exact hcbase
+  step as ⟨ copyBase, hcopyBase ⟩
+  have hcb : copyBase.val = (row copyRows cc).lo := by
+    rw [hcopyBase, UScalar.cast_val_eq, Nat.mod_eq_of_lt (by change _ < 2 ^ 32; omega), hcb16]
+  step as ⟨ copyDifference, hcopyDifference ⟩
+  step as ⟨ copyExtra, hcopyExtra ⟩
+  have hce : copyExtra.val = ((L : Int) + d).toNat - (row copyRows cc).lo := by
+    rw [hcopyExtra, UScalar.cast_val_eq, Nat.mod_eq_of_lt (by change _ < 2 ^ 64; omega),
+      hcopyDifference, hK', hcb]
+  have wi : ∀ c < 24, (row insertRows c).hi + 1 =
+      (row insertRows c).lo + 2 ^ (row insertRows c).extra := by decide
+  have wc : ∀ c < 24, (row copyRows c).hi + 1 =
+      (row copyRows c).lo + 2 ^ (row copyRows c).extra := by decide
+  have hwi := wi ic hic.1
+  have hwc := wc cc hcc.1
+  have hinsw : insertExtra.val < 2 ^ insertWidth.val := by rw [hie, hiw]; agrind
+  have hcopyw : copyExtra.val < 2 ^ 24 := by
+    have : 2 ^ (row copyRows cc).extra ≤ 2 ^ 24 := Nat.pow_le_pow_right (by decide) hc24
+    rw [hce]; agrind
+  have hpe : 2 ^ insertWidth.val ≤ 2 ^ 24 := by
+    rw [hiw]; exact Nat.pow_le_pow_right (by decide) hi24
+  step as ⟨ copyShifted, hcopyShifted ⟩
+  have hshift : copyShifted.val = copyExtra.val * 2 ^ insertWidth.val := by
+    rw [hcopyShifted, Nat.shiftLeft_eq,
+      show U64.size = 2 ^ 64 by simp [U64.size, U64.numBits]]
     apply Nat.mod_eq_of_lt
-    calc copyextraval.val * 2 ^ insnumextra.val < 2 ^ 24 * 2 ^ 24 :=
+    calc copyExtra.val * 2 ^ insertWidth.val < 2 ^ 24 * 2 ^ 24 :=
           Nat.mul_lt_mul_of_lt_of_le hcopyw hpe (Nat.two_pow_pos _)
       _ ≤ 2 ^ 64 := by norm_num
-  refine ⟨inscode.val, copycode.val, ⟨hic24, hilo, hihi⟩, ⟨hcc24, hclo, hchi⟩, ?_, ?_⟩
-  · rw [i11_post, insnumextra_post, i10_post]
-  · rw [i13_post, UScalar.val_or, hi12, ← Nat.shiftLeft_eq,
-      ← Nat.shiftLeft_add_eq_or_of_lt hinsw, Nat.shiftLeft_eq, hins_f, hcopy_f, insnumextra_post]
+  step as ⟨ bits, hbits ⟩
+  refine ⟨ic, cc, hic, hcc, hw, ?_⟩
+  rw [hbits, UScalar.val_or, hshift, ← Nat.shiftLeft_eq,
+    ← Nat.shiftLeft_add_eq_or_of_lt hinsw, Nat.shiftLeft_eq, hie, hce, hiw]
 
 /-- What `Command::distance_context` computes from the symbol: the copy code's
 low bits in the four cell rows whose copy codes start at 0, otherwise 3. -/
@@ -471,7 +513,7 @@ theorem command_round_trip (dist : shared.distance.DistanceParams) (insertlen co
   set K := ((copylen.val : Int) + copylen_code_delta.val).toNat with hK
   refine ⟨?_, ?_⟩
   · apply WP.spec_mono (Command.extra_bits.spec c copylen.val copylen_code_delta.val hc hd1 hd2 hcl2 hcl
-      hcpl (by rw [hlen]; exact hi))
+      hcpl (by rw [hlen]; exact hi) hs (by rw [hlen]; exact hic) hcc)
     rintro ⟨n, bits⟩ ⟨ic, cc, hic', hcc', hn, hbits⟩
     rw [hlen] at hic' hbits
     rw [← hK] at hcc' hbits

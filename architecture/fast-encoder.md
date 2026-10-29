@@ -66,9 +66,24 @@ implementations; see [greedy-encoder.md](greedy-encoder.md).
 
 `FastEncoder` retains its hash table, entropy workspace and scratch across
 fragments. One-shot append output uses the caller's reserved vector through a
-statically specialized bit writer; slice and I/O output retain their existing
-fixed-buffer paths. [Bit output](bit-output.md) specifies initialization,
-reservation, overflow and partial-byte handling.
+statically specialized bit writer. Large initialized slices use the fixed writer
+directly. Sessions with smaller or uninitialized destinations encode non-flush
+blocks into the compressor's initialized pending backing through that same fixed
+writer; a separate completed-end cursor bounds delivery. Drains and session
+resets retain its initialized length, so later fragments neither copy through
+encoder scratch nor reinitialize the whole buffer. Flushes still use the encoder's
+scratch. [Bit output](bit-output.md) specifies initialization, reservation,
+overflow and partial-byte handling.
+
+```mermaid
+flowchart LR
+    Session[Fast non-flush session block] --> Backing[Retained initialized pending backing]
+    Backing --> Fixed[encode_block_into with selected backend]
+    Fixed --> Completed[Publish completed byte count]
+    Completed --> Caller[Copy only completed bytes to caller]
+    Caller --> Retain[Reset delivery cursors; retain initialized backing]
+    Retain --> Backing
+```
 
 The quality 0 arena is not built by the constructor. `FastCore::OnePass`
 holds an `Option<Box<OnePassArena>>` that the first fragment needing a match
@@ -339,7 +354,7 @@ flowchart TD
     S -->|yes| I["list by descending symbol, insertion sort"]
     S -->|no| P["bucket starts from the counts; place leaves by descending symbol"]
     P --> B["sort_items::&lt;true&gt; inside each power-of-two bucket with 2+ leaves"]
-    W -->|"build_and_store_huffman_tree_fast (q0/q1 literals)"| F["list by descending symbol, sort_items::&lt;false&gt;"]
+    W -->|"build_and_store_huffman_tree_fast (q0/q1 literals, q2 fast codes)"| F["list by descending symbol, sort_items::&lt;false&gt;"]
     I --> M["merge_nodes, set_depth"]
     B --> M
     F --> M
@@ -385,6 +400,51 @@ flowchart LR
     M -->|sparse| W["tzcnt / lzcnt walk over set bits"]
     M -->|"run end"| E["first differing lane"]
 ```
+
+### 6.2. Two-queue Huffman merge
+
+`shared::huffman::merge_nodes` uses the caller's node pool for both sorted
+leaves and newly built parents. The leaf queue starts at index `0`, ends at
+`n`, and has a sentinel at `tree[n]`. The parent queue starts at `n + 1` with
+another sentinel. Each iteration selects two children, writes their parent to
+the next parent slot, then writes the following sentinel. It returns root
+index `2 * n - 1`; the pool needs `2 * n + 1` entries. The builders handle a
+single used symbol before calling this merge.
+
+For each child selection, the merge loads the two queue-front counts and
+compares them with `<=`: equal counts select the leaf queue. It carries the
+selected index **and its already loaded count** together, then advances that
+queue. The second child is selected from the updated fronts. Writing the
+parent uses those carried counts, without loading the selected children from
+the pool again. The weight is `left_count.wrapping_add(right_count)`, matching
+the reference's unsigned 32-bit addition even when a histogram overflows.
+Child indices, sentinel positions, tie order and all later depth/code choices
+remain unchanged.
+
+```mermaid
+flowchart TD
+    Start["Sorted leaves + leaf/parent sentinels"] --> Left["Load both front counts; select left index + count"]
+    Left --> TieL{"leaf count <= parent count?"}
+    TieL -->|yes| LeafL["Advance leaf queue"]
+    TieL -->|no| ParentL["Advance parent queue"]
+    LeafL --> Right["Load updated fronts; select right index + count"]
+    ParentL --> Right
+    Right --> TieR{"leaf count <= parent count?"}
+    TieR -->|yes| LeafR["Advance leaf queue"]
+    TieR -->|no| ParentR["Advance parent queue"]
+    LeafR --> Store["Store parent: wrapping sum + carried child indices"]
+    ParentR --> Store
+    Store --> Sentinel["Write next parent sentinel"]
+    Sentinel --> More{"More parents needed?"}
+    More -->|yes| Left
+    More -->|no| Root["Return root index 2*n - 1"]
+```
+
+The helper stays private, scalar and allocation-free; it adds no API, error or
+SIMD dispatch boundary. Its callers retain and grow the node workspace, and
+their depth-limit retry loop is unchanged. Differential tests compare the
+complete node pool with the original merge for tied, mixed and overflowing
+counts, including an unused suffix that must remain untouched.
 
 ## 7. SIMD dispatch points
 

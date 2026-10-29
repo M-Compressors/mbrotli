@@ -2,6 +2,69 @@
 
 ## Unreleased
 
+- Refresh all 432 encoder and 384 decoder library comparisons on AMD, regenerate
+  their charts and quality pages, and remove superseded local result snapshots.
+
+- Preserve encoded dictionary copy lengths when rebuilding a command after
+  an extension attempt, including negative length deltas, experimental
+  absolute-length tags and attempts that absorb no input.
+
+- Use young bucket scans for AVX2 64/128-slot hashers and AVX-512 128-slot
+  wide hashers with their existing backend token. Validate history bounds,
+  mask shape and the newest position once per search to skip redundant
+  distance guards and masking; other entries retain the general rebased path.
+  Candidate order, scoring and encoded bytes remain unchanged.
+
+- Rebase continuation checks in greedy 64/128-slot full buckets from the
+  original ring window after every accepted match, including shorter matches,
+  while preserving candidate order, distance scoring and encoded bytes.
+
+- Carry selected child counts through the shared two-queue Huffman merge,
+  removing repeated node loads and bounds checks while preserving leaf-first
+  ties, unsigned wrapping, child indices and encoded bytes.
+
+- Keep literal Huffman depths and bits in local fixed arrays for greedy fast
+  meta-blocks with at most 128 commands, removing two small heap allocations
+  while preserving byte identity and retained dynamic-code scratch.
+
+- Greedy vector output writes known verbatim blocks directly after the caller's
+  existing prefix, removing an intermediate scratch copy. Compressed trials,
+  slice destinations and flushes preserve their existing paths and byte identity.
+
+- Select verbatim greedy meta-blocks before initializing output scratch and
+  append their payload through the safe growable bit writer. This avoids
+  zeroing the payload before copying it while preserving carried bits,
+  distance history, streaming behavior and encoded bytes.
+
+- Reuse command prefixes to look up insert/copy extra-bit fields, and combine
+  command/distance symbols with their extras when they fit in one bit-writer
+  word. Longer pairs retain two writes; encoded bytes remain unchanged.
+  Updated Lean proofs verify the lookup table and the prefix/length invariant
+  supplied by command constructors.
+
+- Pack contiguous greedy literal runs two Huffman codes per bit-writer call,
+  preserving code order and byte identity while reducing sequential writes.
+
+- Fast streaming compression retains initialized output backing and tracks the
+  completed prefix separately. Qualities 0 and 1 encode non-flush blocks into
+  that backing directly, removing an intermediate copy without repeatedly
+  zeroing storage. Streaming bytes and public APIs remain unchanged.
+
+- Greedy encoder quick range stores explicitly hash eight positions with
+  `fearless_simd`, using the search loop's selected runtime backend and ordered
+  writes that preserve collisions. Bounded scalar paths handle short ranges,
+  wrapping and baseline backends. Load the derived distance cache directly
+  through `fearless_simd` rather than mapping an owned array. Encoded bytes
+  remain unchanged.
+
+- Prepare compact quick-matcher maps for the complete bounded input and keep
+  their capacity fixed during matching, removing redundant growth checks and
+  population bookkeeping from short-stream hash stores.
+
+- Specialize deep greedy bucket searches, stores and prefetches for their
+  untagged layout, eliminating redundant optional-tag handling in qualities
+  7–9 while preserving candidate order and compressed bytes.
+
 - Machine-checked Lean 4 proofs of the distance prefix codes. Charon and
   Aeneas translate `prefix_encode_copy_distance`, `DistanceParams::new`,
   `log2_floor_non_zero` and the decoder's distance layout into Lean

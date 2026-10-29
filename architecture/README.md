@@ -46,18 +46,18 @@ FFI do not appear in public signatures. Each codec compiles independently.
 | [Codec features](codec-features.md) | Codec gates, shared types and isolated consumer checks. |
 | [No standard library](no-std.md) | Alloc-backed APIs, feature precedence and compile-time SIMD. |
 | [Shared primitives](shared-primitives.md) | Common data, transforms (fixed-size built-in copies), fixed boxed tables, the compile-time baseline SIMD level, prefetch and mask scans, and private ownership. |
-| [Uninitialized output](uninit-output.md) | `process_uninit` (serial and parallel sessions), `compress_to_uninit` and `decompress_to_uninit`: write-only destinations, the paths they take and the C ABI's use of them. |
+| [Uninitialized output](uninit-output.md) | `process_uninit` (serial and parallel sessions), `compress_to_uninit` and `decompress_to_uninit`: write-only destinations, their initialized scratch/pending paths, separation from direct Vec appends and the C ABI's use of them. |
 
 ## Compression
 
 | Specification | Scope |
 | --- | --- |
 | [Compressor](compressor.md) | Public API, sessions, C-compatible size hint inference for streams of unknown length, I/O, dispatch and errors. |
-| [Encoder workspace](encoder-workspace.md) | Retained storage, reset, parked match-finder tables, accounting and backpressure. |
-| [Bit output](bit-output.md) | Initialized destinations, bit operations and overflow. |
+| [Encoder workspace](encoder-workspace.md) | Retained initialized output backing and completed-prefix cursors, reset, parked match-finder tables, accounting and backpressure. |
+| [Bit output](bit-output.md) | Initialized destinations, command-prefix field lookup and encoded-length reconstruction after extension, stack literal tables for short greedy blocks, paired command/literal writes, lazy verbatim scratch, direct Vec appends, bit operations and overflow. |
 | [Serial output identity](universal-encoding.md) | Shared scheduling, empty finalization and C compatibility. |
-| [Fast encoder](fast-encoder.md) | Qualities 0–1: fragments, entropy coding and SIMD scans; the shared prefix-code builders, their leaf sorts and mask scans. |
-| [Greedy encoder](greedy-encoder.md) | Qualities 2–9: fixed boxed tables, in-place compact-map rehashing and buffer migration, first-block sampling for the q5/q6 dense-table choice, store-rate-driven mid-stream sparse-to-dense promotion, bounded pool growth, dense stores and slice-fed range stores, next-position bucket prefetch, match scoring, the SIMD cached-distance prefilter shared with qualities 10–11, and meta-blocks with slice-fed literal splitting. |
+| [Fast encoder](fast-encoder.md) | Qualities 0–1: fragments, direct encoding into retained session backing, entropy coding and SIMD scans; the shared prefix-code builders, their leaf sorts, two-queue Huffman merges and mask scans. |
+| [Greedy encoder](greedy-encoder.md) | Qualities 2–9: fixed boxed tables, in-place compact-map rehashing and buffer migration, first-block sampling for the q5/q6 dense-table choice, store-rate-driven mid-stream sparse-to-dense promotion, bounded pool growth, dense stores, explicit SIMD quick range hashing with ordered stores and bounded scalar fallbacks, next-position bucket prefetch, rebased continuation checks in 64/128-slot full buckets with young history scans selected by SIMD level and hash shape, match scoring, the SIMD cached-distance prefilter shared with qualities 10–11, and meta-blocks with slice-fed literal splitting, lazy uncompressed scratch and direct verbatim Vec appends. |
 | [High-quality encoder](hq-encoder.md) | Qualities 10–11: tree search, SIMD distance-cache and dictionary-word filters, replay of repeated distance caches, command-price rows, ordered starts and clustering. |
 | [Owned sessions](owned-sessions.md) | Lifetime-free raw and framed sessions sharing the borrowed state machines and release paths; `reinit` and input-free `flush`/`finish`. |
 | [Parallel compression](parallel-compression.md) | Planning, encoder reconfiguration, caller-run tasks, staging and assembly. |
@@ -94,7 +94,7 @@ FFI do not appear in public signatures. Each codec compiles independently.
 
 | Specification | Scope |
 | --- | --- |
-| [Implementation comparison](benchmark-comparison.md) | Isolated Criterion suites, validation, recorded-run provenance and encoder/decoder charts. |
+| [Implementation comparison](benchmark-comparison.md) | Isolated library comparisons, validation, current AMD serial-sweep provenance and encoder/decoder charts. |
 | [Fuzzing](fuzzing.md) | Target inputs, oracles, campaigns, regression replay, and the libFuzzer adapters ClusterFuzzLite builds. |
 | [Continuous integration](ci.md) | Triggers, checks, strict alloc/std documentation builds, Miri and AddressSanitizer coverage of SIMD and uninitialized memory, framed fuzz campaigns, ClusterFuzzLite PR and daily fuzzing, artifacts, coverage gating and crates.io release publishing. |
-| [Formal verification](formal-verification.md) | Charon/Aeneas translation to Lean 4, its drift check, the RFC distance model and transcribed length tables, function specifications, round-trip and uniqueness theorems for distance and length codes, trusted base and leveled gaps. |
+| [Formal verification](formal-verification.md) | Charon/Aeneas translation to Lean 4, its drift check, the RFC distance model and transcribed length tables, function specifications, the prefix-indexed command-field table and its constructor invariant, round-trip and uniqueness theorems for distance and length codes, trusted base and leveled gaps. |

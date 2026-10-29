@@ -47,9 +47,11 @@ crate. Two fast paths read their destination:
 - the decoder's linear one-shot delivery (`Delivery::Linear`), which uses the
   caller's slice as the first member's history.
 
-The encoder's uninitialized methods take the scratch path that already exists
-for small destinations, followed by one copy, which measures as fast as the
-in-place path. Streaming `process_uninit` delivers through the ring, since a
+The encoder's uninitialized methods encode into initialized owned storage and
+copy completed bytes to the caller. Fast non-flush sessions use the compressor's
+pending backing directly, retaining its initialized length and tracking the
+completed prefix separately. One-shot calls and other encoder paths use encoder
+scratch. Decoder streaming `process_uninit` delivers through the ring, since a
 later call's destination cannot hold the paused member's history. The one-shot
 `decompress_to_uninit` keeps linear delivery: it zeroes the destination one
 meta-block ahead of the decoder (see [Linear one-shot
@@ -88,16 +90,33 @@ also writes the empty-input stream through `Output::append`.
 ```mermaid
 flowchart TD
     Block[Delivery::encode block] --> Fast{Fast encoder, not Flush?}
-    Fast -->|no| Scratch[encode_block_with into retained scratch]
+    Fast -->|no| Greedy{Greedy, Append, not Flush?}
+    Greedy -->|no| Scratch[encode_block_with into retained scratch]
+    Greedy -->|yes| GreedyAppend[encode_block_append]
+    GreedyAppend --> Raw{Known verbatim block?}
+    Raw -->|yes| DirectRaw[Write ring payload directly to initialized Vec]
+    Raw -->|no| GreedyScratch[Compress into scratch, then append]
     Fast -->|yes| Kind{destination}
     Kind -->|Slice with room for fragment_reserve| InPlace[encode_block_into caller slice]
     Kind -->|Append| Vec[encode_block_append into Vec]
-    Kind -->|Uninit, or Slice too small| Scratch
+    Kind -->|Uninit, or Slice too small| Resumable{session permits pending?}
+    Resumable -->|no| Scratch
+    Resumable -->|yes| Backing[Fixed writer in initialized pending backing]
+    Backing --> Publish[Publish completed end after success]
+    Publish --> Drain[Copy pending from served to completed end]
+    Drain --> Retain[Retain initialized length; reset cursors after complete delivery]
     Scratch --> Append[Output::append copies what fits]
     Append --> Rest{bytes left over?}
     Rest -->|session| Pending[keep in pending for the next call]
     Rest -->|one-shot| Small[OutputTooSmall]
 ```
+
+The greedy direct-append branch accepts only `Destination::Append`, whose Vec
+contains an initialized prefix that the bit writer may read. It writes known
+verbatim payloads directly and leaves compressed trials scratch-backed.
+`Destination::Uninit` never enters this branch: its initialized scratch is still
+copied through `Output::append`, preserving exactly the same produced-prefix
+contract and leaving bytes beyond it untouched.
 
 `Output::append` copies into `Uninit` through `shared::uninit::copy_to_uninit`,
 a `zip` + `MaybeUninit::write` loop that compiles to a `memcpy` and keeps the

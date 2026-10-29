@@ -241,29 +241,33 @@ fn merge_nodes(tree: &mut [HuffmanNode], n: usize) -> usize {
     let mut i = 0usize;
     let mut j = n + 1;
     for k in (1..n).rev() {
-        let left = if tree[i].total_count <= tree[j].total_count {
+        let leaf_count = tree[i].total_count;
+        let parent_count = tree[j].total_count;
+        let (left, left_count) = if leaf_count <= parent_count {
             let index = i;
             i += 1;
-            index
+            (index, leaf_count)
         } else {
             let index = j;
             j += 1;
-            index
+            (index, parent_count)
         };
-        let right = if tree[i].total_count <= tree[j].total_count {
+        let leaf_count = tree[i].total_count;
+        let parent_count = tree[j].total_count;
+        let (right, right_count) = if leaf_count <= parent_count {
             let index = i;
             i += 1;
-            index
+            (index, leaf_count)
         } else {
             let index = j;
             j += 1;
-            index
+            (index, parent_count)
         };
         let parent = 2 * n - k;
         tree[parent] = HuffmanNode {
             // Wrapping matches the reference, which relies on unsigned
             // wraparound for histograms that saturate a 32-bit counter.
-            total_count: tree[left].total_count.wrapping_add(tree[right].total_count),
+            total_count: left_count.wrapping_add(right_count),
             index_left: left as i16,
             index_right_or_value: right as i16,
         };
@@ -781,6 +785,84 @@ mod tests {
             .filter(|&&d| d != 0)
             .map(|&d| 0.5f64.powi(i32::from(d)))
             .sum()
+    }
+
+    fn reference_merge_nodes(tree: &mut [HuffmanNode], n: usize) -> usize {
+        tree[n] = HuffmanNode::SENTINEL;
+        tree[n + 1] = HuffmanNode::SENTINEL;
+
+        let mut i = 0usize;
+        let mut j = n + 1;
+        for k in (1..n).rev() {
+            let left = if tree[i].total_count <= tree[j].total_count {
+                let index = i;
+                i += 1;
+                index
+            } else {
+                let index = j;
+                j += 1;
+                index
+            };
+            let right = if tree[i].total_count <= tree[j].total_count {
+                let index = i;
+                i += 1;
+                index
+            } else {
+                let index = j;
+                j += 1;
+                index
+            };
+            let parent = 2 * n - k;
+            tree[parent] = HuffmanNode {
+                // Wrapping matches the reference, which relies on unsigned
+                // wraparound for histograms that saturate a 32-bit counter.
+                total_count: tree[left].total_count.wrapping_add(tree[right].total_count),
+                index_left: left as i16,
+                index_right_or_value: right as i16,
+            };
+            tree[parent + 1] = HuffmanNode::SENTINEL;
+        }
+        2 * n - 1
+    }
+
+    #[test]
+    fn cached_merge_counts_match_reference_ties_wraps_and_unused_suffix() {
+        let populations: &[usize] = if cfg!(miri) {
+            &[2, 3, 4, 16, 32]
+        } else {
+            &[2, 3, 4, 16, 32, 128, 704]
+        };
+        for &count in populations {
+            for pattern in 0..3 {
+                let mut leaves: Vec<HuffmanNode> = (0..count)
+                    .map(|index| {
+                        let weight = match pattern {
+                            0 => 7,
+                            1 => (index * 17 % 29 + 1) as u32,
+                            _ => u32::MAX - (index % 5) as u32,
+                        };
+                        HuffmanNode::leaf(weight, index as i16)
+                    })
+                    .collect();
+                leaves.sort_by_key(|node| node.total_count);
+                let untouched = HuffmanNode::leaf(777, -7);
+                let mut expected = vec![untouched; tree_capacity(count) + 4];
+                expected[..count].copy_from_slice(&leaves);
+                let mut actual = expected.clone();
+                let expected_root = reference_merge_nodes(&mut expected, count);
+                let actual_root = merge_nodes(&mut actual, count);
+                assert_eq!(
+                    actual_root, expected_root,
+                    "count {count}, pattern {pattern}"
+                );
+                assert_eq!(actual, expected, "count {count}, pattern {pattern}");
+                assert!(
+                    actual[tree_capacity(count)..]
+                        .iter()
+                        .all(|&node| node == untouched)
+                );
+            }
+        }
     }
 
     #[test]

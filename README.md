@@ -52,29 +52,30 @@ the compressed size as a percentage of the input and matches for both.
 
 **Summary:** the same compressed size as Google Brotli (+0.005% at -11),
 **14–20% faster** compression at -8 and -11, within 9% at lower levels, and
-decompression 3–10% behind C. Our own
-[local lzbench rerun](docs/benchmarks/README.md#local-lzbench-rerun-ours-not-independent)
-measures the current tree on a different machine and compiler.
+decompression 3–10% behind C. This historical external table measures mbrotli
+0.5.2; the current local library comparison follows below.
 
 ### Our benchmarks
 
-Compression performance is generally close to or faster than Google C Brotli,
-depending on the workload and quality setting.
+Full library comparisons cover 432 encoding and 384 decoding cases on the
+recorded optimized checkout. Results vary by workload and quality.
 
 <details>
 <summary>Compression benchmark results and methodology</summary>
 
 ![Compression speed and output size relative to Google C Brotli across qualities 0–11][bench-chart]
 
-**Recorded 2026-10-09 · Intel Core i7-13700KF · WSL2 · window 22 · cold serial APIs.**
-Each value is the median of per-dataset ratios across eight equally weighted datasets,
-including empty and tiny inputs. A speed ratio above **1×** is faster than C; a size
-ratio below **1×** is smaller. These are compression results; the separate decoder comparison follows below.
+**Recorded 2026-10-29 · AMD Ryzen 9 7950X VDS · Linux · window 22 · cold serial APIs.**
+Across all 96 corpus/quality pairs, mbrotli's median speed / C is **1.146×**,
+with lower mean latency in **68/96** cases. Each quality bar takes the
+median of eight equally weighted per-dataset ratios, including empty and tiny
+inputs. A speed ratio above **1×** is faster; a size ratio below **1×** is smaller.
+Point counts and corpus medians do not establish statistical significance.
 
-The benchmark includes encoder construction, allocation, compression, and disposal.
-Results apply to the [recorded revision and machine][bench-qualities].
+The benchmark includes construction, allocation, compression and disposal.
+Results apply to the [recorded source and machine][bench-qualities].
 
-[Per-dataset results and methodology][benchmarks] · [Raw measurements][bench-csv] · [Reproduce the benchmarks][benchmarking]
+[Per-dataset results and methodology][benchmarks] · [Raw measurements][bench-csv] · [Reproduce][benchmarking]
 
 </details>
 
@@ -83,20 +84,17 @@ Results apply to the [recorded revision and machine][bench-qualities].
 
 ![Decompression speed relative to Google C Brotli by source quality][decoder-bench-chart]
 
-**Recorded 2026-10-09 · Intel Core i7-13700KF · WSL2 · window 22 · cold serial APIs.**
-Google C, mbrotli, Rust brotli and Burli decode identical C-generated streams at
-source qualities **0–11**. SIMD Brotli shares Rust brotli's decoder and is omitted;
-Burli decodes every source quality. All **384 cases** restore the original bytes.
+**Recorded 2026-10-29 · AMD Ryzen 9 7950X VDS · Linux · window 22 · cold serial APIs.**
+Google C, mbrotli, Rust brotli and Burli restore identical C-generated streams
+at source qualities **0–11** in all **384 cases**. SIMD Brotli shares the Rust
+Brotli decoder project and is omitted; Burli decodes every source quality.
 
-Across the eight equally weighted inputs, the median speed / Burli is
-**0.999×**, and the median speed / Google
-C ranges from **3.1× to 3.8×** by source quality. Empty and tiny inputs retain
-the same weight as larger datasets. The chart shows per-quality medians of
-C-time/decoder-time ratios; above **1×** is faster than C. Throughput in the
-quality pages counts restored bytes. Construction, allocation, decode and disposal
-are timed. C receives the known output capacity; Rust brotli includes its native
-4 KiB I/O adapter. These are cold API measurements on the recorded machine,
-with results varying by workload and source quality.
+Across 96 corpus/quality pairs, mbrotli's median speed is **2.581× C**
+and **1.001× Burli**. Per-quality C-relative medians range from
+**2.488× to 3.309×**. These are medians of direct per-dataset
+time ratios with equal input weight. Throughput counts restored bytes.
+Construction, allocation, decode and disposal are timed; C receives the known
+output capacity and Rust Brotli includes its native 4 KiB I/O adapter.
 
 [Per-quality and dataset results][decoder-benchmarks] · [Raw measurements][decoder-bench-csv] · [Methodology and limits][decoder-bench-report]
 
@@ -494,7 +492,7 @@ in [SECURITY.md][security], not as public issues.
 [crate]: https://crates.io/crates/mbrotli
 [api]: https://docs.rs/mbrotli
 [ci]: https://github.com/M-Compressors/mbrotli/actions/workflows/ci.yml
-[license]: ./LICENSE
+[license]: #license
 [changelog]: ./CHANGELOG.md
 [guide]: ./docs/README.md
 [parallel]: ./docs/parallel.md

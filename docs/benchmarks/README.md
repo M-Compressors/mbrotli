@@ -1,5 +1,65 @@
 # Benchmark results
 
+## Current library comparison — 2026-10-29
+
+Full serial sweeps on the AMD Ryzen 9 7950X Linux VDS compare five encoders
+(432 cases) and four decoders (384 cases). Both use ordinary release builds,
+20 samples, 1 s warmup and 3 s requested measurement per case, one process at a
+time on logical CPU 1. The reports identify the measured checkout and binaries.
+
+| Compare | Results | Data |
+| --- | --- | --- |
+| Compression speed and size | [Qualities 0–11](encoders/README.md) | [CSV](encoder-comparison.csv), [conditions](encoder-comparison.md), [sizes](encoder-comparison-2026-10-29/sizes.csv) |
+| Decompression of identical C streams | [Source qualities 0–11](decoders/README.md) | [CSV](decoder-comparison.csv), [conditions](decoder-comparison.md), [sizes](decoder-comparison-2026-10-29/sizes.csv) |
+
+### Compression
+
+![Median compression speed and size relative to C](encoders/charts/overview.svg)
+
+Across all 96 corpus/quality pairs, mbrotli's median speed / C is **1.146×**;
+its mean latency is lower in **68/96** cases. Burli supports q0–q5 and
+the other encoders q0–q11. Each plotted value is a median of eight per-dataset
+ratios to C. Higher speed and lower output size are better. Equal numeric
+quality does not imply equal compressed size.
+
+### Decompression
+
+![Median decompression speed relative to C](decoders/charts/overview.svg)
+
+Across all 96 corpus/quality pairs, mbrotli's median speed is **2.581× C**
+and **1.001× Burli**. Its mean latency is lower in **78/96** C
+comparisons and **53/96** Burli comparisons. All decoders restore the
+same C-produced bytes; quality belongs to their source encoder. SIMD Brotli
+shares the Rust Brotli decoder project and is omitted. Throughput counts restored bytes.
+
+### How to interpret the results
+
+Generic mode, window 22, cold native APIs: construction, allocation, transformation
+and disposal are timed. Inputs and complete matrices are validated before timing.
+Empty and tiny inputs carry the same weight as large inputs. Medians describe
+this corpus, not a production workload distribution; point counts do not imply
+statistical significance. Confidence bounds and every workload remain in the
+quality pages. Fixed implementation order and an uncontrolled virtual host can
+affect timings beyond sampling uncertainty. No build, test, fuzzing or other
+benchmark ran concurrently with either sweep.
+
+| Dataset | Input bytes | Content |
+| --- | ---: | --- |
+| empty | 0 | API overhead without input |
+| tiny-text | 44 | Quick-brown-fox sentence |
+| alice29 | 152,089 | Vendored Alice in Wonderland text |
+| text-1m | 1,048,576 | Alice repeated cyclically |
+| binary-64k | 65,536 | Structured binary bytes |
+| random-64k | 65,536 | Prefix of the pseudorandom corpus |
+| random-1m | 1,048,576 | Deterministic xorshift64 bytes |
+| repeated-1m | 1,048,576 | Repeated `a` bytes |
+
+Use [benchmarking and profiling](../benchmarking.md) for reproduction and page/chart
+generation. Root API suites separately measure reuse, streaming, slices, parallel
+tasks and dictionaries; their results are not mixed into these native-API medians.
+Superseded local reports and intermediate snapshots have been removed from the
+published result set.
+
 ## lzbench (independent)
 
 [lzbench](https://github.com/inikep/lzbench) is a long-running open-source
@@ -24,85 +84,7 @@ the compressed size as a percentage of the input and matches for both.
 **14–20% faster** compression at -8 and -11, within 9% at lower levels, and
 decompression 3–10% behind C.
 
-### Local lzbench rerun (ours, not independent)
-
-lzbench 2.4 (`inikep/lzbench` at `ec3b8c5`) built from source with mbrotli taken
-from the working tree based on `5f39a1d0`, the way lzbench builds Rust codecs
-(fat LTO, one codegen unit, lzbench's default `native` target CPU), with Google
-Brotli 1.2.0 compiled by GCC 11.4 into the same binary. Intel Core i7-13700KF
-under WSL2, one pinned core, the 211 MB Silesia tar, window 22; MB/s, best of
-three iterations over two runs (2026-10-02). Bold marks the faster result.
-
-| Level | Compress mbrotli | Compress brotli | Decompress mbrotli | Decompress brotli | Ratio, % |
-| ----: | ---------------: | --------------: | -----------------: | ----------------: | -------: |
-| -9    |      16.3 |  **17.5** | **762.6** |     672.9 | 26.75 |
-| -8    |      23.2 |  **25.3** | **755.5** |     671.6 | 26.96 |
-| -6    |      74.4 |  **78.0** | **714.7** |     641.0 | 27.59 |
-| -5    |      90.5 |  **95.2** | **699.0** |     627.5 | 28.10 |
-| -4    |     124.5 | **124.9** | **742.3** |     629.2 | 30.27 |
-| -2    |     221.9 | **236.0** | **635.2** |     553.0 | 32.12 |
-| -0    |     550.8 | **555.2** | **530.7** |     469.4 | 37.02 |
-
-Compressed sizes are identical for both libraries at every level. This is not
-the maintainer's host or compiler: GCC 11 builds C's decoder about a tenth
-slower than the GCC 15 of the independent table, and the gaps differ from it.
-
-## Our benchmarks
-
-| Compare | Results | Data |
-| --- | --- | --- |
-| Compression speed and size | [Qualities 0–11](encoders/README.md) | [CSV](encoder-comparison.csv), [conditions](encoder-comparison.md), [size manifest](encoder-comparison-2026-10-09c/sizes.csv) |
-| Decompression speed on identical streams | [Source qualities 0–11](decoders/README.md) | [CSV](decoder-comparison.csv), [conditions](decoder-comparison.md) |
-
-### Compression
-
-![Median compression speed and size relative to C](encoders/charts/overview.svg)
-
-Five libraries, 432 cases. Burli supports encoding at q0–q5; the other encoders
-cover q0–q11. Each speed/size bar is the median of eight per-dataset ratios to C.
-Higher speed and lower size are better. Equal quality numbers do not imply equal
-output size. [Exact results and confidence bounds](encoders/README.md).
-
-### Decompression
-
-![Median decompression speed relative to C](decoders/charts/overview.svg)
-
-Four decoders restore the same C-produced streams in 384 cases. Quality is the
-source encoder's setting. Each bar is the median of eight C-time/decoder-time
-ratios; higher is faster. Burli decodes every quality. SIMD Brotli re-exports the
-Rust brotli decoder project and is omitted. [Exact results](decoders/README.md), [size manifest](decoder-comparison-2026-10-09/sizes.csv).
-
-### How to interpret the results
-
-Published measurements use an Intel Core i7-13700KF under WSL2, generic mode,
-window 22, and cold native APIs including construction, allocation and disposal.
-Compression (`enc-2026-10-09c`, commit `38a3c10`) ran serially on one
-otherwise idle core. Decompression (`dec-2026-10-09`) ran as parallel corpus
-shards, one benchmark process per core, so its absolute timings are a few
-percent below a single-core run, while ratios to C are comparable. Both are
-dated 2026-10-09. See each
-report for provenance and limits; these are measurements of recorded builds.
-
-Empty and tiny inputs have equal weight with large inputs. Medians describe this
-corpus, not a production workload distribution. C decoding knows the output
-capacity; Rust brotli includes its native I/O buffers. The lowest mean is not
-necessarily a statistically significant lead.
-
-| Dataset | Input bytes | Content |
-| --- | ---: | --- |
-| empty | 0 | API overhead without input |
-| tiny-text | 44 | Quick-brown-fox sentence |
-| alice29 | 152,089 | Vendored Alice in Wonderland text |
-| text-1m | 1,048,576 | Alice repeated cyclically |
-| binary-64k | 65,536 | Structured binary bytes |
-| random-64k | 65,536 | Prefix of the pseudorandom corpus |
-| random-1m | 1,048,576 | Deterministic xorshift64 bytes |
-| repeated-1m | 1,048,576 | Repeated `a` bytes |
-
-### Reproduce
-
-Use [benchmarking and profiling](../benchmarking.md) for validation, fresh timings
-and report-generation commands. Published CSVs contain all measured rows;
-quality pages expose the individual cases rather than only aggregate scores.
+This external historical result covers mbrotli 0.5.2 on its maintainer's host;
+it is separate from the current local library comparison above.
 
 [lzbench-results]: https://github.com/inikep/lzbench/blob/2706ba16721e947a9240c70d080b8efa3f752da0/doc/lzbench24_sorted.md

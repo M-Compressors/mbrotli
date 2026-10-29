@@ -36,7 +36,7 @@ flowchart TD
 graph TD
     C[Compressor] --> Cache[EncoderCache: one resolved encoder]
     C --> Staging[undecided input tail]
-    C --> Pending[durable encoded suffix and cursor]
+    C --> Pending[initialized output backing, completed end and served cursor]
     Cache --> Family[Fast / Greedy / HQ]
     Family --> Kernel[retained Backend: dispatch! per block]
     Family --> Search[retained matcher and ring buffer]
@@ -101,15 +101,18 @@ flowchart TD
     Source -->|no| Fill[complete staged block]
     Borrow --> Encode[encode / flush / finish selected family]
     Fill --> Encode
-    Encode --> Deliver[direct destination, retain only overflow]
+    Encode --> Deliver[direct destination or completed prefix of retained backing]
     Deliver --> Drain
 ```
 
 One-shot calls need no staging or pending allocation: all input and its finality
 are known, and the output is an append destination or a non-resumable slice. Fast
 encoders write directly to slices with enough fragment reservation and into
-append destinations through a statically specialized growing bit writer. Other
-output paths use retained encoder scratch. Before a one-shot append,
+append destinations through a statically specialized growing bit writer. Fast
+session blocks that do not fit the caller's slice, including uninitialized
+destinations, use the fixed bit writer directly in the compressor's pending
+backing storage. Flushes and other encoder families use retained encoder scratch.
+Before a one-shot append,
 `Compressor::compress_into` reserves `bound::append_reserve`: the full
 `bound` for q0/q1, whose bit writer fills the vector's spare capacity, and
 for every other quality the reference's `BrotliEncoderMaxCompressedSize`
@@ -137,8 +140,9 @@ stateDiagram-v2
     Failed --> Failed: session rejects further processing
 ```
 
-`FinalPending` and `Finished` share the internal final phase; pending-buffer
-emptiness distinguishes them. Public `is_finished()` is true only in the latter.
+`FinalPending` and `Finished` share the internal final phase; equality of the
+served and completed-end cursors distinguishes them. Public `is_finished()` is
+true only in the latter.
 For experimental continuations, the logical position is checked before input
 acceptance and advanced by consumed bytes. The two-byte restart uses the same
 scheduler's flush action. Finished sessions ignore even input that would overflow
@@ -148,6 +152,42 @@ The one-shot driver shares the streaming finish path described in
 [universal-encoding.md](universal-encoding.md). All output destinations receive
 the same stream, or an output-capacity error. Vector appends roll back on failure.
 Slice contents may be partially written on failure, as documented.
+
+## Initialized backing and completed output
+
+`Compressor::pending` retains its initialized length across drains and sessions.
+Its `pending_end` marks the completed encoded prefix; `served` marks the bytes
+already delivered. The invariant is `served <= pending_end <= pending.len()`.
+Bytes after `pending_end` are initialized scratch, never caller-visible output.
+
+For q0/q1 non-flush session blocks, `Delivery` grows this backing to
+`FastEncoder::fragment_reserve` only when necessary, then calls the existing
+fixed-slice encoder. It publishes the completed end only after success. This
+avoids both the scratch-to-pending copy and repeated initialization of retained
+storage. The fast encoder still owns its partial byte and bit count separately.
+Flush and higher-quality output copy their unserved suffix into the initialized
+prefix, extending the vector only when that suffix exceeds its current length.
+
+Draining resets both cursors to zero after the completed prefix is delivered;
+it does not clear or truncate the backing. Starting, releasing or recovering a
+session also resets only these cursors. `has_pending()` compares them, so stale
+initialized bytes cannot delay `Finished` or enter the next stream. Releasing
+the workspace under the retention policy drops the vector as before; accounting
+continues to use capacity. Encoder failure leaves the new end unpublished and
+the session failed, so partially written storage is not delivered.
+
+```mermaid
+flowchart TD
+    Empty[served = end = 0; backing retained] --> Grow[Grow initialized length only if reservation increases]
+    Grow --> Encode[Fixed writer encodes into backing]
+    Encode -->|success| Publish[Set end to completed bytes]
+    Encode -->|error| Failed[Fail session; publish no bytes]
+    Publish --> Copy[Copy backing from served to end into caller output]
+    Copy --> More{served below end?}
+    More -->|yes| Wait[NeedsOutput]
+    Wait --> Copy
+    More -->|no| Empty
+```
 
 ## Extending copies across input blocks
 

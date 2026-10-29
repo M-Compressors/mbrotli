@@ -114,6 +114,7 @@ class DecoderTests(unittest.TestCase):
             self.assertEqual(len(charts), 13)
             for chart in charts:
                 ET.parse(chart)
+                self.assertTrue(all(line == line.rstrip() for line in chart.read_text().splitlines()), chart.name)
             self.assertEqual(source.read_bytes(), before)
 
 

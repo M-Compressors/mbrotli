@@ -19,6 +19,7 @@ Rust code, what the proofs trust, and what is not covered.
 | `verification/lean/Mbrotli/Code/FunsExternal.lean` | hand-written models | The four standard-library functions the translation calls and the Aeneas library does not model |
 | `verification/lean/Mbrotli/Model.lean` | hand-written specification | RFC distance arithmetic over unbounded naturals |
 | `verification/lean/Mbrotli/Rfc.lean` | hand-written transcription | The section 4 short codes and initial ring, the section 5 length code tables and cell diagram and the section 7.2 rule, as printed, with consistency checks |
+| `verification/lean/Mbrotli/CommandExtras.lean` | hand-written proofs | Packed command-field layout, both table-initialization loops and agreement with every valid RFC symbol |
 | `verification/lean/Mbrotli/*.lean` (others) | hand-written proofs | Specifications of the generated functions, the round-trip and uniqueness theorems |
 | `verification/lean/lakefile.lean`, `lean-toolchain`, `lake-manifest.json` | hand-written pins | Lean 4.35.0 and the Aeneas Lean library at the same commit as the binaries |
 
@@ -54,6 +55,9 @@ graph TD
     Cmd --> LRT[Mbrotli/LengthRoundTrip.lean]
     EncL --> LRT
     LRT --> EncC[Mbrotli/EncoderCommand.lean]
+    EncL --> Extras[Mbrotli/CommandExtras.lean: packed fields and table loops]
+    Code --> Extras
+    Extras --> EncC
     Enc --> EncC
     EncC --> Audit
     LRT --> Audit
@@ -167,7 +171,8 @@ that `r` satisfies `P`.
 | `shared::command::prefix_encode_copy_distance` (`spec_direct`, `spec_any`) | `dc < 16 + nd`; any `dc ≤ 2^31 + 15` | the code is `dc` with no extra bits; the low ten bits are 0 exactly for `dc = 0` |
 | `Command::new` | lengths in range, `copylen < 2^25`, `-64 ≤ delta ≤ 63`, `dc ≤ 2^31 + 15` | `Command.Lengths`: the insert length, `copy_len = copylen + deltaField delta · 2^25`, and a symbol whose RFC codes hold the insert length and `copylen + delta`, implicit only for `dc = 0` |
 | `Command::copy_len_code` | `copy_len = L + deltaField d · 2^25`, `L < 2^25`, `-64 ≤ d ≤ 63`, `0 ≤ L + d` | `L + d` |
-| `Command::extra_bits` | as above, lengths in range | the insert field `insertlen - lo` in the low `INS_EXTRA` bits, the copy field `K - lo` above, width the sum of both extra-bit counts |
+| `shared::command::COMMAND_EXTRAS` | none | every symbol below 704 stores the insert/copy bases and widths of its RFC classes |
+| `Command::extra_bits` | as above, lengths in range, symbol below 704 and its insert/copy classes contain both lengths | the insert field `insertlen - lo` in the low `INS_EXTRA` bits, the copy field `K - lo` above, width the sum of both extra-bit counts |
 | `Command::distance_context` | none | `encoderContext`, which equals the section 7.2 context of every copy length the symbol can carry |
 | `Command::has_distance` | none | a copying command writes a distance symbol exactly when its symbol is not implicit |
 | `Command::insert_only` | `insertlen ≤ 16799809` | `Command.Lengths` with no copy and copy code of length 4, never implicit |
@@ -340,14 +345,37 @@ the length a static-dictionary match copies and the length its symbol encodes.
 copying bit 6 into bit 7 and reading the byte as `i8`. Both are checked over all
 128 deltas from -64 to 63.
 
+`CommandExtras.lean` verifies the prefix-indexed table used by `extra_bits`.
+Its entry packs the insert base in bits 0–15, copy base in 16–31, insert width
+in 32–36 and total width in 40–45. Finite kernel proofs establish the field
+layout against the transcribed RFC rows. Inductive specifications of both
+translated initialization loops show that writing explicit and implicit
+symbols completes each insert/copy class pair while preserving previous
+entries. After all 24 × 24 pairs, every valid symbol below 704 has exactly its
+RFC fields. The 1024-entry table also contains padding slots; emitted
+commands never rely on their contents.
+
+`Command::extra_bits.spec` assumes the symbol is valid and its RFC classes
+contain the stored insert length and reconstructed copy length. These are
+already conclusions of `Command::new.spec` and `Command::insert_only.spec`.
+The lookup masks the symbol with 1023, which leaves a valid symbol unchanged,
+then subtracts the proved bases and packs the two fields. It does not guarantee
+length-based behavior for a private `Command` whose prefix contradicts its
+lengths. This explicit invariant replaces the old helper theorem's broader
+claim for arbitrary prefixes; the composed valid-command round-trip statement
+retains its original hypotheses and guarantees.
+
 ```mermaid
 sequenceDiagram
     participant N as Command::new
     participant C as Command
+    participant P as COMMAND_EXTRAS[cmd_prefix]
     participant X as extra_bits / distance_context
     participant T as decoder table commands()[cmd_prefix]
     N->>C: insert_len, copy_len = copylen + deltaField(delta) << 25
     N->>C: cmd_prefix = length_code(insertlen, copylen + delta, dc = 0)
+    C->>P: valid symbol with matching RFC length classes
+    P-->>X: proved insert/copy bases and widths
     C->>X: copy_len_code = copylen + delta
     X-->>T: n = insert_extra + copy_extra
     X-->>T: bits mod 2^insert_extra = insertlen - insert_base
@@ -491,6 +519,8 @@ graph TD
 - [x] §5 encoder length codes: `insert_length_code`, `copy_length_code`,
   `combine_length_codes`, `length_code`; round trip and uniqueness
   (`EncoderLength.lean`, `LengthRoundTrip.lean`).
+- [x] §5 packed command-extra table, both initializer loops and RFC field layout
+  (`CommandExtras.lean`).
 - [x] §5 commands: `Command::new`, `copy_len_code`, `extra_bits`,
   `distance_context`, `has_distance`, `insert_only` and `command_round_trip`
   (`EncoderCommand.lean`).

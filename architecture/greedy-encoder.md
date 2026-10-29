@@ -358,6 +358,54 @@ flowchart TD
     wraps -->|yes| slice["windows(8) over one slice:<br/>hash each word, dense_store"]
 ```
 
+### Explicit SIMD quick range stores
+
+`commit_match` passes the search loop's existing SIMD token to
+`MatchRun::store_range_simd`. Its default implementation delegates to the
+baseline range operation; `QuickRun` overrides it for both full tables and
+compact maps. Backend detection stays at the encoder entry. The range wrapper
+chooses its path before the loop: fewer than sixteen positions, a scalar
+backend, SSE2, or big-endian targets use the bounded baseline. SSE2's emulated
+wide products were slower in the measured workload. Other available backends
+use the explicit `fearless_simd` kernel for contiguous ranges.
+
+`store_range_vectorized` is an out-of-line `#[simd]` entry so vector temporaries
+do not extend the search loop's register requirements. It borrows one bounded
+slice and advances sixteen-byte windows by eight bytes. `quick_hashes8` loads
+`u8x16`, duplicates and swizzles its bytes into eight overlapping little-endian
+words, then multiplies and shifts `u64x8`. This computes the same hashes as the
+scalar oracle without gather loads. Eight explicit scalar writes commit the
+keys in ascending position order: colliding slots must retain the last write,
+including probing and overwrites in compact maps. Scatter stores are not used.
+On AArch64, multiplication remains vectorized while the high-bit fields are
+extracted from the eight product lanes before the ordered writes. This avoids
+Neon's variable-shift intrinsics, which Miri cannot interpret, without a
+Miri-specific production path or skipped SIMD tests. Other architectures use
+the vector shift directly.
+
+Eight hashes need fifteen input bytes. A final full batch uses a sixteen-byte
+load only when the extra physical byte exists; that byte never contributes to
+a hash. Otherwise at most eight bounded, explicitly unrolled scalar stores
+finish the range. Wrapped ranges or missing lookahead delegate to
+`store_range`, whose scalar implementation also serves administrative/history
+stores and the independent differential oracle. No unsafe loads or public API
+changes are introduced.
+
+```mermaid
+flowchart LR
+    Search[search_positions with selected SIMD token] --> Commit[commit_match]
+    Commit --> Range[MatchRun store_range_simd]
+    Range --> Eligible{QuickRun, supported backend, little endian, at least 16 positions?}
+    Eligible -->|no| Baseline[bounded scalar store_range]
+    Eligible -->|yes| Vector[outlined SIMD feature entry]
+    Vector --> Contiguous{range and lookahead fit?}
+    Contiguous -->|no| Baseline
+    Contiguous -->|yes| Hash[u8x16 load and swizzle; u64x8 multiply and shift]
+    Hash --> Store[eight ordered slot overwrites]
+    Store --> Hash
+    Store --> Tail[bounded scalar tail]
+```
+
 ### Compact key-map growth
 
 `KeyMap::reset` clears the existing words, then resizes only up to the larger of
@@ -601,6 +649,28 @@ for a stream that is not one shot or is longer than that. The single-slot
 shapes read and overwrite the same slot at every position and do both with
 one probe (`QuickSlots::replace`).
 
+`SmallSlots::reset(input_size)` reserves at least twice as many entries as
+input positions before a run starts. Each position selects one deterministic
+logical slot, including swept shapes; revisiting that position overwrites the
+same key. The map therefore stays at most half full without a population counter
+or growth check on each store. A compact run is restricted to a fresh final
+block at position zero. Nonfinal blocks, prepended history, oversized input and
+reused streams select a full table before any stores or boundary stitching.
+Only preparation may resize the map; its capacity and mask remain fixed during
+the search. The compact/full differential test must prepare the compact side
+with `clear=false`: a dirty preparation intentionally materializes a full table.
+
+```mermaid
+flowchart TD
+    Prepare[QuickMatcher prepare] --> Eligible{fresh one-shot final block and bounded positions?}
+    Eligible -->|no| Full[materialize full table before stores]
+    Eligible -->|yes| Reserve[reset map with at least twice input_size entries]
+    Reserve --> Run[fixed capacity during searches and range stores]
+    Run --> Bound[one key per position; at most half full]
+    Bound --> Reuse[next stream requests clearing]
+    Reuse --> Full
+```
+
 The reference hoists its table pointers into `restrict` locals for a whole
 block, so a store through one never makes the compiler reload the others. The
 `RunVisitor` trait is the same idea: `Matcher::visit_run` binds the tables once
@@ -613,6 +683,12 @@ union of them:
 | `QuickMatcher` | `QuickRun<&mut [u32; BUCKETS]>` over the table, or `QuickRun<&mut SmallSlots>` over the map |
 | `BucketMatcher` | `DenseRun` over three array references; `CompactRun` over compact storage; `SparseRun` over sparse storage plus the current size hint |
 | `ChainMatcher` | the matcher itself |
+
+Dense runs repeat the `BLOCK <= 32` tag invariant at search, store and
+prefetch call sites. Deep layouts already construct no tag storage; making
+that constant visible inside the SIMD feature entries removes optional-tag
+branches and pointer lifetimes from qualities 7–9. The generic `dense_store`
+helper still honors a supplied tag array, including in its standalone tests.
 
 ```mermaid
 flowchart LR
@@ -670,7 +746,11 @@ through whole. Without the second run (ten probes), code 1's byte is read on its
 own. The mask is a superset of the scalar filter's admissions only when the
 cache holds `prepare_distance_cache`'s entries; a debug assertion checks that,
 and the search tests prepare their caches as the encoder does. Four-probe shapes
-and the scalar backend keep the plain loop.
+and the scalar backend keep the plain loop. The vector range test loads the
+signed cache directly with `i32x16::load_array_ref`, then uses `Bytes::bitcast`
+to interpret its unchanged bits as `u32x16`. Zero and negative distances retain
+their rejection semantics. No owned array mapping or intermediate element
+conversion is needed; the selected backend owns both the load and range test.
 
 ```mermaid
 flowchart TD
@@ -735,7 +815,7 @@ sequenceDiagram
     Note over R,C: bucket for position was hinted one iteration earlier
     alt match found
         L->>R: prefetch(position + len)
-        L->>R: store_range(match bytes)
+        L->>R: store_range_simd(selected token, match bytes)
     end
 ```
 
@@ -837,6 +917,140 @@ is made per matcher at compile time. `current_window` and the candidate cut
 mask their index and length to 32 bits, which proves the slice end neither
 overflows nor precedes the start and leaves one compare.
 
+The bucket continuation filter uses the concrete run's physical bucket width.
+Compact chains, shallow buckets (`N <= 32`), the four-position starter blocks
+and full buckets wider than 128 slots keep `Best { len, word }` and `consider`:
+each candidate checks the four bytes at its masked position plus `len - 3`.
+Only full buckets with **`32 < N <= 128`** use `best_word` and a borrowed
+continuation slice. These are the 64/128-slot full buckets used at qualities
+seven and eight; the 256-slot quality-nine bucket retains the original filter.
+`scan_bucket` handles the selected widths in an early-return branch, leaving
+the original shallow and wider-bucket implementation below it.
+
+`raw_continuation_window` prepares the suffix after the cached-distance probes
+have raised the initial comparison length to at least three. The width choice
+is constant for the concrete run and outside the candidate loop; it does not
+add backend detection or SIMD dispatch.
+
+Let `W` be the original physical window,
+`data[..min(mask.saturating_add(1), data.len())]`. For comparison length `L`,
+the continuation is `W[L - 3..]`, or an empty slice when the suffix is outside
+that window. A candidate's masked position `p` then reads
+`continuation[p..p + 4]`, which is exactly the former
+`W[p + L - 3..p + L + 1]` check. The filter need not add the comparison offset
+to each rejected candidate or retain it separately from the suffix. The
+current four-byte word is cached as before. This slice is the physical
+continuation filter, distinct from `current_window`, which bounds the actual
+match measurement against remaining input.
+
+`consider_raw_rebased` first applies the same logical backward-distance guard:
+an old or future position outside `max_backward` stops the scan before a
+physical read. An unavailable four-byte window or a different word skips that
+candidate. A matching word calls the existing `accept_candidate` with the same
+SIMD token, original data, current position, match-length limit, distance and
+score. After acceptance, it updates `Found` and `best_word`, then rebuilds the
+continuation **from the original `data` and `mask`** at the accepted length.
+It never derives the next continuation from the previous suffix. A closer
+candidate can win on score with a **shorter** length, so rebuilding must also
+move the start backwards and expose positions the old suffix could not read.
+
+Within the 64/128-slot branch, `scan_bucket` first selects the permitted
+algorithm from its **existing concrete SIMD token and hash shape**:
+
+| Selected token | Hash/depth | Young scan permitted |
+| --- | --- | --- |
+| AVX2 | H5 or H6, N64/N128 | yes |
+| AVX-512 | H6 wide hash, N128 | yes |
+| AVX-512 | H5, or H6 with N64 | no: general rebased scan |
+| SSE2, SSE4.2, Neon, Wasm SIMD or scalar fallback | any | no: general rebased scan |
+
+The exact `Level` match distinguishes AVX2 from AVX-512; it uses
+`scan.simd.level()` from the selected `S`, with x86-only enum arms behind target
+configuration. Non-x86 targets set the permission to false. The gate depends
+only on the concrete token and the `HASH64`/`N` constants, before any candidate
+loop. It introduces no CPU feature detection and does not select a different
+backend. For example, an AVX-512 H5 query retains its AVX-512 measurement token
+while using the general rebased filter. The policy records measured native
+algorithm combinations; the public backend selection stays unchanged.
+
+An allowed entry can then select `consider_raw_young` once for this bucket
+search. Runtime eligibility requires a nonempty bucket,
+`max_backward == cur_ix`, `cur_ix <= mask`, and a low-ones mask
+(`mask & mask.wrapping_add(1) == 0`). Only then does it read the newest logical
+position and require that head to be at most `cur_ix`. The loaded head is reused
+as the first candidate. A failed policy or state condition falls through to the
+same general rebased loop; aged history, wrapped logical positions, unusual
+masks and future heads retain its per-candidate distance guard and masking.
+Compact, shallow/Starter4 and N>128/q9 use the original `Best`/`consider`
+implementation.
+
+Reachable bucket slots are already ordered newest to oldest by non-increasing
+**logical** position. The head check therefore proves
+`0 <= previous <= head <= current <= mask` for every visited slot. Combined
+with `max_backward == current`, this makes every distance admissible:
+`current - previous <= current == max_backward`. The low-ones mask also gives
+`previous & mask == previous` and `current & mask == current`. A young
+candidate's stored logical position is already its physical index; the helper
+reads the bounded continuation directly, with no per-candidate distance test or
+position masking. Only a matching four-byte word computes the **actual**
+`current - previous` distance for the unchanged `accept_candidate` and `Found`.
+It does not recover distance from a masked difference. A debug assertion checks
+the nonfuture-position invariant before the read. The one head check relies on
+the existing chronology; it does not validate an arbitrary unordered array.
+
+Young and general rebased loops share the same cached word, bounded suffix,
+measurement/scoring rules and original-window rebuild after acceptance,
+including a shorter accepted length. The choice is local to this bucket search;
+no mode flag is stored in the matcher or encoder, and no backend detection is
+added. The same previously selected SIMD token reaches the measurement entry.
+
+```mermaid
+flowchart TD
+    Probes["Cached-distance probes; comparison length L at least 3"] --> Shape{"Full bucket with 32 < N <= 128?"}
+    Shape -->|no: compact, shallow, starter or N > 128| Original["Best len/word and original consider filter"]
+    Original --> Stop["Finish scan; write back Found once"]
+    Shape -->|yes| Policy{"AVX2 N64/128, or AVX-512 H6 N128?"}
+    Policy -->|no| GeneralInit["Prepare bounded original-window suffix and best_word"]
+    Policy -->|yes| Eligible{"Slots present, max_backward == current, current <= mask, low-ones mask?"}
+    Eligible -->|no| GeneralInit
+    Eligible -->|yes| Head{"Load newest once: head <= current?"}
+    Head -->|future| GeneralInit
+    Head -->|nonfuture| YoungInit["Prepare suffix and best_word; reuse loaded head"]
+    GeneralInit --> GeneralMore{"Slots remain?"}
+    GeneralMore -->|no| Stop
+    GeneralMore -->|yes| Distance["Read slot; apply backward-distance guard"]
+    Distance -->|outside history| Stop
+    Distance -->|valid| GeneralRead["Mask previous position; bounded four-byte continuation check"]
+    GeneralRead -->|missing or different| GeneralNext["Advance newest to oldest"]
+    GeneralRead -->|equal| GeneralMeasure["accept_candidate with original data and selected SIMD token"]
+    GeneralMeasure -->|score does not improve| GeneralNext
+    GeneralMeasure -->|accepted| GeneralRebase["Update Found/word; rebuild from ORIGINAL W, even for shorter length"]
+    GeneralRebase --> GeneralNext
+    GeneralNext --> GeneralMore
+    YoungInit --> YoungRead["Bounded four-byte continuation check at direct logical position"]
+    YoungRead -->|missing or different| YoungNext["Decrease remaining count"]
+    YoungRead -->|equal| YoungDistance["Compute actual current - previous"]
+    YoungDistance --> YoungMeasure["Same accept_candidate, data, token and scoring"]
+    YoungMeasure -->|score does not improve| YoungNext
+    YoungMeasure -->|accepted| YoungRebase["Same Found/word update; rebuild from ORIGINAL W"]
+    YoungRebase --> YoungNext
+    YoungNext --> YoungMore{"Slots remain?"}
+    YoungMore -->|no| Stop
+    YoungMore -->|yes| YoungAdvance["Advance slot and load next logical position"]
+    YoungAdvance --> YoungRead
+```
+
+
+The ring data is borrowed read-only throughout the search. No storage allocation,
+public API, low-level error, candidate ordering, distance scoring or match
+measurement ABI changes; `Found` is still committed to the search result once
+the scan ends. All supported SIMD levels and the scalar baseline preserve the
+same candidate-order, scoring, output and error invariants. Depth, exact token/hash
+policy and query state choose the filter implementation; the existing
+feature-enabled measurement entry owns the SIMD context. The specialization
+adds no public API, persistent matcher state, buffer ownership, allocation or
+error path; only the local reject work changes.
+
 The static-dictionary probe is chosen at compile time
 (`search_dictionary::<SHALLOW>`). A shallow probe (the quick matchers) hashes
 the four bytes inline and answers an empty bucket — about three quarters of
@@ -884,7 +1098,7 @@ sequenceDiagram
             end
             Search->>Search: update the distance cache
             Search->>Cmds: append one command
-            Search->>Finder: store_range over the matched bytes
+            Search->>Finder: store_range_simd with the selected token over matched bytes
         end
     end
 ```
@@ -937,13 +1151,25 @@ Two details separate the qualities:
 exactly on a command boundary: bytes that continue that command's copy are
 absorbed into it instead of starting a new one.
 
+After an admitted extension attempt, its symbol is rebuilt from the stored
+insert length and `copy_len_code()`. That accessor reconstructs the encoded
+copy length using its signed delta or experimental absolute-length tag. It
+therefore keeps the symbol consistent with the extra-bit lookup even when the
+prefix path returns without absorbing input. This shared helper also serves
+the high-quality encoder; its SIMD token and distance checks do not change.
+
 ## 5. Meta-block construction
 
 ```mermaid
 flowchart TD
     cmds["commands + ring buffer"] --> should{"ShouldCompress?"}
-    should -->|no| raw["store_uncompressed_meta_block"]
-    should -->|yes| q{"quality splits blocks?"}
+    should -->|no| destination{"non-Flush append destination?"}
+    destination -->|yes| direct["seed after existing output prefix<br/>append verbatim payload directly"]
+    destination -->|no| lazy["reserve scratch capacity; seed carried bits"]
+    lazy --> raw["store_uncompressed_meta_block<br/>BitWriter over Vec; append initialized payload"]
+    direct --> metadata["relative bit position, carried byte, appended flag"]
+    should -->|yes| scratch["initialize bounded scratch; seed carried bits"]
+    scratch --> q{"quality splits blocks?"}
     q -->|"no, q2"| fastst["store_meta_block_fast<br/>static command and distance codes<br/>below 129 commands"]
     q -->|"no, q3"| trivial["store_meta_block_trivial<br/>one code per stream"]
     q -->|"yes, q4 and above"| ctx["decide_over_literal_context_modeling<br/>(q5 and above)"]
@@ -953,10 +1179,42 @@ flowchart TD
     fastst --> grew{"grew by more than four bytes?"}
     trivial --> grew
     store --> grew
-    grew -->|yes| raw
-    grew -->|no| done["done"]
+    grew -->|yes| fallback["rewind slice writer; restore remembered cache<br/>store uncompressed into initialized scratch"]
+    grew -->|no| done["save partial byte and positions; clear commands"]
+    fallback --> done
     raw --> done
+    metadata --> done
 ```
+
+`encode_data` evaluates `should_compress` before growing initialized output
+scratch. A nonempty block selected for verbatim storage reserves payload plus
+header/slack capacity and initializes only the carried prefix before using
+`BitWriter<Vec<u8>>`. The private `ByteBuffer` implementation overwrites an
+existing initialized overlap and appends the remaining payload safely, avoiding
+a zero-fill before copying it. Retained initialized storage is reused without
+clearing or truncating it. The generic uncompressed header/store helpers also
+retain the slice-backed instantiation for compressed-output rollback.
+
+Both uncompressed paths restore the four remembered distance-cache entries;
+derived entries are rebuilt before the next search. The common completion path
+preserves any partial byte, advances the flush/processed positions and clears
+the command/literal counters. Empty finalization and flush padding retain their
+existing handling. Final uncompressed payloads still append a final empty block.
+For a non-Flush `Destination::Append`, `Delivery::encode` calls the private
+`GreedyEncoder::encode_block_append` with a borrowed `Vec<u8>`. `encode_data`
+receives this optional destination once per block. Known verbatim blocks write
+after its existing prefix and return `BlockEmission`: a relative bit position,
+the carried byte and an appended flag. The writer's absolute position is checked,
+and its slack is truncated after the partial byte has been saved. Capacity
+includes sixteen extra bytes for the initial large-window/meta-block headers,
+final empty block and word-writer slack.
+
+The common state update sets scratch `output_len` to zero for directly appended
+bytes, preventing a duplicate copy. Compressed attempts and their size-expansion
+fallback keep the scratch writer and are appended by the entry point afterward.
+Fixed/uninitialized slices, session pending output and Flush also retain scratch.
+The encoder accepts a Vec without depending on the stream output types; no SIMD
+dispatch or public API changes occur at this storage choice.
 
 `store_meta_block_fast` is quality two's storage — `BrotliStoreMetaBlockFast`.
 Below a hundred and twenty-nine commands only the literal code is built from
@@ -1200,20 +1458,31 @@ an unimplemented quality as the private `UnsupportedQuality`, which the public
 `EncodeError` reports as an internal invariant because no validated
 configuration can reach it, and the
 only other failure is `BufferOverflow`, raised when the bit writer runs past
-the scratch buffer — which no correct input can reach, because the buffer is
-sized by the same `2 * bytes + 503` reservation the reference uses.
+the scratch buffer or its checked capacity calculation overflows. Compressed
+blocks reserve `2 * bytes + 503` plus writer slack, as before; known uncompressed
+scratch blocks reserve `bytes + 503` plus slack and initialize the output only as
+written. Direct verbatim appends reserve payload plus sixteen bytes and check
+the caller prefix offset before converting it to a bit position.
+Neither overflow is reachable for a valid bounded meta-block.
 
 ## 10. Verification
 
 | Test target | What it pins |
 | --- | --- |
 | Module tests in `core::greedy::*` | Each ported function against the behaviour its reference documents. |
+| `hashers::tests::rebased_raw_scan_rebuilds_the_original_window_after_shorter_matches` | Rebased/original differential checks for both hash variants and available backends: accepted lengths decrease then increase, cyclic N=16/64/128/256 scans across both representations, empty and bounded windows, and stopping before a future-position read. |
+| `hashers::tests::young_raw_scan_rebuilds_original_window_after_shorter_matches` | Young/original differential checks of the 15→6→8→20 accepted-length sequence, suffix origin/length after every candidate, unavailable word windows and high incoming scores, on both hashes and available backends. |
+| `hashers::tests::young_bucket_scan_keeps_results_at_eligibility_boundaries` | Whole cyclic young/fallback scans at aged, wrapped, unusual-mask, future-head, empty, zero-length, linear-mask and physical-window boundaries, including N16/N256 legacy controls. |
 | `tests/greedy_qualities.rs` | Byte identity with the C encoder across window size, mode, size hint, block size, distance layout, context modelling, block and delayed-symbol boundaries, dictionary matches, ring-buffer wrapping and every short length. |
 | `tests/differential_c.rs`, `tests/vendor_corpus.rs`, `tests/randomized.rs` | Byte identity over the shared corpora, including Google's own multi-megabyte test data. |
 | `tests/simd_backends.rs` | Byte identity between the scalar fallback and every SIMD backend the host supports. |
 | `tests/streaming.rs` | Chunk-size independence and one-shot equivalence. |
 | `tests/shared_dictionary.rs` | Byte identity against the C encoder with the same prefixes prepared and attached, and a round trip through the C decoder with them attached too. |
 | `fuzz/afl/` | `q3_roundtrip`, `q4_roundtrip`, `q5_roundtrip` and the shared parameter-driven targets; see [fuzzing.md](fuzzing.md). |
+
+The direct young-helper differential test exercises its arithmetic on every
+available backend independently of the production policy. Whole-scan tests
+verify the same result when the policy selects the general fallback instead.
 
 ## Known gaps
 

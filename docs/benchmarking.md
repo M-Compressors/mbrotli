@@ -96,19 +96,22 @@ python3 benchmarks/comparison/quality_docs.py \
 python3 benchmarks/comparison/plot.py \
   --csv docs/benchmarks/encoder-comparison.csv \
   --output docs/benchmarks/encoders/charts \
-  --subtitle 'i7-13700KF; 38a3c10; 20 samples; 1 core; 2026-10-09'
+  --subtitle 'AMD Ryzen 9 7950X; 20 samples; CPU 1; 2026-10-29'
 ```
 
 `quality_docs.py` writes the index, twelve quality pages and their detailed
 charts. `plot.py` writes `overview.svg`, `throughput.svg` and `size.svg` into
 the same charts directory. All eight corpora contribute to the medians.
-The published encoder CSV is `enc-2026-10-09c`, a single-core sweep, with its
-[size manifest](benchmarks/encoder-comparison-2026-10-09c/sizes.csv); the decoder
-CSV is `dec-2026-10-09`, with its
-[size manifest](benchmarks/decoder-comparison-2026-10-09/sizes.csv), recorded as a
-[sharded run](#sharded-runs). Each environment record identifies the measured
-source and binary; regenerating charts reuses those measurements and does not
-rerun the benchmark.
+The published encoder CSV is `enc-2026-10-29-amd`, with its
+[size manifest](benchmarks/encoder-comparison-2026-10-29/sizes.csv); the decoder CSV is
+`dec-2026-10-29-amd`, with its
+[size manifest](benchmarks/decoder-comparison-2026-10-29/sizes.csv). Both were recorded on
+2026-10-29 using Rust 1.99.1 and GCC 15.2 on an AMD Ryzen 9 7950X Linux VDS,
+one process at a time pinned to logical CPU 1. Sampling is 20 samples, 1 s warmup
+and 3 s requested measurement per case. No builds, tests, fuzzers or other
+benchmarks ran concurrently. Each environment record identifies the measured
+uncommitted checkout, lockfiles and frozen executable. Regenerating charts uses
+the CSV and does not rerun measurements.
 
 ## Decoder comparison
 
@@ -170,13 +173,12 @@ alongside restored lengths instead of ranking decoders by size. See the
 
 ## Sharded runs
 
-A complete sweep on one core takes about 50 minutes for the encoders and 40 for
-the decoders. On a host with idle cores, split the matrix by corpus and run the
-shards at once, one process per physical core. Every implementation of a case
-still runs in the same process, so ratios between implementations stay
-comparable; absolute timings drop by a few percent because the shards share
-the last-level cache, memory bandwidth and turbo budget. Record the lanes in the
-environment file, and keep builds and other work off those cores.
+The published encoder and decoder sweeps run serially, one process at a time.
+For exploratory runs on a host with idle cores, the matrix can be split by
+corpus. Every implementation of a case must still run under the same recorded
+conditions. Concurrent shards share caches, memory bandwidth and the package's
+turbo budget; their latency and ratios can differ from an otherwise idle run.
+Record all lanes and concurrent workloads explicitly.
 
 Build the harness once, then run its executable directly so that concurrent
 `cargo bench` invocations do not wait on the build directory lock. The
@@ -200,16 +202,12 @@ python3 benchmarks/comparison/report.py --baseline my-enc --csv /tmp/my-enc.csv
 python3 benchmarks/comparison/report.py --decoding --baseline my-dec --csv /tmp/my-dec.csv
 ```
 
-Choose one logical CPU per physical core (`lscpu -e=CPU,CORE`). With the four
-lanes above both sweeps take about 25 minutes. Do not give each corpus its own
-lane: with eight encoder lanes the three 1 MiB corpora run at once, and on the
-i7-13700KF individual ratios to C moved by up to 50% against the same case
-timed alone (cyclic Alice at q4: 0.82× in such a sweep, 1.22× alone). Publish a
-single-core sweep when the ratios themselves are the result. The exporter accepts the result
-because all shards save the same baseline name and together cover the matrix.
-The root API benchmarks can share the host the same way: run each side of an
-A/B comparison on its own lane at the same time, so both see the same load,
-with `CRITERION_HOME` pointing at that tree's `target/criterion`.
+Choose one logical CPU per physical core (`lscpu -e=CPU,CORE`). The example
+above is an optional exploratory layout, not the published run's topology.
+Use a serial sweep when publishing comparisons between libraries, and do not
+mix measurements from different host-load conditions into one named baseline.
+The root API suites remain independent and should also record their exact
+affinity, concurrency and API mode.
 
 ## API benchmarks
 

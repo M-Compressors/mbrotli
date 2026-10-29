@@ -1136,6 +1136,69 @@ def shared.command.combine_length_codes
     let i13 ← lift (UScalar.cast .U16 offset1)
     ok (i13 ||| bits64)
 
+/-- [mbrotli::shared::command::COMMAND_EXTRAS]: loop 1:
+    Source: 'src/shared/command.rs' -/
+@[rust_loop]
+def shared.command.COMMAND_EXTRAS_loop0_loop0
+  (entries : Array Std.U64 1024#usize) (insert : Std.Usize) (copy : Std.Usize)
+  :
+  Result (Array Std.U64 1024#usize)
+  := do
+  if copy < 24#usize
+  then
+    let i ← Array.index_usize shared.format.INS_BASE insert
+    let i1 ← lift (UScalar.cast .U64 i)
+    let i2 ← Array.index_usize shared.format.COPY_BASE copy
+    let i3 ← lift (UScalar.cast .U64 i2)
+    let i4 ← i3 <<< 16#i32
+    let i5 ← lift (i1 ||| i4)
+    let i6 ← Array.index_usize shared.format.INS_EXTRA insert
+    let i7 ← lift (UScalar.cast .U64 i6)
+    let i8 ← i7 <<< 32#i32
+    let i9 ← lift (i5 ||| i8)
+    let i10 ← Array.index_usize shared.format.COPY_EXTRA copy
+    let i11 ← i6 + i10
+    let i12 ← lift (UScalar.cast .U64 i11)
+    let i13 ← i12 <<< 40#i32
+    let fields ← lift (i9 ||| i13)
+    let i14 ← lift (UScalar.cast .U16 insert)
+    let i15 ← lift (UScalar.cast .U16 copy)
+    let i16 ← shared.command.combine_length_codes i14 i15 false
+    let i17 ← lift (UScalar.cast .Usize i16)
+    let entries1 ← Array.update entries i17 fields
+    let i18 ← lift (UScalar.cast .U16 insert)
+    let i19 ← lift (UScalar.cast .U16 copy)
+    let i20 ← shared.command.combine_length_codes i18 i19 true
+    let i21 ← lift (UScalar.cast .Usize i20)
+    let a ← Array.update entries1 i21 fields
+    let copy1 ← copy + 1#usize
+    shared.command.COMMAND_EXTRAS_loop0_loop0 a insert copy1
+  else ok entries
+partial_fixpoint
+
+/-- [mbrotli::shared::command::COMMAND_EXTRAS]: loop 0:
+    Source: 'src/shared/command.rs' -/
+@[rust_loop]
+def shared.command.COMMAND_EXTRAS_loop0
+  (entries : Array Std.U64 1024#usize) (insert : Std.Usize) :
+  Result (Array Std.U64 1024#usize)
+  := do
+  if insert < 24#usize
+  then
+    let entries1 ←
+      shared.command.COMMAND_EXTRAS_loop0_loop0 entries insert 0#usize
+    let insert1 ← insert + 1#usize
+    shared.command.COMMAND_EXTRAS_loop0 entries1 insert1
+  else ok entries
+partial_fixpoint
+
+/-- [mbrotli::shared::command::COMMAND_EXTRAS]
+    Source: 'src/shared/command.rs' -/
+@[global_simps, irreducible]
+def shared.command.COMMAND_EXTRAS : Result (Array Std.U64 1024#usize) :=
+  let entries := Array.repeat 1024#usize 0#u64
+  shared.command.COMMAND_EXTRAS_loop0 entries 0#usize
+
 /-- [mbrotli::shared::command::length_code]:
     Source: 'src/shared/command.rs' -/
 def shared.command.length_code
@@ -1472,27 +1535,29 @@ def shared.command.Command.restore_distance_code
     Source: 'src/shared/command.rs' -/
 def shared.command.Command.extra_bits
   (self : shared.command.Command) : Result (Std.U32 × Std.U64) := do
-  let copylen_code ← shared.command.Command.copy_len_code self
-  let i ← lift (UScalar.cast .Usize self.insert_len)
-  let inscode ← shared.command.insert_length_code i
-  let i1 ← lift (UScalar.cast .Usize copylen_code)
-  let copycode ← shared.command.copy_length_code i1
-  let i2 ← lift (UScalar.cast .Usize inscode)
-  let insnumextra ← Array.index_usize shared.format.INS_EXTRA i2
-  let i3 ← lift (UScalar.cast .Usize inscode)
-  let i4 ← Array.index_usize shared.format.INS_BASE i3
-  let i5 ← self.insert_len - i4
-  let insextraval ← lift (core.convert.num.FromU64U32.from i5)
-  let i6 ← lift (UScalar.cast .Usize copycode)
-  let i7 ← Array.index_usize shared.format.COPY_BASE i6
-  let i8 ← copylen_code - i7
-  let copyextraval ← lift (core.convert.num.FromU64U32.from i8)
-  let i9 ← lift (UScalar.cast .Usize copycode)
-  let i10 ← Array.index_usize shared.format.COPY_EXTRA i9
-  let i11 ← insnumextra + i10
-  let i12 ← copyextraval <<< insnumextra
-  let i13 ← lift (i12 ||| insextraval)
-  ok (i11, i13)
+  let a ← shared.command.COMMAND_EXTRAS
+  let i ← lift (UScalar.cast .Usize self.cmd_prefix)
+  let i1 ← lift (i &&& 1023#usize)
+  let fields ← Array.index_usize a i1
+  let i2 ← fields >>> 32#i32
+  let i3 ← lift (i2 &&& 31#u64)
+  let insert_width ← lift (UScalar.cast .U32 i3)
+  let i4 ← fields >>> 40#i32
+  let i5 ← lift (i4 &&& 63#u64)
+  let width ← lift (UScalar.cast .U32 i5)
+  let i6 ← lift (UScalar.cast .U16 fields)
+  let i7 ← lift (UScalar.cast .U32 i6)
+  let i8 ← self.insert_len - i7
+  let insert_extra ← lift (UScalar.cast .U64 i8)
+  let i9 ← shared.command.Command.copy_len_code self
+  let i10 ← fields >>> 16#i32
+  let i11 ← lift (UScalar.cast .U16 i10)
+  let i12 ← lift (UScalar.cast .U32 i11)
+  let i13 ← i9 - i12
+  let copy_extra ← lift (UScalar.cast .U64 i13)
+  let i14 ← copy_extra <<< insert_width
+  let i15 ← lift (i14 ||| insert_extra)
+  ok (width, i15)
 
 /-- [mbrotli::shared::distance::MAX_NPOSTFIX]
     Source: 'src/shared/distance.rs' -/

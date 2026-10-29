@@ -82,11 +82,21 @@ Each codec has its own `encoders/` or `decoders/` directory containing an index,
 `quality_docs.py` generates encoder quality pages; `plot.py` writes their shared
 overview, throughput and size charts. `decoder_docs.py` generates decoder pages
 and charts together. Generators compute links relative to their output directory.
-The published CSVs are the `enc-2026-10-09c` and `dec-2026-10-09`
-sweeps. Each environment record links the source hashes and the measured
-executable; all encoder charts and quality pages use that same recorded sweep.
-Encoder SVG writers omit timestamps and strip trailing whitespace so generated
-artifacts remain reproducible and pass repository whitespace checks.
+The published CSVs are the `enc-2026-10-29-amd` and `dec-2026-10-29-amd`
+sweeps of 2026-10-29 on the AMD Ryzen 9 7950X Linux VDS. Both matrices run
+serially, one process on logical CPU 1, with ordinary release code generation,
+runtime backends and 20 samples/1 s warmup/3 s requested measurement per case.
+Each environment record links source/lockfile hashes, the exact frozen measured
+executable and its complete CSV. The archived size manifests live under
+`encoder-comparison-2026-10-29/` and `decoder-comparison-2026-10-29/`.
+
+Current encoder/decoder quality pages and charts are regenerated from those
+respective CSVs. Superseded local reports, dated manifests and intermediate AMD
+profiling exports are removed from the published docs; local raw artifacts stay
+separate. The root `compress` suite's 682 byte-identical Rust/C API pairs use a
+different measurement contract and are not merged into these native-API results.
+Encoder and decoder SVG writers omit timestamps and strip trailing whitespace so
+generated artifacts remain reproducible and pass repository whitespace checks.
 
 ## Verification and known gaps
 
