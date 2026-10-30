@@ -4773,9 +4773,10 @@ mod tests {
         let Layout::Sparse(layout) = &mut matcher.layout else {
             panic!("sparse layout");
         };
-        layout.starters = Vec::with_capacity(256);
+        // Exactly the dense table, so boxing it cannot shrink and move it.
+        layout.starters = Vec::with_capacity(64 * 16 / STARTER_SLOTS);
         layout.starters.push([123; STARTER_SLOTS]);
-        layout.starter_tags = Vec::with_capacity(256);
+        layout.starter_tags = Vec::with_capacity(64 * 16 / STARTER_SLOTS);
         layout.starter_tags.push([7; STARTER_SLOTS]);
         let positions = layout.starters.as_ptr().cast::<u32>();
         let tags = layout.starter_tags.as_ptr().cast::<u8>();

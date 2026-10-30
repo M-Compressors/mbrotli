@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- Fix three CI failures left by the encoder and decoder refactor. The sparse
+  promotion test sizes its starter pools to exactly the dense table again
+  (raising `STARTER_SLOTS` to 16 made them four times larger, so boxing the
+  table shrank and could move the allocation on macOS and under ASan). The
+  FFI session test passes its misaligned length slot from a `usize`-aligned
+  buffer and derives every pointer from one raw pointer, so Miri can no
+  longer place the slot on an aligned address and reach a Stacked Borrows
+  violation in the test's own pointers. The Lean extraction is regenerated
+  for `DistanceLayout::EMPTY`.
+
 ## [v0.5.19](https://github.com/M-Compressors/mbrotli/releases/tag/v0.5.19) - 2026-10-30
 
 - Update the optional `hotpath` profiling dependency to 0.30.2.

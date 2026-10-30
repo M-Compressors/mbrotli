@@ -320,13 +320,16 @@ fn invalid_arguments_leave_counts_and_sessions_unchanged() {
             ),
             MbrotliResult::InvalidParameter
         );
+        // A `usize`-aligned base keeps the slot misaligned on every address.
+        let mut words = [0usize; 2];
+        let base = words.as_mut_ptr().cast::<u8>();
         assert_eq!(
             mbrotli_encoder_session_process(
                 encoder,
-                bytes.as_ptr(),
+                base.cast_const(),
                 &mut read,
-                bytes.as_mut_ptr(),
-                bytes.as_mut_ptr().add(1).cast(),
+                base,
+                base.add(1).cast(),
                 0
             ),
             MbrotliResult::InvalidParameter

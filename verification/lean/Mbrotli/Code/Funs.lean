@@ -424,6 +424,13 @@ def decompressor.core.distance.Cache.push
   let i1 ← lift (core.num.Usize.wrapping_add self.index 1#usize)
   ok { slots := a, index := i1 }
 
+/-- [mbrotli::decompressor::core::distance::{mbrotli::decompressor::core::distance::DistanceLayout}::EMPTY]
+    Source: 'src/decompressor/core/distance.rs' -/
+@[global_simps, irreducible]
+def decompressor.core.distance.DistanceLayout.EMPTY
+  : decompressor.core.distance.DistanceLayout :=
+  { «postfix» := 0#u8, direct := 0#usize, large := false }
+
 /-- [mbrotli::decompressor::core::distance::{mbrotli::decompressor::core::distance::DistanceLayout}::from_header]:
     Source: 'src/decompressor/core/distance.rs' -/
 def decompressor.core.distance.DistanceLayout.from_header
