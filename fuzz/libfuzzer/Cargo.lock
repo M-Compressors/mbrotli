@@ -149,7 +149,7 @@ dependencies = [
 
 [[package]]
 name = "mbrotli-ffi"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "borrowed-buf",
  "mbrotli",
