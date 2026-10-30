@@ -184,7 +184,9 @@ dropping exactly its width. Padding must be zero.
 
 The hot path uses a whole-word `refill`, which loads a full little-endian word
 while at least eight acceptable bytes remain before the input limit and accepts
-the whole bytes that keep at least 56 bits buffered, and a matching `unread`,
+the whole bytes that keep at least 56 bits buffered (`(!count >> 3) & 7` bytes,
+masked so the slice advance needs no check beyond the eight-byte one, after
+which the count is `count | 56`), and a matching `unread`,
 which returns every whole speculatively buffered byte. The word is ORed in
 unmasked: bits above the buffered count then hold the input bytes that follow,
 which a later byte load ORs in again unchanged, so no mask sits on the decoding
@@ -219,6 +221,9 @@ when it grows) and `used` is the logical end, so a warm meta-block writes no
 fill at all; `prepare` restarts the logical end without touching storage.
 `Tables` borrows the whole group once so a loop that selects a code per symbol
 pays one bounds check on the root. A single-slot group is an owned `Huffman`.
+The command loop holds codes as `Root`s, a single pointer to a 256-entry root,
+and passes each decode its group's shared second-level storage, so the loop
+keeps that storage once per group rather than in every table it holds.
 The resumable `Builder` reads a simple or complex description into an intrusive
 linked list per code length, which is already canonical order, so building a
 table walks only the symbols with a code rather than the alphabet: `fill`
@@ -231,8 +236,8 @@ zero-fills only slots the fill overwrites rather than a loose worst-case bound.
 `build` or `build_slot` fills an owned table or a group slot; `reset` abandons a
 partial description. The code-length code of a complex description (18 symbols
 of at most five bits) is a 32-entry table held inline in the builder and rebuilt
-per description, so reading a description allocates nothing and never fills a
-256-entry root for it. A description's start only zeroes the 18 code lengths when
+per description by a counting sort of its 18 lengths, so reading a description
+allocates nothing and never fills a 256-entry root for it. A description's start only zeroes the 18 code lengths when
 it is complex, since those are the only lengths it may leave unset; both shapes
 clear the per-length symbol lists themselves before filling them.
 
@@ -255,6 +260,12 @@ classDiagram
         roots: &[[Code; 256]]
         second: &[Code] whole storage
         table(tree) Table
+        root(tree) Root
+        second() &[Code]
+    }
+    class Root {
+        &[Code; 256]
+        decode_fast(second, bits) usize
     }
     class Table {
         root: &[Code; 256]
@@ -274,6 +285,8 @@ classDiagram
     Group *-- Code
     Group --> Tables : borrows
     Tables --> Table : selects
+    Tables --> Root : selects
+    Table --> Root : decodes through
     Builder --> Group : fills a slot
 ```
 
@@ -282,7 +295,12 @@ dictionary-transform scratch a compressed meta-block needs live in a separate
 workspace the stream creates on its first compressed meta-block and keeps with
 the rest. A decoder that only ever sees stored members, metadata or an empty
 stream never allocates or initializes it, so `Decompressor::new` and every such
-decode stay allocation-free and copy a small state.
+decode stay allocation-free and copy a small state. The workspace is created
+by copying the constant `Tables::EMPTY` (built from the `EMPTY` constants of
+its builder, blocks, context maps, groups and distance layout) straight into
+its allocation, rather than constructing it on the stack and moving it. The
+builder's per-symbol links are part of that constant but never read before a
+symbol is pushed.
 
 The stream keeps a power-of-two history ring. `run` first attempts a fast path
 that decodes whole commands while a whole-word refill and output room allow: it
@@ -290,20 +308,39 @@ reads the command, literal run and distance from the reservoir and writes
 literals and copies straight into the ring. `Stage::Literals` re-enters the
 same loop mid-command whenever a whole-word refill is possible, so a run that
 paused on output resumes in bulk and only its byte-exact remainder decodes one
-symbol at a time. Every hot quantity lives in a local
-for the duration of the loop and is written back only when the loop pauses:
-the bit reservoir, the input cursor, position, remaining length, the four-slot
-recent-distance cache and the command fields the resumable stages read. Ring
+symbol at a time. `Stage::Command` enters the loop only while a whole word of
+input remains, since within the last word it could only pause again. Every hot
+quantity lives in a local for the duration of the loop and is written back
+only when the loop leaves: the bit reservoir, the input cursor, position and
+the four-slot recent-distance cache. The meta-block's end and the end of the
+call's output space are held as positions (`meta_end`, `space_end` and their
+minimum `limit_end`), so the remaining length and free space are differences
+from `position` rather than counters decremented per write.
+
+Every pause and failure leaves through one labeled `break` to a single
+write-back after the loop, so the loop has one exit edge. The command fields
+the resumable stages read (pending literals, copy length, implicit flag,
+distance and distance code) are not carried between iterations: each
+iteration decodes them into locals, and only a pause that leaves them pending
+writes the ones its stage reads (`save!`). A pause before the next command's
+fields, or a failure, which poisons the session, writes none. Rare branches
+(block switches, ring growth, references beyond history, wrapping copies, and
+every pause and failure) call an empty `#[cold]` function, which gives the
+register allocator the block frequencies it needs to keep the per-command
+quantities in registers and to place spills on the rare paths. A block switch
+itself runs out of line in `switch_block`, which takes and returns the
+reservoir by value so it never becomes addressable memory. Ring
 bytes are delivered to the caller when a write reaches the ring end, when the
 loop pauses and when an error returns, and the output space still free is
 tracked as a running count that includes pending ring bytes, so no per-command
 delivery is needed. A linear member makes no per-write ring-end test at all: its
 history is the caller's slice, delivered once when the loop leaves. State that
-depends only on a block type (the literal context lookup, the block's 64-entry
-context map slice, whether that slice is trivial, its single tree when it is,
-the command table, and the distance table of each of the four distance
-contexts, resolved once so a distance symbol pays no bounds check) is refreshed
-at block switches rather than per command.
+depends only on a block type (the literal context lookup, the root of each of
+the block's 64 literal contexts, whether those contexts share one tree and that
+tree's root, the command root, and the root of each of the four distance
+contexts) is set when the loop is entered and refreshed only by the block
+switch that changes it, so neither a command nor a literal compares block types
+and a contextual literal or a distance symbol pays no bounds check on its code.
 
 Each category's `Block` counts down the elements left in its current block. A
 category with two or more types reads a new type and count when the count is
@@ -340,7 +377,7 @@ flowchart TD
     Cmd --> Extra[insert extra, copy extra]
     Extra -->|insert > 0| Lit[literal run bounded by literals, block, space, ring end]
     Lit -->|trivial block| One[one table per symbol]
-    Lit -->|context block| Ctx[context from p1, p2 -> map slice -> table]
+    Lit -->|context block| Ctx[context from p1, p2 -> per-context root]
     One --> More{run done?}
     Ctx --> More
     More -->|reservoir short| PauseL[pause: Stage::Literals]
@@ -353,14 +390,14 @@ flowchart TD
     Sym -->|others| Tab[layout table entry: base + extra << postfix]
     Pop --> Ref
     Short --> Ref
-    Tab --> Ref{distance > available?}
-    Ref -->|yes| Dict[prefix: pause Resolve / static word into ring]
+    Tab --> Ref{distance > position or max backward?}
+    Ref -->|yes| Dict[prefix: pause Resolve / static word, 16/32-byte chunk when it fits]
     Ref -->|no| Limit{length > min remaining, space?}
     Limit -->|past remaining| Corrupt[error: meta-block]
     Limit -->|past space| PauseC[cache.push; pause: Stage::Copy]
     Limit -->|fits| Push[cache.push; grow ring once per call]
     Push --> Snap{length <= 32, no overlap, snapshot windows fit?}
-    Snap -->|yes| Word[16/32-byte SIMD snapshot]
+    Snap -->|yes| Word[16/32-byte array snapshot]
     Snap -->|no| Copy{no wrap?}
     Copy -->|yes, distance >= length| Exact[copy_within]
     Copy -->|yes, overlapping| Overlap[fill, byte loop, or doubling]
@@ -378,10 +415,15 @@ apart as corrupt input or as a full output, which pushes the distance and
 pauses at `Stage::Copy`. A non-overlapping copy of at most 32 bytes goes
 straight to a fixed-width helper: both of its complete windows fitting implies
 that neither side of the copy wraps, so the loop tests the copy's exact extent
-only when the helper declines. The fixed-width copy helpers load the entire
-source vector before storing it. They accept unaligned, initialized ring
-slices and check both complete windows; if either window is short they leave
-the ring unchanged and the caller uses `copy_within` for the exact length. A 16-byte copy serves lengths 1–16; a
+only when the helper declines. The fixed-width copy helpers (`copy_chunk`
+behind `copy16` and `copy32`) move a fixed-size array: they test the later of
+the two windows against the last start that fits, load the entire source
+before storing it, and compile to vector loads and stores under the
+dispatched backend's target features without a library call. They accept
+unaligned, initialized ring slices; if either window is short they leave the
+ring unchanged and the caller uses `copy_within` for the exact length. A
+static dictionary word of at most 32 bytes is written from the transform
+scratch the same way (`put_word`), with the same fifteen-byte bound. A 16-byte copy serves lengths 1–16; a
 32-byte copy serves lengths 17–32, so at most fifteen bytes ahead of actual
 output are overwritten. The ring's sixteen unreachable history slots make
 those extra writes unobservable. The snapshot is also correct when ring slots
@@ -392,14 +434,14 @@ ring grows it with the repeated byte in one pass through `repeat_grow`, shared
 with the byte-exact `Stage::Copy`, rather than zeroing the new region and then
 overwriting it. On AVX2 a 32-byte move uses one vector;
 SSE2/SSE4.2 split it into two 128-bit moves. Fallback remains available for
-internal differential tests. Neither SIMD kernel allocates or uses `unsafe`.
+internal differential tests. Neither copy helper allocates or uses `unsafe`.
 
 ```mermaid
 flowchart TD
     Stage[Scalar run_stages] --> Kind{stage}
     Kind -->|Command / resumable Literals| Dispatch[dispatch stored Backend]
     Dispatch --> Fast[Specialized command loop]
-    Fast --> Copy[copy16 / copy32 with concrete Simd token]
+    Fast --> Copy[copy16 / copy32 inside the backend's feature context]
     Kind -->|Copy with limited input or output| Bulk[dispatch once for copy_ring]
     Bulk --> Copy
     Kind -->|headers / raw / other stages| Scalar[Shared scalar implementation]

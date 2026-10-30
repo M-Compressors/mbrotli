@@ -1,6 +1,6 @@
 # Benchmark results
 
-## Current library comparison — 2026-10-29
+## Current library comparison — 2026-10-30
 
 Full serial sweeps on the AMD Ryzen 9 7950X Linux VDS compare five encoders
 (432 cases) and four decoders (384 cases). Both use ordinary release builds,
@@ -9,15 +9,15 @@ time on logical CPU 1. The reports identify the measured checkout and binaries.
 
 | Compare | Results | Data |
 | --- | --- | --- |
-| Compression speed and size | [Qualities 0–11](encoders/README.md) | [CSV](encoder-comparison.csv), [conditions](encoder-comparison.md), [sizes](encoder-comparison-2026-10-29/sizes.csv) |
-| Decompression of identical C streams | [Source qualities 0–11](decoders/README.md) | [CSV](decoder-comparison.csv), [conditions](decoder-comparison.md), [sizes](decoder-comparison-2026-10-29/sizes.csv) |
+| Compression speed and size | [Qualities 0–11](encoders/README.md) | [CSV](encoder-comparison.csv), [conditions](encoder-comparison.md), [sizes](encoder-comparison-2026-10-30/sizes.csv) |
+| Decompression of identical C streams | [Source qualities 0–11](decoders/README.md) | [CSV](decoder-comparison.csv), [conditions](decoder-comparison.md), [sizes](decoder-comparison-2026-10-30/sizes.csv) |
 
 ### Compression
 
 ![Median compression speed and size relative to C](encoders/charts/overview.svg)
 
-Across all 96 corpus/quality pairs, mbrotli's median speed / C is **1.146×**;
-its mean latency is lower in **68/96** cases. Burli supports q0–q5 and
+Across all 96 corpus/quality pairs, mbrotli's median speed / C is **1.099×**;
+its mean latency is lower in **67/96** cases. Burli supports q0–q5 and
 the other encoders q0–q11. Each plotted value is a median of eight per-dataset
 ratios to C. Higher speed and lower output size are better. Equal numeric
 quality does not imply equal compressed size.
@@ -26,8 +26,8 @@ quality does not imply equal compressed size.
 
 ![Median decompression speed relative to C](decoders/charts/overview.svg)
 
-Across all 96 corpus/quality pairs, mbrotli's median speed is **2.581× C**
-and **1.001× Burli**. Its mean latency is lower in **78/96** C
+Across all 96 corpus/quality pairs, mbrotli's median speed is **2.588× C**
+and **1.006× Burli**. Its mean latency is lower in **80/96** C
 comparisons and **53/96** Burli comparisons. All decoders restore the
 same C-produced bytes; quality belongs to their source encoder. SIMD Brotli
 shares the Rust Brotli decoder project and is omitted. Throughput counts restored bytes.

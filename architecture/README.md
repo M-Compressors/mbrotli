@@ -70,10 +70,10 @@ FFI do not appear in public signatures. Each codec compiles independently.
 | --- | --- |
 | [Framed seek reader](framed-seek-reader.md) | Footer/directory indexing, lazy metadata, sparse dependency decoding and resource Read. |
 | [Framed decoder](framed-decoder.md) | Structured containers, detection, events, dictionaries, validation, budgets and lending reader. |
-| [Native decompressor](decompressor.md) | Parsing, sessions, history, dictionaries, budgets and I/O. |
+| [Native decompressor](decompressor.md) | Parsing, sessions, history, the single-exit command loop and its cold paths, dictionaries, budgets and I/O. |
 | [Owned decoder output](decoder-owned-output.md) | Stored members, allocation transfer, linear slice history as its own state-machine instantiation, and read-ahead accounting. |
-| [Literal and stored-header decoding](decoder-literal-performance.md) | Literal batches, byte-exact literal runs and complete stored-member recognition. |
-| [Decoder SIMD](decoder-simd.md) | Command-loop dispatch and bounded history copies. |
+| [Literal and stored-header decoding](decoder-literal-performance.md) | Literal batches, per-context roots, byte-exact literal runs and complete stored-member recognition. |
+| [Decoder SIMD](decoder-simd.md) | Command-loop dispatch and bounded fixed-size history copies. |
 | [Decoder verification](decompressor-compatibility.md) | C/RFC oracles, feature profiles and test limitations. |
 
 ## Extended formats

@@ -96,17 +96,17 @@ python3 benchmarks/comparison/quality_docs.py \
 python3 benchmarks/comparison/plot.py \
   --csv docs/benchmarks/encoder-comparison.csv \
   --output docs/benchmarks/encoders/charts \
-  --subtitle 'AMD Ryzen 9 7950X; 20 samples; CPU 1; 2026-10-29'
+  --subtitle 'AMD Ryzen 9 7950X; 20 samples; CPU 1; 2026-10-30'
 ```
 
 `quality_docs.py` writes the index, twelve quality pages and their detailed
 charts. `plot.py` writes `overview.svg`, `throughput.svg` and `size.svg` into
 the same charts directory. All eight corpora contribute to the medians.
-The published encoder CSV is `enc-2026-10-29-amd`, with its
-[size manifest](benchmarks/encoder-comparison-2026-10-29/sizes.csv); the decoder CSV is
-`dec-2026-10-29-amd`, with its
-[size manifest](benchmarks/decoder-comparison-2026-10-29/sizes.csv). Both were recorded on
-2026-10-29 using Rust 1.99.1 and GCC 15.2 on an AMD Ryzen 9 7950X Linux VDS,
+The published encoder CSV is `enc-2026-10-30-amd`, with its
+[size manifest](benchmarks/encoder-comparison-2026-10-30/sizes.csv); the decoder CSV is
+`dec-2026-10-30-amd`, with its
+[size manifest](benchmarks/decoder-comparison-2026-10-30/sizes.csv). Both were recorded on
+2026-10-30 using Rust 1.99.1 and GCC 15.2 on an AMD Ryzen 9 7950X Linux VDS,
 one process at a time pinned to logical CPU 1. Sampling is 20 samples, 1 s warmup
 and 3 s requested measurement per case. No builds, tests, fuzzers or other
 benchmarks ran concurrently. Each environment record identifies the measured

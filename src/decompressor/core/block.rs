@@ -33,21 +33,18 @@ pub(super) struct Block {
     lengths: Huffman,
 }
 
-impl Default for Block {
-    fn default() -> Self {
-        Self {
-            count: 1,
-            current: 0,
-            previous: 1,
-            remaining: SINGLE_TYPE_COUNT,
-            stage: Stage::TypeCount,
-            types: Huffman::default(),
-            lengths: Huffman::default(),
-        }
-    }
-}
-
 impl Block {
+    /// A single-type category before its header is read.
+    pub(super) const EMPTY: Self = Self {
+        count: 1,
+        current: 0,
+        previous: 1,
+        remaining: SINGLE_TYPE_COUNT,
+        stage: Stage::TypeCount,
+        types: Huffman::EMPTY,
+        lengths: Huffman::EMPTY,
+    };
+
     /// Starts a meta-block: one type, no switches, and no pending header.
     pub(super) const fn reset(&mut self) {
         self.count = 1;
@@ -203,11 +200,11 @@ mod tests {
             let bytes = switch_fixture(symbol);
             let mut bits = Bits::default();
             let mut input = fixtures::input(&bytes);
-            let mut block = Block::default();
+            let mut block = Block::EMPTY;
             let mut memory = Memory::default();
             assert!(
                 block
-                    .header(&mut bits, &mut input, &mut Builder::default(), &mut memory)
+                    .header(&mut bits, &mut input, &mut { Builder::EMPTY }, &mut memory)
                     .unwrap()
             );
             assert_eq!((block.count, block.current, block.remaining), (2, 0, 1));
@@ -228,11 +225,11 @@ mod tests {
         let bytes = [0];
         let mut bits = Bits::default();
         let mut input = fixtures::input(&bytes);
-        let mut block = Block::default();
+        let mut block = Block::EMPTY;
         let mut memory = Memory::default();
         assert!(
             block
-                .header(&mut bits, &mut input, &mut Builder::default(), &mut memory)
+                .header(&mut bits, &mut input, &mut { Builder::EMPTY }, &mut memory)
                 .unwrap()
         );
         assert_eq!((block.count, block.remaining), (1, SINGLE_TYPE_COUNT));
@@ -253,15 +250,15 @@ mod tests {
         for symbol in [0, 1, 3] {
             let mut bytes = switch_fixture(symbol);
             bytes.extend([0u8; 8]);
-            let mut slow = Block::default();
-            let mut fast = Block::default();
+            let mut slow = Block::EMPTY;
+            let mut fast = Block::EMPTY;
             let mut memory = Memory::default();
             for (block, use_fast) in [(&mut slow, false), (&mut fast, true)] {
                 let mut bits = Bits::default();
                 let mut input = fixtures::input(&bytes);
                 assert!(
                     block
-                        .header(&mut bits, &mut input, &mut Builder::default(), &mut memory)
+                        .header(&mut bits, &mut input, &mut { Builder::EMPTY }, &mut memory)
                         .unwrap()
                 );
                 block.advance();

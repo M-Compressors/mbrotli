@@ -233,8 +233,8 @@ one loop over ascending bits walks the bucket newest to oldest — the
 reference rotates its mask the same way. Slots fill downwards from the top of
 a block, as the reference's tagged matchers do, which is what makes that walk
 a plain rotation. The scalar backend deliberately keeps the unfiltered scan
-as an independent oracle, and so do a four-slot starter block, which is too
-short for a vector compare, and the compact layout's chain walk. Filtering
+as an independent oracle, and so do a sixteen-slot starter block and the
+compact layout's chain walk. Filtering
 preserves the accepted-match sequence:
 
 - They select the same bucket. The tagged `HashBytes` keeps eight more low bits,
@@ -302,7 +302,7 @@ what `prepare` is told about it:
 | Layout | Chosen when | Index | Blocks | Cost of a new stream |
 | --- | --- | --- | --- | --- |
 | Compact | one-shot input of at most 1024 bytes while the matcher is still compact | `KeyMap`, sized two entries per input byte, probed once per position: counter and chain head per bucket | one chain: `Vec<u64>` of `position | next << 32`, one node pushed per store in front of its bucket's previous node; a search walks the newest `BLOCK` nodes, the order a block scan takes | fill a map of at most 16 KiB |
-| Sparse | a known input below the dense limit; an input of unknown length on a deep shape; unless the dense table already exists | a boxed `[u64; BUCKETS]`: generation stamp, block index with a starter flag, counter | typed pools: `Vec<[u32; 4]>` starters that grow into `Vec<[u32; BLOCK]>` full blocks on their fifth store, tags alongside for tagged shapes | bump the generation |
+| Sparse | a known input below the dense limit; an input of unknown length on a deep shape; unless the dense table already exists | a boxed `[u64; BUCKETS]`: generation stamp, block index with a starter flag, counter | typed pools: `Vec<[u32; 16]>` starters (one cache line, at most the shallowest block) that grow into `Vec<[u32; BLOCK]>` full blocks on their seventeenth store, tags alongside for tagged shapes | bump the generation |
 | Dense | on a tagged shape that knows its input, the first block samples as ordinary data and the input is at least a hundred-and-twenty-eighth of the table (8 KiB at q5, 16 KiB at q6), or it does not sample as repetitive data covering half the input and the size hint reaches the dense limit — on the matcher's first stream a thirty-second of the table for q5 and a sixteenth for q6 (32 KiB and 128 KiB of input with the 14-bit `H5` shapes), a sixty-fourth from its second stream on (16 KiB and 32 KiB) (see [Sampling the first block](#sampling-the-first-block)); for deep q7–q9 shapes an eighth of it on the matcher's first stream (1, 2 and 4 MiB) and a sixty-fourth from its second stream on (256 KiB, 256 KiB and 512 KiB) — or the length is unknown on a tagged shape, or the matcher already holds the dense table; a sparse stream also switches mid-stream at a checkpoint once its store rate repays the clear (see [Mid-stream promotion](#mid-stream-promotion)) | `[u16; BUCKETS]` counters | one flat `Box<[u32; SLOTS]>` with `SLOTS = BUCKETS * BLOCK`, viewed as `[[u32; BLOCK]; BUCKETS]` for a run, zeroed once per matcher | zero the counters |
 
 `BucketMatcher` owns only `Layout<BUCKETS, BLOCK, SLOTS>`, the retargetable size hint,
@@ -388,8 +388,13 @@ load only when the extra physical byte exists; that byte never contributes to
 a hash. Otherwise at most eight bounded, explicitly unrolled scalar stores
 finish the range. Wrapped ranges or missing lookahead delegate to
 `store_range`, whose scalar implementation also serves administrative/history
-stores and the independent differential oracle. No unsafe loads or public API
-changes are introduced.
+stores and the independent differential oracle. The sparse layout's
+`store_range` places each position through `SparseLayout::place`, which is
+`push` without the store counter, and adds the range's length to the counter
+once: the counter sits behind the same reference as the pools a store
+writes, so counted per store its read-modify-write would chain every store of
+the range to the one before. No unsafe loads or public API changes are
+introduced.
 
 ```mermaid
 flowchart LR
@@ -497,8 +502,8 @@ remainder when that is larger or no hint was given. When
 (32 for the deep shapes, 16 for the tagged ones, whose shallow blocks save
 less per store while the copy weighs more against a 1–2 MiB table) it builds
 a fresh dense table (`DenseLayout::from(&SparseLayout)`: each live bucket's
-counter, its full block, or its starter's four slots at the top of the block
-— where the fifth store would have moved them — with the same for its tags,
+counter, its full block, or its starter's sixteen slots at the top of the block
+— where the seventeenth store would have moved them — with the same for its tags,
 and nothing from a stale generation), drops the sparse storage, and returns
 `usize::MAX`.
 Otherwise it asks to be called again after `CHECKPOINT_INTERVAL` (16 KiB)

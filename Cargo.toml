@@ -1,6 +1,6 @@
 [package]
 name = "mbrotli"
-version = "0.5.18"
+version = "0.5.19"
 edition = "2024"
 rust-version = "1.89"
 license = "MIT OR Apache-2.0"
@@ -61,7 +61,7 @@ optional = true
 # the proc-macro crate into its tree; every `#[hotpath::measure]` anchor in
 # `src/` is written as `#[cfg_attr(feature = "hotpath", hotpath::measure)]`.
 [dependencies.hotpath]
-version = "0.29.2"
+version = "0.30.2"
 optional = true
 
 [dev-dependencies]

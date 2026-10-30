@@ -354,8 +354,9 @@ flowchart TD
 Bucket matchers own exactly one storage layout; see the
 [greedy encoder](greedy-encoder.md#23-storage-layouts-runs-and-sweeps) for the
 selection rule and migration state diagram. Sparse generation-stamped entries
-activate four-slot starter blocks on demand and promote them into a full-block
-pool on the fifth store, leaving the starter allocated until reset or migration.
+activate sixteen-slot (one cache line) starter blocks on demand and promote
+them into a full-block pool on the seventeenth store, leaving the starter
+allocated until reset or migration.
 Compact one-shot streams instead link their stores into one chain. Promotion
 from compact to sparse reuses the larger word buffer; promotion from sparse to
 dense flattens the larger position and tag pools and releases the unused storage.
@@ -394,7 +395,7 @@ q5/q6 use parallel byte tags. One `fearless_simd` comparison covers the complete
 16- or 32-position bucket; slots fill downwards, so rotating the mask by the
 newest slot and splitting it at that slot yields the newest-to-oldest order as
 two ascending scans. Unfilled slots are masked off. The scalar backend, and any
-four-slot starter block, deliberately scan without filtering as an independent
+starter block, deliberately scan without filtering as an independent
 oracle. q7–q9 use untagged bucket scans. Per input block the search loop works
 through a `MatchRun` view that holds the tables as slices bound once, the way
 the reference keeps `restrict` pointers, so a store never forces the loop to

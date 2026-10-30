@@ -1,6 +1,45 @@
 # Changelog
 
-## Unreleased
+## [v0.5.19](https://github.com/M-Compressors/mbrotli/releases/tag/v0.5.19) - 2026-10-30
+
+- Update the optional `hotpath` profiling dependency to 0.30.2.
+
+- Refresh the published library comparison with the `enc-2026-10-30-amd` and
+  `dec-2026-10-30-amd` sweeps of this release (AMD Ryzen 9 7950X, CPU 1, 20
+  samples) and remove the 2026-10-29 results and size manifests. mbrotli's
+  median encoding speed is 1.099x C (above C at all twelve quality medians);
+  its median decoding speed is 2.588x C and 1.006x Burli.
+
+- Speed up the decoder's command loop on text. Every pause and failure leaves
+  through one write-back; command fields are saved only by the pause that
+  leaves them pending; the meta-block end and output room are held as
+  positions; rare branches call an empty `#[cold]` function so register
+  allocation favours the per-command path; block switches run out of line
+  with the bit reservoir passed by value; refills compute their byte count as
+  `(!count >> 3) & 7`; references beyond history take two direct tests; short
+  copies and static dictionary words up to 32 bytes move as fixed-size arrays;
+  and contextual literals read per-context code roots set at block switches.
+  In the published `dec-2026-10-30-amd` sweep, cold decoding of alice29
+  against Google Brotli 1.2.0 moves from 0.85-0.94x to 0.92-1.01x of C's
+  speed at every source quality except q8, which stays at 0.86x; output is
+  unchanged.
+
+- Create the decoder's compressed-meta-block workspace by copying the constant
+  `Tables::EMPTY` into place instead of building it on the stack and moving
+  it, build the code-length code with a counting sort, and enter the bulk
+  command loop from `Stage::Command` only while a whole input word remains.
+  Cold decoding of the 44-byte tiny-text corpus at quality 5 drops from
+  0.93 us to 0.88 us (C: 0.70 us), and quality 3 moves ahead of C.
+
+- Speed up the encoder at no change in output bytes: skip unused blocks of
+  sixteen counts when `population_cost` looks for a histogram's first symbols,
+  lay `HistogramPair` out in declaration order, keep quality 0's long match
+  scan out of line, grow sparse greedy buckets from sixteen-slot starters
+  instead of four, and count a sparse store range once instead of per store.
+  Between the published sweeps, tiny-text q10/q11 move from 0.87/0.91x to
+  0.96/1.00x of C's speed, binary-64k q7/q8/q9 from 0.66/0.65/13.6x to
+  0.70/0.73/21.2x and alice29 q8 from 0.91x to 0.96x. Random 64 KiB input at
+  q6-q9 is 7-20% slower, and an empty input takes 35 ns instead of 29 ns.
 
 - Add C encoder/decoder session handles in `mbrotli-ffi`, with create, process,
   flush, finish, reinit and destroy functions. All session output supports

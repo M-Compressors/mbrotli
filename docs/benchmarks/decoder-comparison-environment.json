@@ -1,10 +1,10 @@
 {
-  "date": "2026-10-29",
+  "date": "2026-10-30",
   "date_timezone": "Europe/Moscow",
-  "baseline": "dec-2026-10-29-amd",
-  "size_manifest": "decoder-comparison-2026-10-29/sizes.csv",
-  "baseline_commit": "04fd1daeee12f5d33f74dee84b89995b09b26d6f",
-  "source_state": "Measured uncommitted optimization and validation changes on the recorded HEAD; exact source hashes below identify the working tree. This is not a clean-HEAD measurement.",
+  "baseline": "dec-2026-10-30-amd",
+  "size_manifest": "decoder-comparison-2026-10-30/sizes.csv",
+  "baseline_commit": "431fd07c111814fb31efe049162a46d7670e29c0",
+  "source_state": "Measured the uncommitted 0.5.19 decoder and encoder optimizations on the recorded HEAD; exact source hashes below identify the working tree. This is not a clean-HEAD measurement.",
   "c_revision": "4508218e7fef90fa4273286f7a415065946f2c43",
   "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)\nbinary: rustc\ncommit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67\ncommit-date: 2026-10-13\nhost: x86_64-unknown-linux-gnu\nrelease: 1.99.1\nLLVM version: 23.1.1",
   "cargo": "cargo 1.99.1 (5f94df478 2026-08-27)",
@@ -24,7 +24,7 @@
   "lgwin": 22,
   "versions": {
     "c-brotli": "1.2.0",
-    "mbrotli": "0.5.17 + uncommitted optimizations and validation fixes",
+    "mbrotli": "0.5.19 (uncommitted working tree)",
     "rust-brotli": "9.0.0",
     "simd-brotli": "10.0.1",
     "burli": "0.3.3",
@@ -44,14 +44,14 @@
   "validation": "all 384 decoder outputs matched the original bytes on identical C-produced streams before timing",
   "run": {
     "suite": "decoders",
-    "baseline": "dec-2026-10-29-amd",
-    "started_utc": "2026-10-29T07:54:02.079234+00:00",
+    "baseline": "dec-2026-10-30-amd",
+    "started_utc": "2026-10-30T15:28:21+0000",
     "state": "passed",
     "command": [
       "taskset",
       "-c",
       "1",
-      "/home/mnwa/mbrotli/target/amd-library-2026-10-29/decoders-frozen",
+      "/home/mnwa/mbrotli/target/amd-library-2026-10-30/decoders-frozen",
       "--bench",
       "--sample-size",
       "20",
@@ -61,25 +61,27 @@
       "3",
       "--noplot",
       "--save-baseline",
-      "dec-2026-10-29-amd"
+      "dec-2026-10-30-amd"
     ],
-    "executable_sha256": "1705b40bbc6646ec089c769ec1dd1fa4bd123a61ea46501828c643798dc12df7",
-    "log": "/home/mnwa/mbrotli/target/amd-library-2026-10-29/decoders.log",
+    "executable_sha256": "2fa3dcbf59832fa8e7a8fdf6224eeadc8737ce5ed8b0e45e8582dc290b5c31ee",
+    "log": "/home/mnwa/mbrotli/target/amd-library-2026-10-30/dec.log",
     "whole_process_resources_including_preflight_and_analysis": {
-      "user_seconds": 1717.289745,
-      "system_seconds": 0.9496759999999966,
-      "minor_faults": 58023,
+      "user_seconds": 1721.74,
+      "system_seconds": 0.97,
+      "wall_clock": "28:44.33",
+      "max_rss_kib": 94096,
+      "minor_faults": 58006,
       "major_faults": 0
     },
-    "finished_utc": "2026-10-29T08:22:41.688162+00:00",
+    "finished_utc": "2026-10-30T15:57:05+0000",
     "exit_code": 0,
-    "export": "/home/mnwa/mbrotli/target/amd-library-2026-10-29/decoders.csv",
-    "export_sha256": "1b6ca753c03ee79e3b0c233cd8b9ddf98156ac5cc8fdbdafe18a32c84546dfc7",
+    "export": "/home/mnwa/mbrotli/docs/benchmarks/decoder-comparison.csv",
+    "export_sha256": "e6d0641843483dbea783bad79eef5857b24f0bce4ce234ae395e4b7f6a008189",
     "size_manifest_sha256": "3d3d634d65b16a3960daf82777460a100fc96980b9b710af4802b4f29c550dff",
     "expected": 384
   },
   "executable": {
-    "baseline": "dec-2026-10-29-amd",
+    "baseline": "dec-2026-10-30-amd",
     "criterion_root": "/home/mnwa/mbrotli/benchmarks/comparison/target/criterion-decoders",
     "expected": 384,
     "cargo_event": {
@@ -109,13 +111,13 @@
       },
       "features": [],
       "filenames": [
-        "/home/mnwa/mbrotli/benchmarks/comparison/target/release/deps/decoders-377c6d3895e7035c"
+        "/home/mnwa/mbrotli/benchmarks/comparison/target/release/deps/decoders-9d9f29cec867066f"
       ],
-      "executable": "/home/mnwa/mbrotli/benchmarks/comparison/target/release/deps/decoders-377c6d3895e7035c",
+      "executable": "/home/mnwa/mbrotli/benchmarks/comparison/target/release/deps/decoders-9d9f29cec867066f",
       "fresh": false
     },
-    "executable": "/home/mnwa/mbrotli/target/amd-library-2026-10-29/decoders-frozen",
-    "sha256": "1705b40bbc6646ec089c769ec1dd1fa4bd123a61ea46501828c643798dc12df7"
+    "executable": "/home/mnwa/mbrotli/target/amd-library-2026-10-30/decoders-frozen",
+    "sha256": "2fa3dcbf59832fa8e7a8fdf6224eeadc8737ce5ed8b0e45e8582dc290b5c31ee"
   },
   "build_command": [
     "cargo",
@@ -134,16 +136,16 @@
   "plotting": {
     "matplotlib": "3.10.8"
   },
-  "raw_artifacts": "target/amd-library-2026-10-29/",
-  "source_patch_sha256": "a903956b22308312237d55fef11932ed131c3d973b20882ce9300d4b41e915cf",
+  "raw_artifacts": "target/amd-library-2026-10-30/",
+  "source_patch_sha256": "557e51100ca20127ce1ade6896ad4ee0bb758620b8eedb6ae29f4910235df509",
   "sha256": {
-    "Cargo.lock": "8ff2a18c5def4a7c1d408259a8387d742955d67bf2b78c21ff109aa5e8264b38",
-    "Cargo.toml": "c4c50dc0da509f6a8b7d9a61547bcc4fe679cf569c64fef87a1cc6e60c0e3b38",
-    "benchmarks/comparison/Cargo.lock": "2a42679184f0e6699e7d4e360d1ba73725a8dbf4205b6bfe5e549c8d30beeb02",
+    "Cargo.lock": "22016ffa330f11a26117117d9129e5f602e59d7eb819e2b9b58ae9bba90f790b",
+    "Cargo.toml": "20a7c6e68fb7b58a2cc8ac9d1a4e7e227e4d840935d6b39dee94ad641a97ee7a",
+    "benchmarks/comparison/Cargo.lock": "9a51f44e380c4f52c892c2829f173aea06ffd565782f3b9b6595faa798c18bd3",
     "benchmarks/comparison/Cargo.toml": "71fdca7f059fb42e55b553ac414b98e2ab5fd20ff77e20a47b70d2f1cb97bb5f",
     "benchmarks/comparison/benches/decoders.rs": "1eaaa648a7b1f56cd2c2dede47944def165cf14034c833d8b9f46c5e503427e9",
     "benchmarks/comparison/benches/implementations.rs": "4235d7819fcae8a1833fcb7fcbe8abccb7e827d25c4e8248cc6955f94ecab045",
-    "benchmarks/comparison/decoder_docs.py": "abbced417cc4a57b4ca5b9f22ccbd131f965f447c9555a79104d0f7da3c4cfc8",
+    "benchmarks/comparison/decoder_docs.py": "699aa6aa302ca5e42403f2339b19a8ea67417999b38c498febd4167af44e67ee",
     "benchmarks/comparison/plot.py": "9dd839eb913a2782a676d9069d26fdd472bd78f3ae2c387cc43a613a8e2aa84b",
     "benchmarks/comparison/quality_docs.py": "425b7fd4a4d5010b9d58e74ff7cea5e5121f9d2cc61690fd34e570e6d6ec139e",
     "benchmarks/comparison/report.py": "b6d32822384481eec23c27fb46c511b2b2162ad66ab9cab0536c441831eba224",
@@ -281,7 +283,7 @@
     "src/compressor/core/fast/constants.rs": "489a172d780a8fa701f368c3422ea72e590bec6c5c7df687c4c41f2a8282f9ed",
     "src/compressor/core/fast/histogram.rs": "721c4da71e74e67b0f2b5c17a87f2385c38ef084c32ccdcc87d00273cb98bb90",
     "src/compressor/core/fast/mod.rs": "0caf5dc5705f89e6f0fb19e18410fd1b2db9549e5d14b8c16a28d67cf3faa2a5",
-    "src/compressor/core/fast/q0.rs": "e97e952203053629eb4a879677c500849c9f8a94c7c62cb506c9979799e5230b",
+    "src/compressor/core/fast/q0.rs": "f9a98571742b242c2f1b6c299e42024aba02fd42d328ec4ab5f7105041713747",
     "src/compressor/core/fast/q1.rs": "2e9246b173fc7c55482b3054804c8a410dd2650e7fba078f1e9b50c6ce5ce5d8",
     "src/compressor/core/fast/tables.rs": "c9ee2fd816df99b351b9bce2cc7a548692228c6f71c395fda311cbe87bcfc78c",
     "src/compressor/core/fast/workspace.rs": "286bb6b3822b31d6be2a79155ba4fdb7d3a5c336f4e2f75215a89cb71d5aefb7",
@@ -289,14 +291,14 @@
     "src/compressor/core/greedy/backward_references.rs": "3141c845439446487370e66e88cf39bc95e10339ba7e92965660b49ee486654b",
     "src/compressor/core/greedy/context_model.rs": "16d26d74b27f1fb734113061ddfa7e630825e3fa3210c9942a8d389d75b42ecc",
     "src/compressor/core/greedy/encoder.rs": "12896ee3936a1d92f8568fb080973a7f54e778183a41d59376a607202f3fd170",
-    "src/compressor/core/greedy/hashers.rs": "3e27bb4d2e1491c7c52364b48736bccacdd624df1186026099a38a0d8d4e5d95",
+    "src/compressor/core/greedy/hashers.rs": "9d3ae82142cf87a803084c05c677047c84e820c84425c73fa2de7a5e45e5c147",
     "src/compressor/core/greedy/metablock.rs": "ef0f8132d18c93f79654301cd7b0b30c304a62d37984b61f1f908e897e68d9b2",
     "src/compressor/core/greedy/mod.rs": "96bec9ada82c7196dbe13ba86509fe23b738df235144a87a03f92bfce09dc5e4",
     "src/compressor/core/greedy/params.rs": "19c80a12d161950c8c62f166c3e136fe5926c91dd8f084c5d5c90516a226a8df",
     "src/compressor/core/greedy/probe.rs": "a56259321448453f1e2c32a713f5ab306f7b5f65cebfd3c129e4dc724a89d502",
     "src/compressor/core/greedy/split.rs": "61f889de45e31ae6bb2389917985f3b60a7aa667b6860e50d6d81e00d22d6cad",
     "src/compressor/core/hq/block_splitter.rs": "0df940c2652936178155e8230aefc73754a450737c17a2815d243b3a5827ac2f",
-    "src/compressor/core/hq/cluster.rs": "1a5c2c63a6fe8725c67316f407a3166905173d065ac35f12562f2c3951f87fa5",
+    "src/compressor/core/hq/cluster.rs": "ceee2147df78705c747e6ec1f5f63c8cdef2c5bfa09c4bae098606fcba96dfa9",
     "src/compressor/core/hq/collision_regression.bin": "50e9fc79aeee325624b61157340a589eb2f17abfd2071ecfeb213c248b187cd4",
     "src/compressor/core/hq/cost.rs": "582c523e8072678bb080dd7f9ce3de84fe185b368699414b178c61d45a3d7cdf",
     "src/compressor/core/hq/encoder.rs": "4e62fd64c44d0f59db9f127583f093b4b51f85b47d88c8797ad201e8e16b0599",
@@ -363,18 +365,18 @@
     "src/compressor/shared/mod.rs": "d89895d3bf54b6a7b9aee2b36618c1acf10312062e3e712c01c184a2b817a01e",
     "src/compressor.md": "75d54cbba24b5322a6c704eb6e608c86f0ad2497f10b290bdf8aacaf58a2ca6d",
     "src/decompressor/config.rs": "cd230ad701a14b2c3c4fb31b259ea018f74c20d65667836af78cdd183950d7b8",
-    "src/decompressor/core/bits.rs": "075aad6fc3b358058d279ff37da99e70b6ee1283aae5b8ce158b17b23fe4b030",
-    "src/decompressor/core/block.rs": "7e19d8ae09c3d8cf20267854a719cb36185ab771e9471e49ca92bfa1b961a36a",
-    "src/decompressor/core/context_map.rs": "f49da8472315b8557c3945132b70760f1919bb811014f4e7cfae58ec901e83e0",
+    "src/decompressor/core/bits.rs": "cd7cf4fd198561bd47ab8f4d1e50726a648cd99a62ef07dfa0f3ca2448d4aab5",
+    "src/decompressor/core/block.rs": "9b549bd1ab93714914a649b9970c4db88642e336ec0c72c476d78290b1652647",
+    "src/decompressor/core/context_map.rs": "ddb3ed566e6b282ccb1ac615fbb5716382626f64cfa7938e2258505e2e7fafcf",
     "src/decompressor/core/dictionary.rs": "4ae3dfb3b4f367f1849eadd0bdaa088d20f0d485689c909d8b62531f16725dd8",
-    "src/decompressor/core/distance.rs": "789e855dc6cd5950f823eb4f25d3898b1e7a66e6e12c2afd23bb6675b3e47065",
+    "src/decompressor/core/distance.rs": "2e8efe75af334aa009a6ac30b6fdb8f88bb082febcb0fd5c3adf40e1bb5e78fa",
     "src/decompressor/core/header.rs": "9d02734feeb770a7bcde6645a3a2e506216ff04fa7686c3d0fa61dc9140aca03",
-    "src/decompressor/core/huffman.rs": "556b60f7dd14dfdde904e8b519efe5ce775d185f6c703d9888e3aea71ad29b79",
+    "src/decompressor/core/huffman.rs": "ce643aedf58607cb17920ca40dcf94f72265872b89830a8ad2cb66b3b0df40ad",
     "src/decompressor/core/memory.rs": "4976a2413bf58b60253e3fa582d0cbb2416836bb6fdcb50226b8babe0aefd6a8",
     "src/decompressor/core/mod.rs": "8b4bf930eab6816fd6487bca8443d8794021fa6dc77fb4389aef931348e2a9fc",
     "src/decompressor/core/session.rs": "6b7e8f2382d23685a3ec9d4d40b0cefc0a542a43b1e36646731f573f48b58bf0",
     "src/decompressor/core/stored.rs": "b345eb0d6abe6803453edbe3256a1277f6e5861965aec0659ca157d66fe752a5",
-    "src/decompressor/core/stream.rs": "43dd7a2f6358c39991c3aa3643389d1380595f18cc0a933421a4eb9454a6657b",
+    "src/decompressor/core/stream.rs": "0621855fc459523c30037f1b0863b7a2e2c6c146b8883a85e886b7debb712294",
     "src/decompressor/decoder.rs": "7535e0310a1313d45370d66bdad33d59c34a9c33ed2af432081635b4ec435779",
     "src/decompressor/error.rs": "bf5c2560c1d0af1d07046f8da9f00c3fc41d72b1b191d602be2a94f2cda55124",
     "src/decompressor/framing/config.rs": "2da26ed40c5cf68e5462f3dcbfb1bd4073eb1cf2f1dbc642121a22253d76618d",
@@ -401,7 +403,7 @@
     "src/lib.rs": "c9b9bc707cc5958328b856e924e82640565f95b5de917e6b13ecabb06a1f209b",
     "src/retention.rs": "e0bd738ad5af555036984e8cd17b1ba3c2c2c99f206e280bb6bb2c34aa9842b7",
     "src/shared/baseline.rs": "ef14fc8acb06c169cc9b2110a42f138bbd4b85d871094cdb83582bb47bb9d3f6",
-    "src/shared/bit_cost.rs": "4c4ba3f901b19dbdf2a206b88453962c2fc7f2417d0f4e94d9f7de9bc981a47b",
+    "src/shared/bit_cost.rs": "d912f54391d9c73f0d9a953d0dfb38d7f45e58c4e00a97c38f56d0577696782d",
     "src/shared/bits.rs": "50174ed5883422bd5fa9f8c191673cf7b6d3548434d8ba061b2943c8e7cd54c5",
     "src/shared/bitstream.rs": "cfec49ba69494d5a30083f70edb183078e6e0094c367f6c945d9db11f98c0f44",
     "src/shared/block_split.rs": "297b3f8fd96d2da2657d87538cb9521e989ba1c2deb73f0e1f9fe64ac08b0c01",
@@ -434,8 +436,8 @@
     "src/shared/tables.rs": "13618038ddcacb9734146c77a5e3ba437cf6b50e03f866a754b3d14cf355072c",
     "src/shared/uninit.rs": "3a063aa8048a4ac2b4f018bfd5d705937611aea6f46cd8a4f2d414cfa1ed0455",
     "src/window.rs": "77b3a7cefde168ced9089379c9b4f1642c94981b35743039beec598381324b15",
-    "docs/benchmarks/decoder-comparison.csv": "1b6ca753c03ee79e3b0c233cd8b9ddf98156ac5cc8fdbdafe18a32c84546dfc7",
-    "docs/benchmarks/decoder-comparison-2026-10-29/sizes.csv": "3d3d634d65b16a3960daf82777460a100fc96980b9b710af4802b4f29c550dff"
+    "docs/benchmarks/decoder-comparison.csv": "e6d0641843483dbea783bad79eef5857b24f0bce4ce234ae395e4b7f6a008189",
+    "docs/benchmarks/decoder-comparison-2026-10-30/sizes.csv": "3d3d634d65b16a3960daf82777460a100fc96980b9b710af4802b4f29c550dff"
   },
   "limits": [
     "Single virtual host; fixed implementation order; affinity does not control hypervisor scheduling or CPU frequency.",
@@ -448,6 +450,5 @@
     "benchmarks/comparison/quality_docs.py": "425b7fd4a4d5010b9d58e74ff7cea5e5121f9d2cc61690fd34e570e6d6ec139e",
     "benchmarks/comparison/plot.py": "9dd839eb913a2782a676d9069d26fdd472bd78f3ae2c387cc43a613a8e2aa84b",
     "benchmarks/comparison/report.py": "b6d32822384481eec23c27fb46c511b2b2162ad66ab9cab0536c441831eba224"
-  },
-  "post_measurement_publication_change": "After native measurements completed, decoder_docs.py was changed only to reuse the existing SVG saver that strips trailing whitespace. Its premeasurement hash remains in the measured-source snapshot; current publication-tool hashes are recorded separately. Codec, benchmark and exported timings/sizes are unchanged."
+  }
 }

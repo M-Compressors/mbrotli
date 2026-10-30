@@ -2,7 +2,7 @@
 
 [Benchmark index](../README.md)
 
-Recorded run: **enc-2026-10-29-amd** (2026-10-29).
+Recorded run: **enc-2026-10-30-amd** (2026-10-30).
 [Raw results](../encoder-comparison.csv) · [Environment](../encoder-comparison-environment.json) · [Run analysis](../encoder-comparison.md).
 
 ![Median compression speed and size relative to C](charts/overview.svg)
@@ -14,18 +14,18 @@ Qualities are ordered by mbrotli median speed / C, highest first. Burli supports
 
 | Quality | mbrotli speed / C ↑ | mbrotli output / C ↓ | Datasets |
 | --- | ---: | ---: | ---: |
-| [Quality 9](q9.md) | 4.248× | 1.000× | 8 |
-| [Quality 11](q11.md) | 1.516× | 1.000× | 8 |
-| [Quality 0](q0.md) | 1.377× | 1.000× | 8 |
-| [Quality 4](q4.md) | 1.306× | 1.000× | 8 |
-| [Quality 10](q10.md) | 1.255× | 1.000× | 8 |
-| [Quality 3](q3.md) | 1.225× | 1.000× | 8 |
-| [Quality 2](q2.md) | 1.191× | 1.000× | 8 |
-| [Quality 1](q1.md) | 1.111× | 1.000× | 8 |
-| [Quality 8](q8.md) | 1.030× | 1.000× | 8 |
-| [Quality 5](q5.md) | 1.020× | 1.000× | 8 |
-| [Quality 6](q6.md) | 0.996× | 1.000× | 8 |
-| [Quality 7](q7.md) | 0.978× | 1.000× | 8 |
+| [Quality 9](q9.md) | 4.323× | 1.000× | 8 |
+| [Quality 11](q11.md) | 1.493× | 1.000× | 8 |
+| [Quality 0](q0.md) | 1.349× | 1.000× | 8 |
+| [Quality 10](q10.md) | 1.243× | 1.000× | 8 |
+| [Quality 4](q4.md) | 1.183× | 1.000× | 8 |
+| [Quality 1](q1.md) | 1.123× | 1.000× | 8 |
+| [Quality 3](q3.md) | 1.089× | 1.000× | 8 |
+| [Quality 8](q8.md) | 1.022× | 1.000× | 8 |
+| [Quality 2](q2.md) | 1.020× | 1.000× | 8 |
+| [Quality 5](q5.md) | 1.017× | 1.000× | 8 |
+| [Quality 6](q6.md) | 1.008× | 1.000× | 8 |
+| [Quality 7](q7.md) | 1.004× | 1.000× | 8 |
 
 ## [Quality 9](q9.md)
 
@@ -39,29 +39,29 @@ Qualities are ordered by mbrotli median speed / C, highest first. Burli supports
 
 ![Quality 0: median across all datasets](charts/q0-summary.svg)
 
-## [Quality 4](q4.md)
-
-![Quality 4: median across all datasets](charts/q4-summary.svg)
-
 ## [Quality 10](q10.md)
 
 ![Quality 10: median across all datasets](charts/q10-summary.svg)
 
-## [Quality 3](q3.md)
+## [Quality 4](q4.md)
 
-![Quality 3: median across all datasets](charts/q3-summary.svg)
-
-## [Quality 2](q2.md)
-
-![Quality 2: median across all datasets](charts/q2-summary.svg)
+![Quality 4: median across all datasets](charts/q4-summary.svg)
 
 ## [Quality 1](q1.md)
 
 ![Quality 1: median across all datasets](charts/q1-summary.svg)
 
+## [Quality 3](q3.md)
+
+![Quality 3: median across all datasets](charts/q3-summary.svg)
+
 ## [Quality 8](q8.md)
 
 ![Quality 8: median across all datasets](charts/q8-summary.svg)
+
+## [Quality 2](q2.md)
+
+![Quality 2: median across all datasets](charts/q2-summary.svg)
 
 ## [Quality 5](q5.md)
 

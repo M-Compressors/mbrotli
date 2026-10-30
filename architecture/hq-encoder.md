@@ -469,6 +469,13 @@ A merge adds the absorbed histogram into the survivor through `split_at_mut`,
 since pairs are always ordered `idx1 < idx2`, and remapping adds every input
 histogram into its cluster straight from the borrowed input.
 
+`HistogramPair` is `#[repr(C)]`, laid out in declaration order as the
+reference's struct is, because the queue compaction after a merge copies whole
+pairs. `population_cost` finds the first five used symbols, which decide its
+closed forms, through `first_used_symbols`: it skips each block of sixteen
+unused counts with one combined test instead of a branch per symbol, which
+matters for the sparse histograms clustering prices.
+
 ```mermaid
 flowchart LR
     Pair["candidate pair idx1 < idx2"] --> Sum["tmp.set_sum(out[idx1], out[idx2])"]

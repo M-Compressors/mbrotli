@@ -46,7 +46,7 @@ use super::huffman::{
     HuffmanNode, build_and_store_huffman_tree_fast, convert_bit_depths_to_symbols,
     create_huffman_tree, store_huffman_tree,
 };
-use super::match_len::{current_window, load_u64_le, match_len_at};
+use super::match_len::{current_window, load_u64_le, match_len_at_outlined};
 use super::tables::CMD_HISTO_SEED;
 use super::workspace::OnePassArena;
 
@@ -468,7 +468,7 @@ fn compress_fragment_impl<
                 // have to be emitted as literals.
                 let base = ip;
                 let matched = Q0_MIN_MATCH
-                    + match_len_at(
+                    + match_len_at_outlined(
                         simd,
                         data,
                         candidate + Q0_MIN_MATCH,
@@ -539,7 +539,7 @@ fn compress_fragment_impl<
                     // Another five byte match, with no literals in between.
                     let base = ip;
                     let matched = Q0_MIN_MATCH
-                        + match_len_at(
+                        + match_len_at_outlined(
                             simd,
                             data,
                             candidate + Q0_MIN_MATCH,

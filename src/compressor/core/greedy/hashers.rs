@@ -1157,13 +1157,22 @@ const COMPACT_INPUT_LIMIT: usize = 1024;
 /// usually reached its long copy before it is first judged.
 const CHECKPOINT_INTERVAL: usize = 1 << 14;
 
-/// Slots a starter block holds; a bucket's fifth store grows it to full depth.
+/// Slots a starter block holds; a bucket's seventeenth store grows it to
+/// full depth.
 ///
 /// Quality nine keeps two hundred and fifty-six positions per bucket, a
 /// kilobyte each, and a short input activates a bucket for almost every
 /// position it hashes. Starting small keeps that input from zeroing a
-/// mebibyte it never reads.
-const STARTER_SLOTS: usize = 4;
+/// mebibyte it never reads. Sixteen slots are one cache line: four grew
+/// most buckets of ordinary input into full blocks, whose allocation and
+/// copy dominated short structured inputs (64 KiB of binary at qualities
+/// seven to nine spent 1.1 to 1.5 times as long), while a starter still
+/// costs a sixteenth of a quality-nine block. It may not exceed the
+/// shallowest bucket depth, sixteen slots at quality five.
+const STARTER_SLOTS: usize = 16;
+
+// Starters fill a block's top slots and index them with a mask.
+const _: () = assert!(STARTER_SLOTS.is_power_of_two() && STARTER_SLOTS <= 16);
 
 /// Bits of a sparse entry holding the wrapping store counter.
 const COUNT_BITS: u32 = 16;
@@ -2022,9 +2031,23 @@ impl<const BUCKETS: usize, const BLOCK: usize> SparseLayout<BUCKETS, BLOCK> {
     /// Stores `ix` with `tag` into `key` of the sparse table.
     #[inline(always)]
     fn push(&mut self, key: usize, ix: u32, tag: u8, size_hint: usize) {
+        self.stores += 1;
+        self.place(key, ix, tag, size_hint);
+    }
+
+    /// [`Self::push`] without counting the store, for a caller that counts
+    /// a whole range at once.
+    ///
+    /// The counter lives behind the same reference as the pools the store
+    /// writes, so the compiler cannot keep it in a register across them;
+    /// counted per store, its read-modify-write in memory chains every
+    /// store of a range to the one before.
+    #[inline(always)]
+    fn place(&mut self, key: usize, ix: u32, tag: u8, size_hint: usize) {
         let key = key & (BUCKETS - 1);
         let (count, offset) = self.decode_entry(self.entries[key]);
-        self.push_found(key, count, offset, ix, tag, size_hint);
+        let offset = self.push_block(count, offset, ix, tag, size_hint);
+        self.entries[key] = self.encode_entry(count.wrapping_add(1), offset);
     }
 
     /// Stores `ix` with `tag` into `key` of the sparse table, whose entry
@@ -2980,8 +3003,11 @@ impl<const HASH64: bool, const BUCKETS: usize, const BLOCK: usize> MatchRun
 
     fn store_range(&mut self, data: &[u8], mask: usize, start: usize, end: usize) {
         for ix in start..end {
-            self.store(data, mask, ix);
+            let hash = hash_with_tag::<HASH64, BUCKETS>(data, ix & mask);
+            self.layout
+                .place(hash >> 8, ix as u32, hash as u8, self.size_hint);
         }
+        self.layout.stores += end.saturating_sub(start);
     }
 
     #[inline(always)]
@@ -4697,11 +4723,14 @@ mod tests {
             let capacity = if enough_capacity { 64 } else { 1 };
             layout.blocks = Vec::with_capacity(capacity);
             layout.blocks.push([123; BLOCK]);
+            // One starter, so even a one-block pool is at least as large.
+            layout.starters = Vec::with_capacity(1);
             layout.starters.push([456; STARTER_SLOTS]);
             let tagged = BLOCK <= 32;
             if tagged {
                 layout.block_tags = Vec::with_capacity(capacity);
                 layout.block_tags.push([7; BLOCK]);
+                layout.starter_tags = Vec::with_capacity(1);
                 layout.starter_tags.push([8; STARTER_SLOTS]);
             }
             let positions = layout.blocks.as_ptr().cast::<u32>();
@@ -5390,23 +5419,28 @@ mod tests {
             let Layout::Sparse(layout) = &mut matcher.layout else {
                 panic!("sparse layout")
             };
+            // One store past a full starter grows it into a full block.
+            const STORES: usize = STARTER_SLOTS + 1;
             for key in 0..1030 {
-                for store in 0..5 {
-                    layout.push(key, (key * 5 + store) as u32, store as u8, 1 << 16);
+                for store in 0..STORES {
+                    layout.push(key, (key * STORES + store) as u32, store as u8, 1 << 16);
                 }
             }
             for key in 0..1030 {
                 let entry = layout.entries[key];
                 let (count, offset) = layout.decode_entry(entry);
-                assert_eq!(count, 5);
+                assert_eq!(usize::from(count), STORES);
                 let Some(BlockRef::Full(index)) = SparseLayout::<{ 1 << 14 }, BLOCK>::block(offset)
                 else {
-                    panic!("five stores promote a starter");
+                    panic!("a store past a full starter promotes it");
                 };
-                for (age, &position) in layout.blocks[index][BLOCK - 5..].iter().enumerate() {
-                    assert_eq!(position, (key * 5 + 4 - age) as u32);
+                for (age, &position) in layout.blocks[index][BLOCK - STORES..].iter().enumerate() {
+                    assert_eq!(position, (key * STORES + STORES - 1 - age) as u32);
                     if BucketMatcher::<false, { 1 << 14 }, BLOCK, SLOTS>::TAGGED {
-                        assert_eq!(layout.block_tags[index][BLOCK - 5 + age], (4 - age) as u8);
+                        assert_eq!(
+                            layout.block_tags[index][BLOCK - STORES + age],
+                            (STORES - 1 - age) as u8
+                        );
                     }
                 }
             }

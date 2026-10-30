@@ -1,42 +1,42 @@
-# Compression comparison — 2026-10-29
+# Compression comparison — 2026-10-30
 
 [Benchmark index](README.md) · [Quality pages](encoders/README.md) · [CSV](encoder-comparison.csv)
 
-The complete **432-case** run `enc-2026-10-29-amd` compares Google C Brotli 1.2.0,
-the optimized local mbrotli 0.5.17 checkout, Rust brotli 9.0.0, SIMD Brotli 10.0.1
+The complete **432-case** run `enc-2026-10-30-amd` compares Google C Brotli 1.2.0,
+the optimized local mbrotli 0.5.19 checkout, Rust brotli 9.0.0, SIMD Brotli 10.0.1
 and Burli 0.3.3. Source and executable identities are in the
 [environment record](encoder-comparison-environment.json); the matching
-[size manifest](encoder-comparison-2026-10-29/sizes.csv) is retained with this run.
+[size manifest](encoder-comparison-2026-10-30/sizes.csv) is retained with this run.
 
 ## Final measurements
 
 ![Median compression speed and size relative to C](encoders/charts/overview.svg)
 
 Across all 96 matching corpus/quality pairs, mbrotli's median C-time/mbrotli-time
-ratio is **1.146×**. Its mean is lower than C in **68/96** cases
-and lower than every supported peer in **54/96**. In **64/96** cases,
+ratio is **1.099×**. Its mean is lower than C in **67/96** cases
+and lower than every supported peer in **54/96**. In **66/96** cases,
 mbrotli's upper 95% mean-time bound is below C's lower bound; the corresponding
-count against every peer is **50/96**. These counts describe this sweep,
+count against every peer is **53/96**. These counts describe this sweep,
 not a universal or workload-weighted performance guarantee.
 
-mbrotli is above C at **10/12** per-quality corpus medians. Each median gives
+mbrotli is above C at **12/12** per-quality corpus medians. Each median gives
 the eight datasets equal weight, including empty and tiny input. It is computed
 from per-dataset C mean time / library mean time, not from median sample times.
 
 | Quality | Google C | mbrotli | Rust brotli | SIMD Brotli | Burli | mbrotli output / C |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| [q0](encoders/q0.md) | 1.000× | 1.377× | 0.092× | 0.099× | 1.998× | 1.000× |
-| [q1](encoders/q1.md) | 1.000× | 1.111× | 0.111× | 0.145× | 0.825× | 1.000× |
-| [q2](encoders/q2.md) | 1.000× | 1.191× | 0.361× | 0.343× | 0.851× | 1.000× |
-| [q3](encoders/q3.md) | 1.000× | 1.225× | 0.427× | 0.420× | 0.985× | 1.000× |
-| [q4](encoders/q4.md) | 1.000× | 1.306× | 0.521× | 0.479× | 1.276× | 1.000× |
-| [q5](encoders/q5.md) | 1.000× | 1.020× | 0.431× | 0.351× | 0.937× | 1.000× |
-| [q6](encoders/q6.md) | 1.000× | 0.996× | 0.411× | 0.340× | — | 1.000× |
-| [q7](encoders/q7.md) | 1.000× | 0.978× | 0.360× | 0.330× | — | 1.000× |
-| [q8](encoders/q8.md) | 1.000× | 1.030× | 0.295× | 0.282× | — | 1.000× |
-| [q9](encoders/q9.md) | 1.000× | 4.248× | 0.836× | 1.652× | — | 1.000× |
-| [q10](encoders/q10.md) | 1.000× | 1.255× | 0.835× | 0.898× | — | 1.000× |
-| [q11](encoders/q11.md) | 1.000× | 1.516× | 0.826× | 0.926× | — | 1.000× |
+| [q0](encoders/q0.md) | 1.000× | 1.349× | 0.090× | 0.100× | 2.011× | 1.000× |
+| [q1](encoders/q1.md) | 1.000× | 1.123× | 0.107× | 0.141× | 0.825× | 1.000× |
+| [q2](encoders/q2.md) | 1.000× | 1.020× | 0.355× | 0.336× | 0.793× | 1.000× |
+| [q3](encoders/q3.md) | 1.000× | 1.089× | 0.409× | 0.401× | 0.952× | 1.000× |
+| [q4](encoders/q4.md) | 1.000× | 1.183× | 0.529× | 0.488× | 1.201× | 1.000× |
+| [q5](encoders/q5.md) | 1.000× | 1.017× | 0.442× | 0.355× | 0.942× | 1.000× |
+| [q6](encoders/q6.md) | 1.000× | 1.008× | 0.404× | 0.344× | — | 1.000× |
+| [q7](encoders/q7.md) | 1.000× | 1.004× | 0.360× | 0.331× | — | 1.000× |
+| [q8](encoders/q8.md) | 1.000× | 1.022× | 0.291× | 0.285× | — | 1.000× |
+| [q9](encoders/q9.md) | 1.000× | 4.323× | 0.828× | 1.681× | — | 1.000× |
+| [q10](encoders/q10.md) | 1.000× | 1.243× | 0.839× | 0.899× | — | 1.000× |
+| [q11](encoders/q11.md) | 1.000× | 1.493× | 0.834× | 0.906× | — | 1.000× |
 
 mbrotli and C have equal compressed lengths in **96/96** matching cases.
 This suite validates round trips through C, not compressed byte identity.
@@ -64,8 +64,8 @@ at 1 MiB, structured 64 KiB binary, deterministic random 64 KiB/1 MiB and repeat
 
 ```sh
 cargo bench --manifest-path benchmarks/comparison/Cargo.toml --bench implementations --locked --no-run
-taskset -c 1 cargo bench --manifest-path benchmarks/comparison/Cargo.toml --bench implementations --locked -- --sample-size 20 --warm-up-time 1 --measurement-time 3 --noplot --save-baseline enc-2026-10-29-amd
-python3 benchmarks/comparison/report.py --baseline enc-2026-10-29-amd --csv docs/benchmarks/encoder-comparison.csv
+taskset -c 1 cargo bench --manifest-path benchmarks/comparison/Cargo.toml --bench implementations --locked -- --sample-size 20 --warm-up-time 1 --measurement-time 3 --noplot --save-baseline enc-2026-10-30-amd
+python3 benchmarks/comparison/report.py --baseline enc-2026-10-30-amd --csv docs/benchmarks/encoder-comparison.csv
 ```
 
 Use a fresh baseline name for a new run. The measured run used the frozen
@@ -82,3 +82,6 @@ Equal corpus weight is not a production workload distribution. These results
 cover cold serial APIs; streaming, retained workspace, parallel execution and
 dictionaries require their separate API benchmarks. Earlier Intel and intermediate
 AMD sweeps are not paired before/after controls for this measured source.
+Against the 2026-10-29 sweep, C itself ran 5–22% faster on 64 KiB binary and
+random input at q2–q4 while mbrotli moved by at most 2%, which accounts for
+most of the lower overall median.

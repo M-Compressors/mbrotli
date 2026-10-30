@@ -1,17 +1,17 @@
-# Decompression comparison — 2026-10-29
+# Decompression comparison — 2026-10-30
 
 [Benchmark index](README.md) · [Quality pages](decoders/README.md) · [CSV](decoder-comparison.csv)
 
-The complete **384-case** run `dec-2026-10-29-amd` compares Google C Brotli 1.2.0,
-the local mbrotli 0.5.17 checkout, Rust brotli 9.0.0 and Burli 0.3.3. All four
+The complete **384-case** run `dec-2026-10-30-amd` compares Google C Brotli 1.2.0,
+the local mbrotli 0.5.19 checkout, Rust brotli 9.0.0 and Burli 0.3.3. All four
 restore identical C-produced streams at source qualities q0–q11, generic mode
 and window 22. SIMD Brotli re-exports the Rust Brotli decoder project and is omitted.
 
-Across 96 corpus/quality pairs, mbrotli's median speed is **2.581× C**
-and **1.001× Burli**. Its mean latency is lower than C in **78/96**
+Across 96 corpus/quality pairs, mbrotli's median speed is **2.588× C**
+and **1.006× Burli**. Its mean latency is lower than C in **80/96**
 cases and lower than Burli in **53/96**. Its upper 95% mean-time bound is
-below the peer's lower bound in **78/96** C comparisons and
-**45/96** Burli comparisons. These are sweep counts, not universal leads.
+below the peer's lower bound in **80/96** C comparisons and
+**50/96** Burli comparisons. These are sweep counts, not universal leads.
 
 ## Final measurements
 
@@ -19,18 +19,18 @@ below the peer's lower bound in **78/96** C comparisons and
 
 | Source quality | Google C | mbrotli | Rust brotli | Burli | mbrotli / Burli |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| [q0](decoders/q0.md) | 1.000× | 2.983× | 0.405× | 2.799× | 1.004× |
-| [q1](decoders/q1.md) | 1.000× | 3.130× | 0.405× | 3.116× | 1.005× |
-| [q2](decoders/q2.md) | 1.000× | 3.211× | 0.496× | 3.328× | 1.024× |
-| [q3](decoders/q3.md) | 1.000× | 2.531× | 0.510× | 2.523× | 0.980× |
-| [q4](decoders/q4.md) | 1.000× | 3.309× | 0.535× | 3.397× | 1.006× |
-| [q5](decoders/q5.md) | 1.000× | 2.551× | 0.541× | 2.538× | 0.975× |
-| [q6](decoders/q6.md) | 1.000× | 2.540× | 0.537× | 2.519× | 0.974× |
-| [q7](decoders/q7.md) | 1.000× | 2.549× | 0.537× | 2.534× | 0.976× |
-| [q8](decoders/q8.md) | 1.000× | 2.490× | 0.537× | 2.477× | 0.974× |
-| [q9](decoders/q9.md) | 1.000× | 2.488× | 0.535× | 2.487× | 0.974× |
-| [q10](decoders/q10.md) | 1.000× | 2.677× | 0.553× | 2.664× | 1.005× |
-| [q11](decoders/q11.md) | 1.000× | 2.705× | 0.550× | 2.659× | 1.017× |
+| [q0](decoders/q0.md) | 1.000× | 3.059× | 0.446× | 2.873× | 1.036× |
+| [q1](decoders/q1.md) | 1.000× | 3.196× | 0.445× | 3.129× | 1.020× |
+| [q2](decoders/q2.md) | 1.000× | 3.325× | 0.570× | 3.362× | 1.056× |
+| [q3](decoders/q3.md) | 1.000× | 2.548× | 0.563× | 2.536× | 0.986× |
+| [q4](decoders/q4.md) | 1.000× | 3.461× | 0.574× | 3.407× | 1.003× |
+| [q5](decoders/q5.md) | 1.000× | 2.572× | 0.574× | 2.555× | 0.982× |
+| [q6](decoders/q6.md) | 1.000× | 2.568× | 0.569× | 2.545× | 0.982× |
+| [q7](decoders/q7.md) | 1.000× | 2.574× | 0.562× | 2.511× | 0.982× |
+| [q8](decoders/q8.md) | 1.000× | 2.547× | 0.572× | 2.533× | 0.988× |
+| [q9](decoders/q9.md) | 1.000× | 2.553× | 0.569× | 2.536× | 0.986× |
+| [q10](decoders/q10.md) | 1.000× | 2.770× | 0.581× | 2.632× | 1.051× |
+| [q11](decoders/q11.md) | 1.000× | 2.847× | 0.584× | 2.662× | 1.067× |
 
 Library columns are medians of eight per-dataset C-time/library-time ratios.
 The last column is the median of direct Burli-time/mbrotli-time ratios; it does
@@ -60,18 +60,21 @@ every source quality. No decoder retains state between iterations.
 
 The [environment record](decoder-comparison-environment.json) identifies the
 source hashes, lockfile, measured executable, commands and CSV. The matching
-[size manifest](decoder-comparison-2026-10-29/sizes.csv) records the shared compressed/restored lengths.
+[size manifest](decoder-comparison-2026-10-30/sizes.csv) records the shared compressed/restored lengths.
 This is one sweep on a virtual host with fixed implementation order.
 Affinity does not control clocks, thermals, allocator effects or host scheduling;
 sampling intervals do not cover every environmental bias. The measured cold APIs
 do not cover retained state, streaming, dictionaries or streams from other producers.
+mbrotli remains 3–8% slower than C on Alice at source qualities other than q10
+(14% at q8) and 11–24% slower on tiny text at q5–q9, where fixed setup cost
+dominates a 44-byte output.
 
 ## Reproduce
 
 ```sh
 cargo bench --manifest-path benchmarks/comparison/Cargo.toml --bench decoders --locked --no-run
-taskset -c 1 cargo bench --manifest-path benchmarks/comparison/Cargo.toml --bench decoders --locked -- --sample-size 20 --warm-up-time 1 --measurement-time 3 --noplot --save-baseline dec-2026-10-29-amd
-python3 benchmarks/comparison/report.py --decoding --baseline dec-2026-10-29-amd --csv docs/benchmarks/decoder-comparison.csv
+taskset -c 1 cargo bench --manifest-path benchmarks/comparison/Cargo.toml --bench decoders --locked -- --sample-size 20 --warm-up-time 1 --measurement-time 3 --noplot --save-baseline dec-2026-10-30-amd
+python3 benchmarks/comparison/report.py --decoding --baseline dec-2026-10-30-amd --csv docs/benchmarks/decoder-comparison.csv
 ```
 
 Use a fresh baseline for a new run and archive its size manifest immediately.

@@ -69,9 +69,9 @@ recorded optimized checkout. Results vary by workload and quality.
 
 ![Compression speed and output size relative to Google C Brotli across qualities 0–11][bench-chart]
 
-**Recorded 2026-10-29 · AMD Ryzen 9 7950X VDS · Linux · window 22 · cold serial APIs.**
-Across all 96 corpus/quality pairs, mbrotli's median speed / C is **1.146×**,
-with lower mean latency in **68/96** cases. Each quality bar takes the
+**Recorded 2026-10-30 · AMD Ryzen 9 7950X VDS · Linux · window 22 · cold serial APIs.**
+Across all 96 corpus/quality pairs, mbrotli's median speed / C is **1.099×**,
+with lower mean latency in **67/96** cases. Each quality bar takes the
 median of eight equally weighted per-dataset ratios, including empty and tiny
 inputs. A speed ratio above **1×** is faster; a size ratio below **1×** is smaller.
 Point counts and corpus medians do not establish statistical significance.
@@ -85,14 +85,14 @@ Results apply to the [recorded source and machine][bench-qualities].
 
 ![Decompression speed relative to Google C Brotli by source quality][decoder-bench-chart]
 
-**Recorded 2026-10-29 · AMD Ryzen 9 7950X VDS · Linux · window 22 · cold serial APIs.**
+**Recorded 2026-10-30 · AMD Ryzen 9 7950X VDS · Linux · window 22 · cold serial APIs.**
 Google C, mbrotli, Rust brotli and Burli restore identical C-generated streams
 at source qualities **0–11** in all **384 cases**. SIMD Brotli shares the Rust
 Brotli decoder project and is omitted; Burli decodes every source quality.
 
-Across 96 corpus/quality pairs, mbrotli's median speed is **2.581× C**
-and **1.001× Burli**. Per-quality C-relative medians range from
-**2.488× to 3.309×**. These are medians of direct per-dataset
+Across 96 corpus/quality pairs, mbrotli's median speed is **2.588× C**
+and **1.006× Burli**. Per-quality C-relative medians range from
+**2.547× to 3.461×**. These are medians of direct per-dataset
 time ratios with equal input weight. Throughput counts restored bytes.
 Construction, allocation, decode and disposal are timed; C receives the known
 output capacity and Rust Brotli includes its native 4 KiB I/O adapter.
@@ -105,7 +105,7 @@ Requires **Rust 1.89 or later**. Add it to your project:
 
 ```toml
 [dependencies]
-mbrotli = "0.5.18"
+mbrotli = "0.5.19"
 ```
 
 ```rust
@@ -412,7 +412,7 @@ features to select one codec or use `no_std` with `alloc`. For an alloc-backed d
 
 ```toml
 [dependencies]
-mbrotli = { version = "0.5.18", default-features = false, features = ["no_std", "decompression"] }
+mbrotli = { version = "0.5.19", default-features = false, features = ["no_std", "decompression"] }
 ```
 
 Add `"compression"` for both codecs, or use `"std"` instead of `"no_std"` for standard

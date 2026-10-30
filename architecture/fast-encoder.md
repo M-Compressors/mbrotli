@@ -493,7 +493,10 @@ first word before any window is cut: it bounds the candidate window once,
 loads eight bytes from each side, and answers a difference inside them with a
 trailing-zero count — the reference's whole scan for the short matches that
 dominate. Only a match running through the whole word pays for the slicing of
-the staged pipeline, which then continues from byte eight.
+the staged pipeline, which then continues from byte eight. q0 calls
+`match_len_at_outlined`, which keeps that first-word compare inline and calls
+the vector tail out of line, so q0's fragment loop does not carry the long-scan
+code and its registers; q1 and the greedy scans keep the fully inlined form.
 
 ### 7.1. The stride invariant
 

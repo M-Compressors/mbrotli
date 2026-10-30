@@ -11,7 +11,9 @@ A Huffman symbol consumes at most 15 bits, so 45 buffered bits suffice. Whole-wo
 at least 56 bits; it reads only a checked eight-byte slice inside the input
 budget. The batch is bounded by the pending literal count, literal block count,
 output space and ring end. It cannot cross a block switch or wrap. Contextual
-literals continue using a context-dependent loop.
+literals continue using a context-dependent loop, which reads each literal's
+code from the block type's 64 per-context roots, resolved when the block type
+is set, so it pays no bounds check on the tree index.
 
 ```mermaid
 flowchart TD
