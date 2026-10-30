@@ -1,7 +1,7 @@
 # C ABI (`mbrotli-ffi`)
 
 `mbrotli-ffi` is a separate workspace crate that exports mbrotli's one-shot
-codecs to C. It builds `libmbrotli_ffi` as a `cdylib` and a `staticlib` (plus
+codecs and owned streaming sessions to C. It builds `libmbrotli_ffi` as a `cdylib` and a `staticlib` (plus
 an `rlib` for its Rust tests) and ships the declarations in
 `mbrotli-ffi/include/mbrotli.h`. It depends on `mbrotli` with `std`,
 `compression` and `decompression`, and adds no codec logic of its own beyond
@@ -16,6 +16,8 @@ graph TD
     Root --> Core[private mbrotli_ffi::core]
     Core --> Validate[LengthSlot / Region / Arguments: pointer validation]
     Core --> Guard[guarded: catch_unwind]
+    Core --> Sessions[private core::sessions: owning handles and poison guard]
+    Sessions --> Owned[EncoderSessionOwned / DecoderSessionOwned]
     Core --> Codec[compress / decompress / compress_bound]
     Codec --> Compressor[mbrotli::Compressor::compress_to_uninit]
     Codec --> Decompressor[mbrotli::Decompressor::decompress_to_uninit]
@@ -25,7 +27,7 @@ graph TD
 ```
 
 The crate root owns only the ABI surface: the `#[repr(C)]` `MbrotliResult`
-enum and three `#[unsafe(no_mangle)] extern "C"` functions with their contract
+enum, opaque session types, operation constants and `#[unsafe(no_mangle)] extern "C"` functions with their contract
 documentation. Everything else is in the private `core` module, which owns the
 one `unsafe` pointer-to-slice conversion (the output becomes
 `&mut [MaybeUninit<u8>]`, so a C buffer need not be initialized), the panic guard, parameter
@@ -37,7 +39,7 @@ this crate, each with a `// SAFETY:` comment.
 
 | C | Rust | Behaviour |
 | --- | --- | --- |
-| `mbrotli_result` | `MbrotliResult` (`#[repr(C)]`, `c_int`-sized) | `MBROTLI_OK = 0`, `MBROTLI_INVALID_PARAMETER = 1`, `MBROTLI_OUTPUT_TOO_SMALL = 2`, `MBROTLI_ERROR = 3` |
+| `mbrotli_result` | `MbrotliResult` (`#[repr(C)]`, `c_int`-sized) | `MBROTLI_OK = 0`, `MBROTLI_INVALID_PARAMETER = 1`, `MBROTLI_OUTPUT_TOO_SMALL = 2`, `MBROTLI_ERROR = 3`; streaming adds `NEEDS_INPUT = 4`, `NEEDS_OUTPUT = 5`, `FINISHED = 6` |
 | `mbrotli_compress` | `unsafe extern "C" fn` | One complete stream; `quality` `0..=11`, `lgwin` `10..=24` (RFC 7932 windows only) |
 | `mbrotli_decompress` | `unsafe extern "C" fn` | Exactly one complete stream; standard and RFC 9841 large windows |
 | `mbrotli_compress_bound` | safe `extern "C" fn` | Google's `BrotliEncoderMaxCompressedSize`; `0` on overflow |
@@ -81,8 +83,8 @@ sequenceDiagram
     Core-->>C: MbrotliResult
 ```
 
-Each call builds its codec, runs it and drops it, so no state is shared between
-calls or threads. SIMD dispatch is mbrotli's: the backend is detected once per
+Each one-shot call builds its codec, runs it and drops it, so no state is shared
+between one-shot calls or threads. SIMD dispatch is mbrotli's: the backend is detected once per
 codec construction, which happens once per call here, never per block.
 
 ## Compression decision logic
@@ -225,13 +227,146 @@ the status code crosses the ABI.
 - `mbrotli-ffi/benches/one_shot.rs`: both one-shot APIs on identical inputs,
   validated for identity and round-trip before timing.
 
+## Streaming sessions
+
+`MbrotliEncoderSession` / `MbrotliDecoderSession` are opaque C handles. Their
+private allocation is `core::sessions::Handle<T>`: an owned Rust session and a
+poison flag. `Handle<T>` deliberately has Rust layout and stores the session
+inline. Its layout is **not** the C ABI: the header declares incomplete struct
+types, every exported signature passes pointers, and only this library
+allocates, accesses and destroys the allocation. Callers never need its size
+or alignment. Changing the Rust session, field order or handle allocation size
+therefore does not change the C ABI. A second `Box<T>` or `repr(C)` on the
+private storage would add no compatibility guarantee. The public Rust opaque
+marker structs also do not describe the private allocation and must never be
+instantiated or passed by value. Handles belong to the library instance that
+created them; this contract does not support moving live allocations between
+separately loaded library versions.
+
+There are no borrowed codecs, self-references or caller buffers
+stored in the wrapper. `create` returns null on invalid parameters or failure;
+`destroy` drops the allocation exactly once, and accepts null. Independent
+handles may run concurrently; each individual handle requires exclusive access.
+
+| C suffix (after `mbrotli_encoder_session_` / `mbrotli_decoder_session_`) | Contract |
+| --- | --- |
+| `create` | Encoder takes quality/window, decoder uses defaults; input/output sizes unknown. |
+| `process` | Takes input, in/out input count, output, in/out output count and integer operation. |
+| `flush` | Empty-input encoder Flush or decoder Process; no EOF. |
+| `finish` | Empty-input Finish, valid once the final offered input is fully consumed. |
+| `reinit` | Abandons current stream and restarts with default stream settings and retained workspace. |
+| `destroy` | Releases even unfinished or failed sessions. |
+
+`MBROTLI_PROCESS=0`, `MBROTLI_FLUSH=1`, `MBROTLI_FINISH=2` are passed as `int`
+so unknown discriminants can be rejected safely. Decoder process rejects Flush;
+its separate flush function uses Process. Both process functions return
+`MBROTLI_NEEDS_INPUT=4`, `MBROTLI_NEEDS_OUTPUT=5`, or `MBROTLI_FINISHED=6` on
+success. Existing one-shot status discriminants 0–3 remain unchanged.
+
+```mermaid
+sequenceDiagram
+    participant C as C caller
+    participant S as core::sessions
+    participant R as Owned Rust session
+    C->>S: create(configuration)
+    S->>R: new + into_session(default stream)
+    S-->>C: opaque owning pointer
+    C->>S: process(handle, buffers, counts, operation)
+    S->>S: validate handle, slots and all pairwise regions
+    S->>S: mark poisoned, enter catch_unwind
+    S->>R: process_uninit(input, output, operation)
+    R-->>S: progress or failure
+    S->>S: clear poison only on success; publish exact counts
+    S-->>C: NeedsInput / NeedsOutput / Finished / Error
+    C->>S: reinit or destroy
+    S->>R: reinit(default stream) or drop
+```
+
+On entry counts describe available input and output capacity; on return they
+are consumed/produced counts for that call. Input is advanced by consumed;
+NeedsOutput requires another output buffer even when input is empty. The
+Finish operation must be retried with its exact unconsumed suffix. Encoder
+Flush ends with NeedsInput and permits more input afterward. The default
+single-member decoder leaves protocol suffix bytes unconsumed on Finished.
+Streaming encoding follows the Rust session API, without one-shot empty-input
+normalization or a stored-stream fallback to enforce the one-shot bound.
+
+All three output-taking functions use `process_uninit`: a C output buffer need
+not be initialized. Success initializes exactly the reported prefix and never
+writes beyond it. Decoder codec errors also report exact progress and preserve
+that guarantee; encoder errors and panics return zero counts with unspecified
+output. Null/misaligned arguments, unknown operations, impossible lengths and
+region overlaps return InvalidParameter without changing counts or state.
+Dangling pointers, undersized allocations, wrong-kind handles and concurrent
+access remain caller violations. Validation precedes all slice/handle references.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Active: create
+    Active --> Active: process / flush / NeedsOutput
+    Active --> Finished: Finished
+    Finished --> Finished: idempotent process/finish
+    Active --> Poisoned: codec error or panic
+    Active --> Active: invalid arguments (no change)
+    Finished --> Active: reinit succeeds
+    Poisoned --> Active: reinit succeeds
+    Active --> Active: reinit succeeds
+    Active --> Poisoned: reinit fails
+    Poisoned --> Poisoned: process returns Error
+    Active --> [*]: destroy
+    Finished --> [*]: destroy
+    Poisoned --> [*]: destroy
+```
+
+The guard sets poison before invoking codec code and retains it on failure or
+panic. Reinit is guarded too and clears poison only after success. Destruction
+also catches unwinding. SIMD detection happens at codec construction and is
+retained across calls and reinitialization; no dispatch is added to inner loops.
+
+Verification: `tests/sessions.rs` exercises every exported session function with
+uninitialized output, tiny buffers, empty input, flush/finish, trailing input,
+invalid pointers/overlaps and reuse after failures. Private unit tests inject
+panics into construction, processing and reinitialization. These run under
+Miri and ASan via `scripts/check_simd_uninit.py` (shard 1, or `--ffi-only`). The
+existing AFL/libFuzzer `c_abi` body adds bounded session round trips and reuse.
+`benches/sessions.rs` compares q5/w22 streaming C calls with Google's encoder
+and decoder, with creation/destruction included, 4 KiB output chunks and
+validation outside timing; it reports compressed sizes alongside throughput.
+`examples/sessions.c` compiles and runs as C or C++, linking only the public
+header and library. An attempted `sizeof(mbrotli_encoder_session)` or
+`sizeof(mbrotli_decoder_session)` is rejected by C as an incomplete type.
+
+Focused verification commands (workspace root unless stated otherwise):
+
+```sh
+cargo test -p mbrotli-ffi --locked
+cargo llvm-cov -p mbrotli-ffi --lib --test sessions --locked
+python3 scripts/check_simd_uninit.py miri --ffi-only
+RUSTFLAGS=-Ctarget-cpu=x86-64-v3 CARGO_TARGET_DIR=target/miri-v3 \
+  python3 scripts/check_simd_uninit.py miri --ffi-only --target x86_64-apple-darwin
+python3 scripts/check_simd_uninit.py asan --ffi-only
+cargo bench -p mbrotli-ffi --bench sessions --locked
+# From fuzz/afl, after cargo afl build --release --bin c_abi:
+AFL_MAP_SIZE=1048576 AFL_SKIP_CPUFREQ=1 AFL_NO_AFFINITY=1 \
+  AFL_I_DONT_CARE_ABOUT_MISSING_CRASHES=1 \
+  cargo afl fuzz -i regressions/c_abi -o /tmp/mbrotli-c-sessions-afl \
+  -S smoke -V 30 -c - -- target/release/c_abi
+```
+
+The 1 MiB AFL coverage map fits the local macOS shared-memory limit without
+system tuning; the fuzzer still negotiates the instrumented target's map size.
+The initial ARM64 smoke run (AFL++ 4.40c, cargo-afl 0.18.2, Rust 1.99.1,
+non-experimental release target) executed 94,363 inputs with 99.93% stability,
+zero saved crashes and zero saved hangs. Generated reports and findings remain
+local artifacts.
+
 ## Known gaps
 
 - Large-window compression (`lgwin` 25–30, which `BrotliEncoderCompress`
   accepts) and compression modes other than generic are not exposed.
-- No streaming, dictionary or codec-reuse API: every call constructs its
-  codec, which costs about a quarter of a quality-9 compression of a 280 KiB
-  input compared with a reused `Compressor`.
+- Sessions expose default stream settings and reusable codec state, but no
+  dictionaries, input-size hints, decoder budgets, member modes or configuration
+  changes. Recreate a handle to change encoder quality or window.
 - On aarch64, clang contracts the C oracle's floating-point multiply-adds into
   FMA instructions, so Google's qualities 10–11 can differ from mbrotli on
   rare inputs; built with `-ffp-contract=off` the C library agrees. The tests

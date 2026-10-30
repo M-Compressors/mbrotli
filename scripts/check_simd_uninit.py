@@ -194,6 +194,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("tool", choices=["miri", "asan"])
     parser.add_argument("--target", default=host())
+    parser.add_argument("--ffi-only", action="store_true", help="run only C session uninitialized-memory tests")
     parser.add_argument("--jobs", type=int, default=os.cpu_count() or 1)
     parser.add_argument("--batch", type=int, default=4, help="tests per process")
     parser.add_argument("--shard", type=shard, default=(1, 1), help="K/N: run the K-th of N shards")
@@ -201,6 +202,21 @@ def main() -> None:
     args = parser.parse_args()
     env = environment(args.tool)
     start = time.monotonic()
+
+    # The FFI package has its own integration binary and private panic-guard tests.
+    # Run it on shard 1, or alone for a focused local validation.
+    if args.shard[0] == 1 or args.ffi_only:
+        for selection, prefix in [(["--test", "sessions"], ""),
+                                  (["--lib"], "core::sessions::tests::")]:
+            selection = ["-p", "mbrotli-ffi", *selection]
+            chosen = [name for name in runnable(args.tool, args.target, env, selection)
+                      if name.startswith(prefix)]
+            if not chosen:
+                sys.exit(f"no runnable C session tests match {selection} {prefix}")
+            subprocess.run(cargo(args.tool, args.target, [*selection, "--", "--exact", *chosen]),
+                           cwd=root, env=env, check=True)
+    if args.ffi_only:
+        return
 
     build = cargo(args.tool, args.target, ["--lib", "--no-run"])
     tests = TESTS[args.tool]

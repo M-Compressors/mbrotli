@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Add C encoder/decoder session handles in `mbrotli-ffi`, with create, process,
+  flush, finish, reinit and destroy functions. All session output supports
+  uninitialized buffers; decoder failures preserve exact partial progress.
+  Extend verification with lifecycle tests, Miri/ASan, fuzzing and streaming
+  comparisons against Google Brotli.
+
 ## [v0.5.18](https://github.com/M-Compressors/mbrotli/releases/tag/v0.5.18) - 2026-10-29
 
 - Show the current compression and decompression benchmarks in the README

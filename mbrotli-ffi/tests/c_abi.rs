@@ -471,18 +471,33 @@ fn concurrent_calls_do_not_interfere() {
 #[test]
 fn status_codes_match_the_c_header() {
     let header = include_str!("../include/mbrotli.h");
-    for (name, status) in [
-        ("MBROTLI_OK", MbrotliResult::Ok),
-        ("MBROTLI_INVALID_PARAMETER", MbrotliResult::InvalidParameter),
-        ("MBROTLI_OUTPUT_TOO_SMALL", MbrotliResult::OutputTooSmall),
-        ("MBROTLI_ERROR", MbrotliResult::Error),
+    for (name, status, value) in [
+        ("MBROTLI_OK", MbrotliResult::Ok, 0),
+        (
+            "MBROTLI_INVALID_PARAMETER",
+            MbrotliResult::InvalidParameter,
+            1,
+        ),
+        ("MBROTLI_OUTPUT_TOO_SMALL", MbrotliResult::OutputTooSmall, 2),
+        ("MBROTLI_ERROR", MbrotliResult::Error, 3),
+        ("MBROTLI_NEEDS_INPUT", MbrotliResult::NeedsInput, 4),
+        ("MBROTLI_NEEDS_OUTPUT", MbrotliResult::NeedsOutput, 5),
+        ("MBROTLI_FINISHED", MbrotliResult::Finished, 6),
     ] {
-        assert!(
-            header.contains(&format!("{name} = {}", status as c_int)),
-            "{name}"
-        );
+        assert_eq!(status as c_int, value, "stable ABI value: {name}");
+        assert!(header.contains(&format!("{name} = {value}")), "{name}");
+    }
+    use mbrotli_ffi::MbrotliOperation;
+    for (name, operation, value) in [
+        ("MBROTLI_PROCESS", MbrotliOperation::Process, 0),
+        ("MBROTLI_FLUSH", MbrotliOperation::Flush, 1),
+        ("MBROTLI_FINISH", MbrotliOperation::Finish, 2),
+    ] {
+        assert_eq!(operation as c_int, value, "stable ABI value: {name}");
+        assert!(header.contains(&format!("{name} = {value}")), "{name}");
     }
     assert_eq!(size_of::<MbrotliResult>(), size_of::<c_int>());
+    assert_eq!(size_of::<MbrotliOperation>(), size_of::<c_int>());
 }
 
 #[test]

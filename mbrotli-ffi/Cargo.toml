@@ -1,16 +1,16 @@
 [package]
 name = "mbrotli-ffi"
-version = "0.2.3"
+version = "0.2.4"
 edition = "2024"
 rust-version = "1.89"
 license = "MIT OR Apache-2.0"
-description = "C ABI for mbrotli: one-shot Brotli compression and decompression"
+description = "C ABI for mbrotli: one-shot and streaming Brotli compression and decompression"
 repository = "https://github.com/M-Compressors/mbrotli"
 homepage = "https://github.com/M-Compressors/mbrotli"
 readme = "README.md"
 keywords = ["brotli", "compression", "ffi", "c"]
 categories = ["compression", "external-ffi-bindings"]
-include = ["src/**", "include/**", "README.md", "LICENSE-MIT", "LICENSE-APACHE"]
+include = ["src/**", "include/**", "examples/**", "README.md", "LICENSE-MIT", "LICENSE-APACHE"]
 
 [lib]
 # `cdylib` and `staticlib` are what C links against; `rlib` lets the Rust
@@ -39,4 +39,8 @@ version = "0.8"
 
 [[bench]]
 name = "one_shot"
+harness = false
+
+[[bench]]
+name = "sessions"
 harness = false

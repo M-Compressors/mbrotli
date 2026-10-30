@@ -96,6 +96,8 @@ RUSTFLAGS=-Ctarget-cpu=x86-64-v3 CARGO_TARGET_DIR=target/miri-v3 \
   python3 scripts/check_simd_uninit.py miri --target x86_64-apple-darwin
 # AddressSanitizer, natively
 python3 scripts/check_simd_uninit.py asan
+# Only C session handles and uninitialized outputs (also included in shard 1)
+python3 scripts/check_simd_uninit.py miri --ffi-only
 ```
 
 - Miri reports runtime-detected CPU features as absent, so it only reaches

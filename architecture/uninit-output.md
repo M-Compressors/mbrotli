@@ -373,3 +373,18 @@ has been zeroed. See [C ABI](c-abi.md).
   `decompress_to_uninit`, `OperationState::process` has two one-shot callers
   and is no longer inlined into `decompress_to_slice`: about 90-116 more
   instructions per call (6 ns, measurable only on outputs of a few KiB).
+
+### C session destinations
+
+`mbrotli-ffi` encoder/decoder `process`, `flush` and `finish` all delegate to
+owned-session `process_uninit`. They never create an initialized slice over C
+output. See [C ABI sessions](c-abi.md#streaming-sessions) for count, error and
+pointer contracts.
+
+```mermaid
+graph LR
+    C[C process / flush / finish] --> V[core::sessions: validate regions]
+    V --> U[MaybeUninit output slice]
+    U --> O[owned session process_uninit]
+    O --> P[initialized prefix and exact progress]
+```

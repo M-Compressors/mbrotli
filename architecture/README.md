@@ -33,6 +33,7 @@ graph TD
     C[google-brotli-ffi] -. tests and benchmarks .-> Root
     CABI[mbrotli-ffi: C ABI crate] --> Root
     CABI --> CCore[private mbrotli_ffi::core]
+    CCore --> CSessions[core::sessions: opaque owning handles and panic guard]
 ```
 
 Public modules own ergonomic configuration and high-level errors. Private `core`
@@ -88,7 +89,7 @@ FFI do not appear in public signatures. Each codec compiles independently.
 
 | Specification | Scope |
 | --- | --- |
-| [C ABI](c-abi.md) | `mbrotli-ffi`: one-shot C functions, pointer validation, panic guard, byte identity with Google's one-shot API and status mapping. |
+| [C ABI](c-abi.md) | `mbrotli-ffi`: one-shot and reusable session C functions, uninitialized output, pointer validation, panic poisoning, progress counts and status mapping. |
 
 ## Development tools
 
