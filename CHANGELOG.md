@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## [v0.5.19](https://github.com/M-Compressors/mbrotli/releases/tag/v0.5.19) - 2026-10-30
+
 - Fix three CI failures left by the encoder and decoder refactor. The sparse
   promotion test sizes its starter pools to exactly the dense table again
   (raising `STARTER_SLOTS` to 16 made them four times larger, so boxing the
@@ -11,8 +13,6 @@
   longer place the slot on an aligned address and reach a Stacked Borrows
   violation in the test's own pointers. The Lean extraction is regenerated
   for `DistanceLayout::EMPTY`.
-
-## [v0.5.19](https://github.com/M-Compressors/mbrotli/releases/tag/v0.5.19) - 2026-10-30
 
 - Update the optional `hotpath` profiling dependency to 0.30.2.
 
