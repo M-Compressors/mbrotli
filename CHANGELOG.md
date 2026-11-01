@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+## [v0.5.20](https://github.com/M-Compressors/mbrotli/releases/tag/v0.5.20) - 2026-11-01
+
+- Fix a decoder history corruption found by ClusterFuzzLite. When a static
+  dictionary reference transforms to an empty word exactly as the output
+  reaches the end of a ring that is still smaller than the window, the
+  command loop stored its 16-byte word chunk at ring index 0 and overwrote the
+  oldest live history. A later copy then returned the wrong bytes. Streaming
+  with a small output buffer from a fresh decoder could trigger it; a decoder
+  whose ring had already grown could not. An empty word now writes nothing.
+  The reproducer is committed as a unit test and as a `decoder_session`
+  regression input.
+
+- Keep `encoder_session` fuzz inputs within libFuzzer's 25 s timeout. Its
+  flushing schedule now flushes at most 64 times, so q10/q11 no longer build a
+  meta-block for every 4-byte block of a large payload. The worst case dropped
+  from 31 s to 1.8 s under AddressSanitizer. The encoder's per-flush cost
+  matches C's.
+
+- Lower the daily ClusterFuzzLite batch fuzzing budget from 19800 s to 17400 s.
+  With 25 targets, about 45 s of overhead per target and a 28-minute build,
+  the job reached GitHub's six-hour limit and was cancelled.
+
 ## [v0.5.19](https://github.com/M-Compressors/mbrotli/releases/tag/v0.5.19) - 2026-10-30
 
 - Fix three CI failures left by the encoder and decoder refactor. The sparse

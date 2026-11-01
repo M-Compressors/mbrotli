@@ -122,6 +122,22 @@ macro_rules! decode_step {
 
 decode_step!(DecoderSession<'_, '_>, DecoderSessionOwned);
 
+/// Most flushes one flushing schedule of [`encoder_session`] issues.
+///
+/// Every flush closes a meta-block, and at qualities 10 and 11 each one pays
+/// for its own block split and histogram clustering. Flushing every 4-byte
+/// block of a 48 KiB payload took over 30 s per input under AddressSanitizer
+/// and libFuzzer's comparison tracing, past ClusterFuzzLite's 25 s timeout.
+const MAX_FLUSHES: usize = 64;
+
+/// Flushes every that-many-th block: the plan's choice of one to four, spread
+/// out so that `blocks` blocks see at most [`MAX_FLUSHES`] flushes.
+const fn flush_interval(plan: u8, blocks: usize) -> usize {
+    let chosen = (plan & 3) as usize + 1;
+    let spread = blocks.div_ceil(MAX_FLUSHES);
+    if chosen > spread { chosen } else { spread }
+}
+
 /// Whether call `call` of a schedule goes through `process_uninit`.
 const fn uninit_call(plan: u8, call: usize) -> bool {
     (plan >> (call % 8)) & 1 == 1
@@ -237,7 +253,8 @@ fn assert_encoder_stays_finished(session: &mut impl EncodeStep) {
 ///
 /// The last input byte is the plan: bit `n % 8` sends call `n` through
 /// `process_uninit`, and its low two bits choose how often the flushing
-/// schedule flushes. The rest is a [`decode_case`] input.
+/// schedule flushes, which is never more than [`MAX_FLUSHES`] times. The rest
+/// is a [`decode_case`] input.
 ///
 /// # Panics
 ///
@@ -275,7 +292,7 @@ pub fn encoder_session(ctx: &Context, input: &[u8]) {
     assert_encoder_stays_finished(&mut owned);
 
     // Flushes change the stream, identically for both shapes and methods.
-    let every = Some(usize::from(plan & 3) + 1);
+    let every = Some(flush_interval(plan, case.data.len().div_ceil(chunk)));
     let flushed = {
         let mut borrowed = compressor.start(case.stream).expect("a legal stream");
         drive_encoder(&mut borrowed, case.data, chunk, plan, every)

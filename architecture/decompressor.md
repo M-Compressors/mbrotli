@@ -423,7 +423,13 @@ dispatched backend's target features without a library call. They accept
 unaligned, initialized ring slices; if either window is short they leave the
 ring unchanged and the caller uses `copy_within` for the exact length. A
 static dictionary word of at most 32 bytes is written from the transform
-scratch the same way (`put_word`), with the same fifteen-byte bound. A 16-byte copy serves lengths 1–16; a
+scratch the same way (`put_word`), with the same fifteen-byte bound. A word
+that a transform reduces to nothing writes nothing: the loop moves on to the
+next command before `put_word`. Growth for a write happens only when the write
+extends past the ring, so an empty word grows nothing. When `position` equals
+the length of a ring still smaller than the window, `position & mask` is 0, and
+a chunk store there would overwrite the oldest live history instead of
+unwritten space. A 16-byte copy serves lengths 1–16; a
 32-byte copy serves lengths 17–32, so at most fifteen bytes ahead of actual
 output are overwritten. The ring's sixteen unreachable history slots make
 those extra writes unobservable. The snapshot is also correct when ring slots
@@ -442,6 +448,10 @@ flowchart TD
     Kind -->|Command / resumable Literals| Dispatch[dispatch stored Backend]
     Dispatch --> Fast[Specialized command loop]
     Fast --> Copy[copy16 / copy32 inside the backend's feature context]
+    Fast --> Word{static word length}
+    Word -->|0| Next[next command, nothing written]
+    Word -->|1-32 and the chunk fits| Put[put_word: 16- or 32-byte store]
+    Word -->|otherwise| Ring[write_ring: exact bytes]
     Kind -->|Copy with limited input or output| Bulk[dispatch once for copy_ring]
     Bulk --> Copy
     Kind -->|headers / raw / other stages| Scalar[Shared scalar implementation]

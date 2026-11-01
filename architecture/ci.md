@@ -212,7 +212,7 @@ sequenceDiagram
     PR->>CF: build (address), run code-change, 600 s
     Store-->>CF: latest corpus and coverage report
     CF-->>PR: job fails on a crash, with the reproducer
-    Cron->>CF: batch: build (address), fuzz 19800 s on all cores
+    Cron->>CF: batch: build (address), fuzz 17400 s on all cores
     CF->>Store: grown corpus, crashes
     Cron->>CF: prune: minimize corpus, 14400 s
     CF->>Store: pruned corpus
@@ -227,11 +227,16 @@ progress. Code-change mode runs only the targets whose coverage reaches the
 changed lines once a coverage report exists, and every target before that.
 The 600 seconds are split among the targets it runs.
 
-Batch fuzzing gets 19800 seconds (5.5 hours) with `parallel-fuzzing`, which
+Batch fuzzing gets 17400 seconds (4 h 50 min) with `parallel-fuzzing`, which
 runs one libFuzzer process per runner core for each target; the targets still
-take turns, 792 seconds each. GitHub-hosted jobs stop at six hours including
-the image and fuzzer builds, so the job's `timeout-minutes: 360` leaves about
-half an hour for building and uploading the corpus.
+take turns, 696 seconds each. GitHub-hosted jobs stop at six hours including
+the image and fuzzer builds, which the job's `timeout-minutes: 360` mirrors.
+Outside its share, each target also spends about 45 seconds downloading its
+corpus, reproducing any crash and uploading. With 25 targets and a 28-minute
+build, the earlier 19800 seconds overran the limit by two minutes in run
+41189734130, and the runs before it finished with under two minutes to spare.
+17400 seconds totals about 5 h 36 min, which leaves room for a slower build
+and a few more targets.
 
 Pruning gets 14400 seconds. ClusterFuzzLite visits the targets in a shuffled
 order and gives each one the remaining budget divided by the targets still to

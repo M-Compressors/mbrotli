@@ -1355,8 +1355,17 @@ impl Stream {
                 if length as u64 > meta_end - position {
                     check!(Err(InvalidDataKind::MetaBlock.into()));
                 }
-                if length == 0 && distance <= 120 {
-                    check!(Err(InvalidDataKind::DictionaryReference.into()));
+                if length == 0 {
+                    cold();
+                    if distance <= 120 {
+                        check!(Err(InvalidDataKind::DictionaryReference.into()));
+                    }
+                    // An empty word writes nothing, and must not reach the
+                    // chunk store below: `reach!` grows nothing for it, so
+                    // when `position` equals the length of a ring that is
+                    // still smaller than the window, `dst` wraps to 0 and
+                    // the store would overwrite live history.
+                    continue 'run;
                 }
                 *scratch_len = length;
                 *scratch_pos = 0;
@@ -2561,6 +2570,72 @@ mod tests {
                         expected[dst..dst + chunk].copy_from_slice(&scratch[..chunk]);
                     }
                     assert_eq!(ring, expected, "{ring_len}, {length}, {dst}");
+                }
+            }
+        }
+    }
+
+    /// A truncated large-window stream whose dictionary reference at
+    /// position 64 transforms to an empty word. With a 10-byte output buffer
+    /// the 64-byte ring is full and has not grown yet when the fast path
+    /// reaches it, so `position & mask` is 0.
+    const EMPTY_WORD_AT_RING_END: [u8; 71] = [
+        0x11, 0x2f, 0x4c, 0x10, 0x00, 0x00, 0x28, 0xb7, 0xa5, 0x7a, 0xb9, 0x6e, 0xf3, 0xc5, 0x2a,
+        0x28, 0xbe, 0x06, 0x53, 0x96, 0x5a, 0x06, 0x4a, 0x8c, 0x95, 0x8c, 0x93, 0x0a, 0xc9, 0x00,
+        0x08, 0x00, 0xd2, 0x4d, 0x6c, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x79,
+        0x58, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x39, 0x00, 0xff, 0xff, 0x79, 0xff,
+        0x28, 0x06, 0x00, 0xff, 0x28, 0x79, 0x79, 0x79, 0x79, 0x58, 0x28,
+    ];
+
+    /// Decodes all of `encoded` without finishing, `capacity` bytes per call.
+    fn decode_available(
+        decoder: &mut crate::Decompressor,
+        encoded: &[u8],
+        chunk: usize,
+        capacity: usize,
+    ) -> Vec<u8> {
+        use crate::{DecodeOperation, DecodeStreamConfig, DecoderStatus};
+        let mut session = decoder.start(DecodeStreamConfig::default()).unwrap();
+        let mut output = alloc::vec![0; capacity];
+        let mut result = Vec::new();
+        let mut cursor = 0;
+        loop {
+            let end = (cursor + chunk).min(encoded.len());
+            let progress = session
+                .process(&encoded[cursor..end], &mut output, DecodeOperation::Process)
+                .unwrap();
+            cursor += progress.consumed;
+            result.extend_from_slice(&output[..progress.produced]);
+            if progress.status == DecoderStatus::NeedsInput && cursor == encoded.len() {
+                return result;
+            }
+        }
+    }
+
+    #[test]
+    fn an_empty_dictionary_word_at_the_ring_end_keeps_the_history() {
+        for backend in crate::Backend::available() {
+            let mut decoder = crate::Decompressor::builder(DecoderConfig::default())
+                .with_backend(backend)
+                .build()
+                .unwrap();
+            let expected = decode_available(&mut decoder, &EMPTY_WORD_AT_RING_END, 71, 4096);
+            // The last command copies five bytes from 81 back.
+            assert_eq!(expected.len(), 93);
+            assert_eq!(expected[88..], expected[7..12]);
+            for chunk in [1, 18, 71] {
+                for capacity in 1..=33 {
+                    // A fresh decoder, so its ring starts empty and grows.
+                    let mut fresh = crate::Decompressor::builder(DecoderConfig::default())
+                        .with_backend(backend)
+                        .build()
+                        .unwrap();
+                    let actual =
+                        decode_available(&mut fresh, &EMPTY_WORD_AT_RING_END, chunk, capacity);
+                    assert_eq!(
+                        actual, expected,
+                        "{backend}, chunk {chunk}, capacity {capacity}"
+                    );
                 }
             }
         }
