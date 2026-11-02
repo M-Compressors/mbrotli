@@ -23,6 +23,9 @@ parallel compression when a workload benefits from it.
   against Google Brotli under [equivalent streaming settings](#compatibility).
 - **Native Rust I/O.** Compress and decompress through one-shot Vec/slice APIs,
   `std::io::Read` / `Write` adapters, or explicit incremental sessions.
+- **Sans-I/O sessions.** `Encoder` and `Decoder` sessions work only with the buffers you
+  pass in and never perform I/O themselves, so you can drive them from blocking code,
+  async runtimes, or your own event loop.
 - **Reusable state.** Keep codec workspaces and destination buffers across requests instead
   of rebuilding them for every payload.
 - **You control the threads.** Run parallel compression with scoped threads, Rayon,
