@@ -32,7 +32,7 @@
 //! Tiny payloads are validated at each quality before their timing begins.
 
 #[cfg(not(feature = "no_std"))]
-use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use hotpath::criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 #[cfg(not(feature = "no_std"))]
 use mbrotli::dictionary::DictionaryBuilder;
 #[cfg(not(feature = "no_std"))]
@@ -83,8 +83,8 @@ fn encoder(quality: Quality) -> Compressor {
 /// alternative — shortening the input — would change *what* is measured, since
 /// the meta-block and block-splitting decisions depend on length.
 #[cfg(not(feature = "no_std"))]
-fn configure<M: criterion::measurement::Measurement>(
-    group: &mut criterion::BenchmarkGroup<'_, M>,
+fn configure<M: hotpath::criterion::measurement::Measurement>(
+    group: &mut hotpath::criterion::BenchmarkGroup<'_, M>,
     quality: Quality,
 ) {
     if quality >= Quality::Q10 {

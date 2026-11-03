@@ -44,8 +44,8 @@ mod support;
 pub mod wire;
 
 use corpora::{Corpus, TINY_SIZES, corpora, incompressible, text, vendor_corpora};
-use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use google_brotli_ffi as ffi;
+use hotpath::criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use mbrotli::dictionary::{DecodeDictionary, DecodeDictionaryLimits, DictionaryAttachment};
 use mbrotli::{
     DecodeOperation, DecodeStreamConfig, DecoderConfig, DecoderStatus, Decompressor, Window,

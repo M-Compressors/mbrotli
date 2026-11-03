@@ -269,6 +269,22 @@ HOTPATH_OUTPUT_FORMAT=json HOTPATH_MERGE_REPORT=native.json HOTPATH_OUTPUT_PATH=
   target/release/examples/profile_compressor brotli-ffi/vendor/brotli/tests/testdata/alice29.txt
 ```
 
+Criterion benchmarks that import from `hotpath::criterion` (currently
+`benches/compress.rs` and `benches/decompress.rs`) can produce the same reports. With
+`HOTPATH_CRITERION_ITERATIONS` set, one benchmark id runs exactly that many
+times in Criterion's test mode and writes one hotpath report; without it,
+`cargo bench` is unchanged:
+
+```sh
+HOTPATH_CRITERION_ITERATIONS=1000 cargo bench --bench decompress --features hotpath-alloc \
+  -- --test --exact decompress/cold/q11/mbrotli/vendor-alice29.txt
+```
+
+The `hotpath criterion` workflow runs the ids listed in its matrix this way,
+in merged mode, as one hotpath Cloud series each. Adding an id takes one matrix
+entry (series, bench target, Criterion id and iteration count) and one entry in the `criterion`
+matrix of `hotpath-relay.yml`.
+
 Record revision, lockfile, compilers, CPU, target flags, affinity, corpus identity,
 settings, API mode, sizes, and timing intervals. Generated Criterion and coverage
 files are local artifacts. Short runs on shared hosts provide exploratory
