@@ -61,7 +61,7 @@ optional = true
 # the proc-macro crate into its tree; every `#[hotpath::measure]` anchor in
 # `src/` is written as `#[cfg_attr(feature = "hotpath", hotpath::measure)]`.
 [dependencies.hotpath]
-version = "0.30.2"
+version = "0.31.0"
 optional = true
 
 [dev-dependencies]
@@ -76,6 +76,11 @@ features = ["force_support_fallback", "std"]
 
 [dev-dependencies.criterion]
 version = "0.8"
+
+# Criterion adapter for `hotpath-criterion.yml`.
+[dev-dependencies.hotpath]
+version = "0.31.0"
+features = ["criterion-0-8"]
 
 [dev-dependencies.google-brotli-ffi]
 path = "brotli-ffi"
