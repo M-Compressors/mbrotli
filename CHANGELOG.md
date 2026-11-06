@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+- Rewrite simple production loops as iterator chains across the greedy and
+  HQ encoders, RFC 9841 preparation, framing, the decoder and the shared
+  primitives (21 files). Only loops that map directly onto `zip`, `filter`,
+  `fold`, `try_fold`, `any`, `fill`, `copy_from_slice` and similar adapters
+  changed; state machines, resumable streaming loops, bit scans, SIMD
+  kernels, `const fn` bodies and `MaybeUninit` paths are untouched. Hot-path
+  rewrites were compared in release asm and kept only when identical or no
+  worse; six were reverted, among them `compute_distance_cache`'s fallback,
+  where `copy_from_slice` became a variable-length `memcpy` call. Rewrites
+  that read worse than the loop (`PrefixSources::new`'s side-effecting `map`,
+  `PreparedPrefix::with_shape`'s `try_fold` overflow flag and
+  `encode_context_map`'s implicit truncate bound) were reverted, and
+  `estimate_entropy` and `TransformLayout::parse` stay single-pass.
+  Compressed output is byte-identical to the previous release for every
+  Google Brotli test-corpus file at qualities 0-11. Retired user-space
+  instructions for reused one-shot compression and decompression of six
+  corpus files (alice29, lcet10, plrabn12, mapsdatazrh, random_org_10k,
+  quickfox_repeated; `perf stat -e instructions:u`, x86-64, three runs each,
+  spread under 0.001%): q1 0.00%, q5 +0.08%, q7 +0.10%, q10 -0.16%,
+  q11 -0.06%. Nine interleaved wall-clock rounds on the same inputs agree
+  within the host's noise (medians -0.9% to +1.4%).
+
 ## [v0.5.20](https://github.com/M-Compressors/mbrotli/releases/tag/v0.5.20) - 2026-11-01
 
 - Fix a decoder history corruption found by ClusterFuzzLite. When a static

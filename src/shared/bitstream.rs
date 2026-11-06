@@ -212,12 +212,14 @@ fn build_and_store_block_split_code(
     let mut type_histo = [0u32; MAX_BLOCK_TYPE_SYMBOLS];
     let mut length_histo = [0u32; NUM_BLOCK_LEN_SYMBOLS];
     let mut calculator = BlockTypeCodeCalculator::new();
-    for index in 0..split.num_blocks {
-        let type_code = calculator.next(split.types[index]);
+    let types = &split.types[..split.num_blocks];
+    let lengths = &split.lengths[..split.num_blocks];
+    for (index, (&block_type, &length)) in types.iter().zip(lengths).enumerate() {
+        let type_code = calculator.next(block_type);
         if index != 0 {
             type_histo[type_code] += 1;
         }
-        length_histo[block_length_prefix_code(split.lengths[index])] += 1;
+        length_histo[block_length_prefix_code(length)] += 1;
     }
     store_var_len_uint8(num_types - 1, w);
     if num_types > 1 {
@@ -431,14 +433,9 @@ fn store_trivial_context_map(
     w.write(4, (repeat_code - 1) as u64);
     arena.histogram[repeat_code] = num_types as u32;
     arena.histogram[0] = 1;
-    for slot in arena
-        .histogram
-        .iter_mut()
-        .take(alphabet_size)
-        .skip(context_bits)
-    {
-        *slot = 1;
-    }
+    // `num_types > 1`, so `context_bits < alphabet_size`, and the slice above
+    // already bounded `alphabet_size`.
+    arena.histogram[context_bits..alphabet_size].fill(1);
     build_and_store_huffman_tree(
         &arena.histogram,
         alphabet_size,
