@@ -445,10 +445,9 @@ fn second_size(counts: &[u16; MAX_LENGTH + 1]) -> usize {
         return 0;
     }
     // Advance `code` through the root lengths exactly as the root loop does.
-    let mut code = 0usize;
-    for &count in &counts[1..=ROOT_BITS as usize] {
-        code = (code + usize::from(count)) << 1;
-    }
+    let mut code = counts[1..=ROOT_BITS as usize]
+        .iter()
+        .fold(0usize, |code, &count| (code + usize::from(count)) << 1);
     let mut remaining = *counts;
     let mut appended = 0usize;
     let mut low = usize::MAX;
