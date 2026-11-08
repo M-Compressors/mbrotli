@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Replace the README's lzbench table with a fresh run of lzbench master
+  `a6fa8aa` (2.4.1) on `silesia.tar`: mbrotli 0.5.20 against Google Brotli
+  1.2.0 at qualities 0, 2, 5, 8 and 11. Compression is 41% and 54% faster at
+  8 and 11 and decompression 22-31% faster at every quality; sizes match at
+  0-8 and mbrotli is 0.031% larger at 11. The command, environment, raw output
+  and a repeatability check are in `docs/benchmarks/lzbench-2026-11-08.md`; the
+  maintainer's independent lzbench 2.4 table stays in the benchmark index.
+  Documentation only; the crate is unchanged.
+
 - Give every CI workflow that lacked a `permissions` block (`ci.yml`,
   `ci-lean.yml`, `ci-coverage.yml`, `ci-benchmarks.yml`, `ci-fuzz.yml`,
   `ci-miri.yml`, `ci-sanitizer.yml`, `ci-decompressor-heavy.yml`) a

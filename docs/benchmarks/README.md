@@ -60,6 +60,15 @@ tasks and dictionaries; their results are not mixed into these native-API median
 Superseded local reports and intermediate snapshots have been removed from the
 published result set.
 
+## lzbench — 2026-11-08
+
+lzbench master `a6fa8aa` (2.4.1), gcc 15.2 with `-march=native`, `silesia.tar`
+on one vCPU of the AMD Ryzen 9 7950X VDS: mbrotli 0.5.20 compresses 41% and
+54% faster than Google Brotli 1.2.0 at qualities 8 and 11 and 10% faster at 5,
+within run-to-run noise at 0 and 2, and decompresses 22–31% faster at every
+quality. Sizes match at 0–8; at 11 mbrotli's output is 0.031% larger.
+[Command, environment and raw output](lzbench-2026-11-08.md).
+
 ## lzbench (independent)
 
 [lzbench](https://github.com/inikep/lzbench) is a long-running open-source
