@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Give every CI workflow that lacked a `permissions` block (`ci.yml`,
+  `ci-lean.yml`, `ci-coverage.yml`, `ci-benchmarks.yml`, `ci-fuzz.yml`,
+  `ci-miri.yml`, `ci-sanitizer.yml`, `ci-decompressor-heavy.yml`) a
+  read-only `GITHUB_TOKEN` (`contents: read`), resolving CodeQL's
+  `actions/missing-workflow-permissions` alerts. None of them pushes,
+  comments or calls the API with the token; caches and artifacts use the
+  runner's own credentials. The C ABI session `// SAFETY:` comments now name
+  the null and alignment checks that guard each handle and count-slot
+  dereference.
+
 - Rewrite simple production loops as iterator chains across the greedy and
   HQ encoders, RFC 9841 preparation, framing, the decoder and the shared
   primitives (21 files). Only loops that map directly onto `zip`, `filter`,

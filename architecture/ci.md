@@ -53,6 +53,15 @@ shortcut references with feature-dependent definitions: enabled APIs resolve to
 local items, while disabled APIs link to the feature-selection section. This
 preserves navigation without redundant explicit link targets.
 
+Every workflow declares its `GITHUB_TOKEN` permissions. The verification
+workflows (`ci.yml`, `ci-lean.yml`, `ci-coverage.yml`, `ci-benchmarks.yml`,
+`ci-fuzz.yml`, `ci-miri.yml`, `ci-sanitizer.yml` and
+`ci-decompressor-heavy.yml`) set `contents: read` at workflow level: they only
+check out code, use the Actions cache and upload artifacts, none of which
+needs a broader token. The ClusterFuzzLite workflows are read-only too; only
+`release.yml` and the hotpath workflows add more, per job (an OIDC
+`id-token: write`, and `actions`/`pull-requests: read` for the relay).
+
 The semver job compares the default `mbrotli` API with the latest published
 release. Experimental APIs and the development-only C FFI crate are outside
 that gate. A violation requires a sufficient package version bump.

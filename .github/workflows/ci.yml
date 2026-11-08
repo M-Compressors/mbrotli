@@ -10,6 +10,9 @@ env:
   # A differential failure is worth the full backtrace it takes to place.
   RUST_BACKTRACE: 1
 
+permissions:
+  contents: read
+
 jobs:
   check:
     name: fmt, clippy, docs and package

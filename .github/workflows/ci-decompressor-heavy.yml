@@ -3,6 +3,10 @@ on:
   workflow_dispatch:
   push:
     tags: ['v*']
+
+permissions:
+  contents: read
+
 jobs:
   history-and-counters:
     runs-on: ubuntu-latest
