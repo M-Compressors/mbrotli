@@ -8,14 +8,14 @@ Requires **Rust 1.89+**.
 ```sh
 cargo new brotli-demo
 cd brotli-demo
-cargo add mbrotli@0.5.20
+cargo add mbrotli@0.5.21
 ```
 
 Or add this to `Cargo.toml`:
 
 ```toml
 [dependencies]
-mbrotli = "0.5.20"
+mbrotli = "0.5.21"
 ```
 
 ## Compress and decompress
@@ -112,11 +112,11 @@ backpressure, reader read-ahead, and direct sessions.
 
 | Configuration | Dependency |
 | --- | --- |
-| Default std encoder + decoder | `mbrotli = "0.5.20"` |
-| Encoder only | `mbrotli = { version = "0.5.20", default-features = false, features = ["std", "compression"] }` |
-| Decoder only | `mbrotli = { version = "0.5.20", default-features = false, features = ["std", "decompression"] }` |
-| Framing and experimental formats | `mbrotli = { version = "0.5.20", features = ["experimental"] }` |
-| Alloc-backed codecs without std | `mbrotli = { version = "0.5.20", default-features = false, features = ["no_std", "compression", "decompression"] }` |
+| Default std encoder + decoder | `mbrotli = "0.5.21"` |
+| Encoder only | `mbrotli = { version = "0.5.21", default-features = false, features = ["std", "compression"] }` |
+| Decoder only | `mbrotli = { version = "0.5.21", default-features = false, features = ["std", "decompression"] }` |
+| Framing and experimental formats | `mbrotli = { version = "0.5.21", features = ["experimental"] }` |
+| Alloc-backed codecs without std | `mbrotli = { version = "0.5.21", default-features = false, features = ["no_std", "compression", "decompression"] }` |
 
 `no_std` takes precedence when enabled and removes std-only adapters and parallel
 APIs. See [codec features](../architecture/codec-features.md) and

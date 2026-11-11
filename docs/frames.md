@@ -8,7 +8,7 @@ resource boundaries or indexed access in addition to compression.
 
 ```toml
 [dependencies]
-mbrotli = { version = "0.5.20", features = ["experimental"] }
+mbrotli = { version = "0.5.21", features = ["experimental"] }
 ```
 
 The examples use std, compression, and decompression. Experimental APIs may

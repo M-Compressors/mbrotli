@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## [v0.5.21](https://github.com/M-Compressors/mbrotli/releases/tag/v0.5.21) - 2026-11-11
+
 - Add an mdBook documentation website for GitHub Pages, publishing all guides,
   architecture specifications, Mermaid diagrams, benchmark charts and downloads
   from their canonical repository sources. Add getting started, executable
