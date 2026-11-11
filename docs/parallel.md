@@ -14,7 +14,7 @@ The library does not create a thread pool.
 use mbrotli::compressor::parallel::{
     BatchConfig, ParallelCompressor, ParallelConfig, TaskCount,
 };
-use mbrotli::{EncoderConfig, Quality};
+use mbrotli::{Decompressor, EncoderConfig, Quality};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let input = vec![b'a'; 8 << 20];
@@ -34,7 +34,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
     let mut output = Vec::new();
     batch.finish_into(&mut output)?;
-    assert!(!output.is_empty());
+    let mut decoder = Decompressor::new(Default::default())?;
+    assert_eq!(decoder.decompress(&output)?, input);
     Ok(())
 }
 ```
@@ -43,6 +44,45 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 so its completion can be reported. Finalization collects task results, validates
 artifacts, and assembles them in input order. A blocking wait requires the
 caller's executor to remain runnable.
+
+## Running tasks with Rayon
+
+Add `rayon = "1.12"` alongside `mbrotli` in your dependencies. Create a pool
+once and reuse it across requests. Task completion order does not affect assembly
+order or the resulting bytes for fixed segment settings.
+
+```rust
+use mbrotli::compressor::parallel::{
+    BatchConfig, ParallelCompressor, ParallelConfig, TaskCount,
+};
+use mbrotli::{Decompressor, EncoderConfig, Quality};
+use rayon::prelude::*;
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let pool = rayon::ThreadPoolBuilder::new().num_threads(4).build()?;
+    let mut encoder = ParallelCompressor::new(
+        EncoderConfig::default().with_quality(Quality::Q5),
+        ParallelConfig::default(),
+    )?;
+    let input = b"parallel compression with a reusable pool\n".repeat(220_000);
+    let mut batch = encoder.prepare_slice(
+        &input,
+        BatchConfig::auto(TaskCount::try_from(4)?),
+    )?;
+    let tasks = batch.take_tasks()?;
+    pool.install(|| tasks.into_par_iter().for_each(|task| task.run()));
+
+    let mut compressed = Vec::new();
+    batch.finish_into(&mut compressed)?;
+    let mut decoder = Decompressor::new(Default::default())?;
+    assert_eq!(decoder.decompress(&compressed)?, input);
+    Ok(())
+}
+```
+
+For many unrelated small inputs, another option is one ordinary `Compressor` per
+worker. That preserves serial compression decisions for each input. The batch
+API above splits **one** input into a single assembled stream.
 
 ## Streaming input
 
@@ -95,6 +135,15 @@ fn compress(
         }
     })
 }
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let input = b"incremental parallel input\n".repeat(350_000);
+    let mut compressed = Vec::new();
+    compress(input.as_slice(), &mut compressed)?;
+    let mut decoder = mbrotli::Decompressor::new(Default::default())?;
+    assert_eq!(decoder.decompress(&compressed)?, input);
+    Ok(())
+}
 ```
 
 - `process` never blocks. `Pending` means the window is full or a flush or
@@ -139,6 +188,14 @@ fn compress<W: Write>(
         std::io::copy(&mut reader, &mut sink)?;
         Ok(sink.finish().map_err(FinishError::into_error)?)
     })
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let input = b"stream through caller-owned workers\n".repeat(250_000);
+    let compressed = compress(input.as_slice(), Vec::new())?;
+    let mut decoder = mbrotli::Decompressor::new(Default::default())?;
+    assert_eq!(decoder.decompress(&compressed)?, input);
+    Ok(())
 }
 ```
 

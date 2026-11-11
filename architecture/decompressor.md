@@ -116,10 +116,10 @@ stateDiagram-v2
     Finishing --> Complete: validated member and final input boundary
     Active --> Failed: format / resource error
     Finishing --> Failed: error / truncation / changed final-input contract
-    Active --> Abandoned: mem::forget
-    Finishing --> Abandoned: mem::forget
-    Complete --> Abandoned: mem::forget
-    Failed --> Abandoned: mem::forget
+    Active --> Abandoned: mem&#58;&#58;forget
+    Finishing --> Abandoned: mem&#58;&#58;forget
+    Complete --> Abandoned: mem&#58;&#58;forget
+    Failed --> Abandoned: mem&#58;&#58;forget
     Active --> Idle: Drop
     Finishing --> Idle: Drop
     Complete --> Idle: Drop
@@ -361,7 +361,7 @@ stateDiagram-v2
     Counting --> Counting: advance (count - 1)
     Counting --> Exhausted: count = 0
     Exhausted --> Counting: element needed, types >= 2 (switch_fast or prepare reads type and BLEN)
-    Exhausted --> Error: element needed, one type (prepare: meta-block error)
+    Exhausted --> Error: element needed, one type (prepare reports meta-block error)
     Exhausted --> [*]: meta-block ends
 ```
 
@@ -634,7 +634,7 @@ sequenceDiagram
     Writer->>Session: process(input, outbox, Process)
     Session-->>Writer: progress or failure with counts
     Writer->>Sink: write output, track exact cursor
-    Writer-->>Caller: Ok(consumed) if input accepted; defer error
+    Writer-->>Caller: Ok(consumed) if input accepted, defer error
     Caller->>Writer: try_finish / retry
     Writer->>Session: Finish(empty), once and without new input
     Writer->>Sink: drain suffix, flush

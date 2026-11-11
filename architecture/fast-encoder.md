@@ -164,7 +164,7 @@ bytes, mirroring `BrotliEncoderCompressStreamFast`.
 stateDiagram-v2
     [*] --> Sized: reserve 2 * len + 503 + 8 bytes
     Sized --> Seeded: storage[0..2] = last_bytes
-    Seeded --> Verbatim: FastCore::stores_verbatim (final q0 fragment within the bound)
+    Seeded --> Verbatim: FastCore&#58;&#58;stores_verbatim (final q0 fragment within the bound)
     Verbatim --> Encoded: raw meta-block and closing bits, no table, no arena
     Seeded --> Tabled: clear the active hash table range
     Tabled --> Dispatched: retained kernel, #[simd] encode_fragment

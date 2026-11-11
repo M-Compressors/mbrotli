@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Add an mdBook documentation website for GitHub Pages, publishing all guides,
+  architecture specifications, Mermaid diagrams, benchmark charts and downloads
+  from their canonical repository sources. Add getting started, executable
+  round-trip recipes, Rayon tasks, and a framing guide covering multiple
+  resources, metadata, streaming writes and indexed reads. The Pages workflow
+  validates links and anchors and runs the recipes before deployment.
+  Repair existing Mermaid syntax for the book renderer and add spacing above
+  nested navigation lists. Include dedicated Sans I/O encoding/decoding and
+  std I/O guides for raw streams, parallel output and framed resources, with
+  executable examples and explicit completion/retry behavior.
+
 - Replace the README's lzbench table with a fresh run of lzbench master
   `a6fa8aa` (2.4.1) on `silesia.tar`: mbrotli 0.5.20 against Google Brotli
   1.2.0 at qualities 0, 2, 5, 8 and 11. Compression is 41% and 54% faster at

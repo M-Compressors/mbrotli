@@ -116,7 +116,7 @@ structure; `start` exposes incremental events, and `framed_reader` adapts a
 accepts a raw Brotli member. Raw `Decompressor` entry points do not parse containers.
 
 The framed owner, one-shot encoder and native sessions support alloc builds.
-The framing writer and encoded reader require std APIs. The decoder's owned and incremental APIs
+The framing writer and encoded reader require std APIs. The decoder's owned and Sans I/O APIs
 also work with `no_std` and `alloc`; `FramedReader` requires std APIs. External
 dictionaries use a caller-supplied resolver, and resource checksums are recorded
 without verification. Tests check independent wire fixtures, writer/decoder

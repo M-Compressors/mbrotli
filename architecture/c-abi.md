@@ -171,7 +171,7 @@ classDiagram
         OutputTooSmall
         Error
     }
-    FfiError ..> MbrotliResult : From&lt;&FfiError&gt;
+    FfiError ..> MbrotliResult : conversion from FfiError reference
 ```
 
 Argument and parameter failures map to `InvalidParameter`; `EncodeError` or
@@ -276,7 +276,7 @@ sequenceDiagram
     S->>S: mark poisoned, enter catch_unwind
     S->>R: process_uninit(input, output, operation)
     R-->>S: progress or failure
-    S->>S: clear poison only on success; publish exact counts
+    S->>S: clear poison only on success, publish exact counts
     S-->>C: NeedsInput / NeedsOutput / Finished / Error
     C->>S: reinit or destroy
     S->>R: reinit(default stream) or drop

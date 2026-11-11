@@ -13,6 +13,9 @@ cargo doc --workspace --all-features --no-deps --locked
 
 ## Workspace checks
 
+The documentation website uses mdBook. For tool installation, local preview,
+link checks, and executable recipes, see [Documentation website](website.md).
+
 Run from the repository root:
 
 ```sh

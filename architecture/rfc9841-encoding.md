@@ -114,7 +114,7 @@ sequenceDiagram
     participant Core as GreedyEncoder / HqEncoder
     Caller->>Session: start(offset, optional exact size)
     Session->>Session: check offset + declared length <= 2^63 - 1
-    Session->>Core: suppress header; poison distance cache; clamp logical base to retained window
+    Session->>Core: suppress header, poison distance cache, clamp logical base to retained window
     Caller->>Session: Process / Flush / Finish
     Session->>Session: check offset + accepted input before consumption
     Session->>Core: first two bytes, flush if more follows

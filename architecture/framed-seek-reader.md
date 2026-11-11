@@ -46,12 +46,12 @@ sequenceDiagram
     participant Index
     participant Source
     Caller->>Index: framed_seek_reader(source)
-    Index->>Source: seek end; read signature
+    Index->>Source: seek end, read signature
     Index->>Source: bounded reversed footer numbers and header
     Index->>Index: validate size, profile and directory offset
     Index->>Source: read directory header and entries
-    Index->>Index: parse copied headers; validate ordered disjoint extents
-    Index->>Source: read padding headers in gaps; skip their bodies
+    Index->>Index: parse copied headers, validate ordered disjoint extents
+    Index->>Source: read padding headers in gaps, skip their bodies
     Index->>Index: assemble logical resources and metadata associations
     Index->>Index: check partial order, repeat identity and backward references
     Index-->>Caller: structural index, no decompression

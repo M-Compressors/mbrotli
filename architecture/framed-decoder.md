@@ -129,11 +129,11 @@ sequenceDiagram
     participant Engine
     participant Raw as raw Stream
     Caller->>Session: process(input, output, operation)
-    Session->>Engine: validate final boundary; advance one event
+    Session->>Engine: validate final boundary, advance one event
     Engine->>Engine: bounded header and ordering validation
-    Engine->>Raw: content slice bounded by chunk end; selected backend
+    Engine->>Raw: content slice bounded by chunk end, selected backend
     Raw-->>Engine: accepted bytes, produced bytes, stop reason
-    Engine->>Engine: aggregate limits; content-size validation; cache policy
+    Engine->>Engine: aggregate limits, content-size validation, cache policy
     Engine-->>Session: owned event descriptor and exact counts
     Session-->>Caller: borrowed header, metadata or output view
 ```

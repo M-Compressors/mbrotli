@@ -1,0 +1,41 @@
+[book]
+title = "mbrotli"
+authors = ["M-Compressors"]
+description = "Brotli compression in safe Rust: getting started, parallel pipelines, framing, and implementation architecture."
+language = "en"
+src = "target/book-src"
+
+[rust]
+edition = "2024"
+
+[build]
+build-dir = "target/book"
+create-missing = false
+
+[preprocessor.mermaid]
+command = "mdbook-mermaid"
+
+[output.html]
+default-theme = "light"
+preferred-dark-theme = "navy"
+smart-punctuation = true
+mathjax-support = false
+git-repository-url = "https://github.com/M-Compressors/mbrotli"
+site-url = "/mbrotli/"
+additional-css = ["book-theme/custom.css"]
+additional-js = ["target/book-assets/mermaid.min.js", "target/book-assets/mermaid-init.js"]
+no-section-label = true
+
+[output.html.playground]
+# The Rust playground does not provide mbrotli. Examples are tested locally
+# and in the Pages workflow against this checkout instead.
+runnable = false
+
+[output.html.fold]
+enable = true
+level = 1
+
+[output.html.search]
+enable = true
+limit-results = 20
+use-boolean-and = true

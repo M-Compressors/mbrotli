@@ -579,13 +579,13 @@ pointer; the macro passes them in registers.
 
 ```mermaid
 sequenceDiagram
-    participant Loop as Zopfli loop (S features)
+    participant Driver as Zopfli loop (S features)
     participant Store as BinaryTreeMatcher::store (baseline)
     participant Entry as generated entry (S features)
-    Loop->>Store: store(simd, data, mask, ix)
-    Store->>Entry: token level folds to S; self, data, mask, ix as arguments
+    Driver->>Store: store(simd, data, mask, ix)
+    Store->>Entry: token level folds to S, self, data, mask, ix as arguments
     Entry->>Entry: inlined body: store_and_find_matches
-    Entry-->>Loop: return
+    Entry-->>Driver: return
 ``` The tree traversal is always inlined into
 `find_all_matches` or the feature-enabled `store` body, and `scan_recent_positions`
 takes the same token for its `u8x32` prefilter, which every backend implements

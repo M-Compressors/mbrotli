@@ -13,7 +13,7 @@ parallel compression when a workload benefits from it.
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#License)
 [![hotpath-cloud](https://img.shields.io/endpoint?url=https://hotpath.rs/badge-cloud.json)](https://hotpath.rs/app/repos/M-Compressors/mbrotli)
 
-[Quick start](#quick-start) · [Benchmarks](#performance) · [`Read` / `Write`](#read-and-write-streaming) · [API guide][guide] · [Compatibility](#compatibility) · [Changelog][changelog]
+[Documentation](https://m-compressors.github.io/mbrotli/) · [Getting started](https://m-compressors.github.io/mbrotli/docs/getting-started.html) · [Examples](https://m-compressors.github.io/mbrotli/docs/examples/) · [Benchmarks](#performance) · [API guide][guide] · [Changelog][changelog]
 
 ## Why mbrotli?
 

@@ -340,7 +340,7 @@ sink.
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Open: ParallelCompressor::writer
+    [*] --> Open: ParallelCompressor&#58;&#58;writer
     Open --> Open: write / flush
     Open --> Finishing: first Finish step of try_finish
     Finishing --> Finishing: sink or session error, retry try_finish

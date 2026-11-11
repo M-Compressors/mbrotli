@@ -78,13 +78,13 @@ sequenceDiagram
     participant Raw as Shared raw operation
     participant Out as Caller slice / std transport
     Caller->>API: start(stream aggregate)
-    API->>Engine: queue main header; set active owner
+    API->>Engine: queue main header, set active owner
     Caller->>API: process(output, Process)
     Engine->>Out: deliver header prefix
     Caller->>API: resource(options, stream, dictionary)
     API->>Engine: validate and commit resource
     Caller->>API: process(input, output, Finish)
-    Engine->>Raw: Flush complete nonfinal chunks; Finish final chunk
+    Engine->>Raw: Flush complete nonfinal chunks, Finish final chunk
     Raw-->>Engine: compressed bounded chunk
     Engine->>Out: framing header and content prefixes
     Caller->>API: container Finish

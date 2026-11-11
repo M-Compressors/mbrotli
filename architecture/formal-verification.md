@@ -34,7 +34,7 @@ graph TD
     LLBC -->|Aeneas -split-files| Code[Mbrotli/Code/Types.lean, Funs.lean: generated]
     Ext[Mbrotli/Code/FunsExternal.lean: std models] --> Code
     Script[scripts/extract_lean.py] -.drives and pins.-> LLBC
-    Script -.--check compares.-> Code
+    Script -.->|--check compares| Code
     Script -.EXTERNALS must match.-> Ext
     AeneasLib[Aeneas Lean library: Result monad, scalar models, step tactic] --> Code
     Mathlib[Mathlib] --> Model

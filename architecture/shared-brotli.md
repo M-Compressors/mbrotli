@@ -527,12 +527,12 @@ silently ignores the dictionary, this crate refuses.
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Build: Compressor::new(config)
+    [*] --> Build: Compressor&#58;&#58;new(config)
     Build --> LW: large window at quality 0, 1 or 2
-    LW --> [*]: Err(ConfigError::LargeWindowUnsupportedForQuality)
+    LW --> [*]: Err(ConfigError&#58;&#58;LargeWindowUnsupportedForQuality)
     Build --> Q: a compressor
     Q --> Low: quality below 5
-    Low --> [*]: Err(EncodeError::DictionaryUnsupportedForQuality)
+    Low --> [*]: Err(EncodeError&#58;&#58;DictionaryUnsupportedForQuality)
     Q --> Attached: quality 5 to 11
     Attached --> Consulted: nonempty input consults the prefix
     Consulted --> [*]: a stream whose distances may address the prefix
@@ -578,11 +578,11 @@ dictionary calls and requires the same bytes from both.
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Check: Compressor::new / reconfigure
+    [*] --> Check: Compressor&#58;&#58;new / reconfigure
     Check --> Ordinary: the window is not large
     Check --> Q012: quality 0, 1 or 2
     Check --> Large: quality 3..=11
-    Q012 --> [*]: Err(ConfigError::LargeWindowUnsupportedForQuality)
+    Q012 --> [*]: Err(ConfigError&#58;&#58;LargeWindowUnsupportedForQuality)
     Ordinary --> Encode: any operation
     Large --> Encode: any operation
     Encode --> Empty: input empty

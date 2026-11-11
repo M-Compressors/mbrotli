@@ -152,7 +152,7 @@ sequenceDiagram
     Stream->>Stream: O::LINEAR && linear → run_stages::<O, true>
     Stream->>Fast: take dst, bound to history_end
     Fast->>Fast: decode and copy inside dst
-    Fast-->>Stream: restore dst; produced += delivered
+    Fast-->>Stream: restore dst, produced += delivered
     Stream-->>Op: Stop::Member
     Op->>Op: linear = false for later members
     Op-->>API: progress

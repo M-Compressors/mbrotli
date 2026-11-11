@@ -1,6 +1,6 @@
 # User guide
 
-[Quick start](../README.md#quick-start) · [API reference](https://docs.rs/mbrotli)
+[Getting started](getting-started.md) · [Examples](examples/README.md) · [API reference](https://docs.rs/mbrotli)
 
 | Task | Read |
 | --- | --- |
@@ -8,8 +8,11 @@
 | Choose compression settings | [Configuration](#configuration) |
 | Control allocations | [Output buffers](#output-buffers) and [reuse](#reusing-memory) |
 | Connect synchronous I/O or drive a session | [Streaming](#streaming-and-completion) |
+| Drive compression with caller buffers | [Sans I/O compression](sans-io-compression.md) |
+| Decode arriving chunks and framed events | [Sans I/O decompression](sans-io-decompression.md) |
+| Connect readers and writers for every format | [Read / Write I/O](io.md) |
 | Share a dictionary or use extended formats | [Dictionaries](dictionaries.md) |
-| Write or decode framing containers | [Framing containers](dictionaries.md#framing-containers) |
+| Write or decode framing containers | [Framing containers and examples](frames.md) |
 | Split a job across workers | [Parallel compression](parallel.md) |
 | Compare libraries | [Benchmarks](benchmarks/README.md) |
 

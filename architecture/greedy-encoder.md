@@ -519,14 +519,14 @@ measured input got slower.
 sequenceDiagram
     participant CBR as create_backward_references
     participant M as BucketMatcher
-    participant Loop as SearchLoop (per run type)
+    participant Driver as SearchLoop (per run type)
 
     CBR->>M: checkpoint(block start, block bytes)
     M-->>CBR: CHECKPOINT_INTERVAL or usize::MAX
     loop until position + hash length reaches the block end
         CBR->>M: visit_run(SearchLoop { yield_at: position + interval })
-        M->>Loop: visit(SparseRun or DenseRun)
-        Loop-->>CBR: cursor (stopped at yield_at or the block end)
+        M->>Driver: visit(SparseRun or DenseRun)
+        Driver-->>CBR: cursor (stopped at yield_at or the block end)
         opt not at the block end
             CBR->>M: checkpoint(cursor.position, block remainder)
             alt store rate repays the clear
@@ -828,7 +828,7 @@ sequenceDiagram
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Empty: GreedyEncoder::new
+    [*] --> Empty: GreedyEncoder&#58;&#58;new
     Empty --> Buffering: encode_block(input, false)
     Buffering --> Buffering: meta-block not due yet
     Buffering --> Emitting: is_last, or a flush condition fires

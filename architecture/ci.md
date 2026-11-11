@@ -1,7 +1,27 @@
 # Continuous integration
 
+## Documentation website
+
+`pages.yml` builds the mdBook on documentation, tooling, and codec-source changes
+in pull requests and pushes to `master`, and supports manual dispatch. It installs
+pinned mdBook and mdbook-mermaid releases, compiles/runs the documented Rust
+recipes, builds all `docs/` and `architecture/` pages, and validates local links
+and anchors. Only a push or manual run on `master` can deploy to GitHub Pages;
+the deployment job alone receives Pages/OIDC write permissions. See
+[documentation publishing](documentation.md) for source and artifact boundaries.
+
+```mermaid
+flowchart LR
+    Change[Docs or codec source change] --> Recipes[Compile and run recipes]
+    Recipes --> Book[Build mdBook and validate links]
+    Book --> Artifact[Upload Pages artifact]
+    Artifact --> Branch{master and not PR?}
+    Branch -->|yes| Deploy[Deploy to GitHub Pages]
+    Branch -->|no| Validated[Validation only]
+```
+
 Workflow definitions live in [`.github/workflows/`](../.github/workflows/).
-All checkouts include vendored submodules. Local commands are in
+Codec-test checkouts include vendored submodules. Local commands are in
 [development](../docs/development.md).
 
 ## Triggers and checks
@@ -19,6 +39,7 @@ All checkouts include vendored submodules. Local commands are in
 | `ci-sanitizer.yml` | Every tag, manual | AddressSanitizer: SIMD and uninitialized-memory tests on x86-64 and ARM64, plus integration tests |
 | `ci-decompressor-heavy.yml` | `v*` tag, manual | Actual 25–30-bit history and counters beyond 4 GiB in four decoder profiles |
 | `release.yml` | Manual, from a `v*` tag | Publishes `mbrotli` to crates.io through trusted publishing |
+| `pages.yml` | Documentation or codec-source changes on master and pull requests; manual | Builds mdBook, checks links/anchors, runs recipes; publishes only master |
 
 ```mermaid
 flowchart TD

@@ -217,7 +217,7 @@ sequenceDiagram
     Note over Codec: greedy/HQ seed local ring and prior bytes via two-byte flush
     Fragment->>Fragment: optional header + raw min(length,2) prefix
     loop complete body input blocks
-        Fragment->>Codec: non-final encode; flush final body block
+        Fragment->>Codec: non-final encode, flush final body block
         Codec-->>Fragment: completed bytes
     end
     Fragment->>Codec: verify no pending partial bits

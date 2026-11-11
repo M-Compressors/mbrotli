@@ -160,8 +160,8 @@ restarted.
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Settled: InputSize::Exact
-    [*] --> Open: InputSize::Unknown
+    [*] --> Settled: InputSize&#58;&#58;Exact
+    [*] --> Open: InputSize&#58;&#58;Unknown
     Open --> Open: Process below one block, or nothing known yet
     Open --> Settled: block fills, Flush or Finish with input known
     Settled --> [*]: release or reinit
@@ -220,12 +220,12 @@ sequenceDiagram
     Caller->>Writer: write(input)
     Writer->>Sink: drain pending output
     alt drain fails
-        Writer-->>Caller: error; no input accepted
+        Writer-->>Caller: error, no input accepted
     else drain succeeds
         Writer->>Session: process input into bounded outbox
         Session-->>Writer: consumed and produced counts
         Writer->>Sink: attempt delivery
-        Writer-->>Caller: accepted count; delivery error deferred if necessary
+        Writer-->>Caller: accepted count, delivery error deferred if necessary
     end
     Caller->>Writer: try_finish
     loop until final output delivered

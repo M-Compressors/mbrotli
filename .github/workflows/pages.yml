@@ -1,0 +1,76 @@
+name: Documentation
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'docs/**'
+      - 'architecture/**'
+      - 'book.toml'
+      - 'book-theme/**'
+      - 'scripts/docs.py'
+      - 'scripts/test_docs.py'
+      - '.github/workflows/pages.yml'
+      - 'Cargo.toml'
+      - 'src/**'
+  pull_request:
+    paths:
+      - 'docs/**'
+      - 'architecture/**'
+      - 'book.toml'
+      - 'book-theme/**'
+      - 'scripts/docs.py'
+      - 'scripts/test_docs.py'
+      - '.github/workflows/pages.yml'
+      - 'Cargo.toml'
+      - 'src/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build book and run recipes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - uses: Swatinem/rust-cache@v2
+      - name: Install book tools
+        run: |
+          cargo install mdbook --version 0.5.4 --locked
+          cargo install mdbook-mermaid --version 0.17.1 --locked
+      - name: Check documentation tooling
+        run: python3 -m unittest discover -s scripts -p test_docs.py
+      - name: Compile and run documented examples
+        run: python3 scripts/docs.py test-examples
+      - name: Build book and validate links
+        run: python3 scripts/docs.py build
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: target/book
+
+  deploy:
+    name: Publish GitHub Pages
+    if: github.ref == 'refs/heads/master' && github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    concurrency:
+      group: github-pages
+      cancel-in-progress: false
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/configure-pages@v5
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4
