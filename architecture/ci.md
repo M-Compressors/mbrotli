@@ -6,7 +6,7 @@
 in pull requests and pushes to `master`, and supports manual dispatch. It installs
 pinned mdBook and mdbook-mermaid releases, compiles/runs the documented Rust
 recipes, builds all `docs/` and `architecture/` pages, and validates local links
-and anchors. Only a push or manual run on `master` can deploy to GitHub Pages;
+and anchors, including the root README's links into the published site. Only a push or manual run on `master` can deploy to GitHub Pages;
 the deployment job alone receives Pages/OIDC write permissions. See
 [documentation publishing](documentation.md) for source and artifact boundaries.
 

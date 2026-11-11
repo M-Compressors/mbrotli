@@ -23,7 +23,7 @@ mathjax-support = false
 git-repository-url = "https://github.com/M-Compressors/mbrotli"
 site-url = "/mbrotli/"
 additional-css = ["book-theme/custom.css"]
-additional-js = ["target/book-assets/mermaid.min.js", "target/book-assets/mermaid-init.js"]
+additional-js = ["target/book-assets/mermaid.min.js", "target/book-assets/mermaid-init.js", "book-theme/diagram-zoom.js"]
 no-section-label = true
 
 [output.html.playground]
@@ -33,7 +33,7 @@ runnable = false
 
 [output.html.fold]
 enable = true
-level = 1
+level = 0
 
 [output.html.search]
 enable = true

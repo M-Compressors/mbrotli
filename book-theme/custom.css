@@ -1,36 +1,216 @@
+/* mbrotli book theme. Extends mdBook's built-in themes; 1rem is 10px here. */
+
 :root {
-  --content-max-width: 920px;
+  --content-max-width: 860px;
+  --sidebar-width: 290px;
+  --brand: #0a7468;
+  --brand-ink: #ffffff;
+  --rule: #dfe5e8;
+  --wash: #f3f6f7;
+  --muted: #55636d;
+  --caution: #a15c00;
 }
-.light, .rust {
-  --links: #087f73;
-  --sidebar-active: #087f73;
+
+/* Palette for the default light theme and the preferred dark theme. */
+.light, html:not(.js) {
+  --bg: #ffffff;
+  --fg: #16222b;
+  --sidebar-bg: #f6f8f9;
+  --sidebar-fg: #2b3942;
+  --sidebar-active: #0a7468;
+  --sidebar-spacer: #e6ebee;
+  --links: #0a7468;
+  --inline-code-color: #1d3a4a;
+  --quote-bg: #f3f6f7;
+  --quote-border: #cfd8dc;
+  --table-border-color: #dfe5e8;
+  --table-header-bg: #f3f6f7;
+  --table-alternate-bg: transparent;
+  --searchresults-li-bg: #e3f3f0;
+  --search-mark-bg: #bfe6df;
 }
-.navy, .coal, .ayu {
-  --links: #5eead4;
-  --sidebar-active: #5eead4;
+.navy {
+  --bg: #0f171d;
+  --fg: #d5dee4;
+  --sidebar-bg: #131d24;
+  --sidebar-fg: #b9c5cd;
+  --sidebar-active: #5fd6c2;
+  --sidebar-spacer: #22303a;
+  --links: #5fd6c2;
+  --inline-code-color: #d3e3ea;
+  --quote-bg: #16212a;
+  --quote-border: #2a3a45;
+  --table-border-color: #25333d;
+  --table-header-bg: #16212a;
+  --table-alternate-bg: transparent;
+  --searchbar-bg: #16212a;
+  --searchbar-fg: #d5dee4;
+  --searchbar-border-color: #2a3a45;
+  --searchresults-li-bg: #1a2a33;
+  --search-mark-bg: #1f5a52;
+  --brand: #5fd6c2;
+  --brand-ink: #06231f;
+  --rule: #25333d;
+  --wash: #16212a;
+  --muted: #93a3ad;
+  --caution: #e0a44a;
 }
+.coal, .ayu {
+  --links: #5fd6c2;
+  --sidebar-active: #5fd6c2;
+  --brand: #5fd6c2;
+  --brand-ink: #06231f;
+  --rule: #33404a;
+  --wash: rgba(255, 255, 255, .04);
+  --muted: #9aa7b0;
+  --caution: #e0a44a;
+}
+.rust {
+  --brand: #7a3b12;
+  --rule: #d6cdbf;
+  --wash: rgba(0, 0, 0, .04);
+}
+
 html { scroll-padding-top: 80px; }
-.content { line-height: 1.75; }
-.content h1 { letter-spacing: -.035em; line-height: 1.2; }
-.content h2 { margin-top: 2.2em; letter-spacing: -.025em; }
+body {
+  font-family: system-ui, -apple-system, "Segoe UI", "Open Sans", sans-serif;
+}
+:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+
+/* Reading text */
+.content { line-height: 1.7; }
+.content main { padding-bottom: 40px; }
+.content h1 { margin-top: 0; font-size: 3.4rem; line-height: 1.15; letter-spacing: -.02em; }
+.content h2 {
+  margin-top: 2.4em; padding-top: .9em; border-top: 1px solid var(--rule);
+  font-size: 2.4rem; letter-spacing: -.015em;
+}
+.content h3 { margin-top: 1.8em; font-size: 1.9rem; }
+.content h1 + h2, .content .landing + h2 { border-top: 0; }
 .content a { text-underline-offset: 3px; }
-.content pre { border-radius: 8px; }
-.content table { width: 100%; margin-block: 24px; }
-.content td, .content th { padding: 10px 14px; }
+.content a:hover { text-decoration-thickness: 2px; }
+.content :not(pre) > code {
+  padding: .1em .35em; border-radius: 4px; background: var(--wash);
+  font-size: .875em; overflow-wrap: break-word;
+}
+.content a > code { color: inherit; }
+.content pre { border: 1px solid var(--rule); border-radius: 6px; }
+.content pre > code { padding: 14px 16px; line-height: 1.55; }
+.content blockquote { border-block: 0; border-inline-start: 3px solid var(--brand); border-radius: 0 6px 6px 0; }
 .content img { max-width: 100%; height: auto; }
-.content .mermaid { overflow-x: auto; padding: 20px 8px; }
-.sidebar .chapter { line-height: 1.6; }
-.chapter ol.section { margin-top: 10px; }
-.sidebar .chapter li.part-title { margin-top: 24px; font-size: 1.3rem; letter-spacing: .06em; text-transform: uppercase; opacity: .7; }
-.book-hero { padding: 28px 0 32px; border-bottom: 1px solid var(--table-border-color); }
-.book-hero .eyebrow { font-size: 1.2rem; font-weight: 700; letter-spacing: .15em; color: var(--links); }
-.book-hero .headline { margin: 16px 0; font-size: clamp(3.6rem, 7vw, 6rem); line-height: 1.08; font-weight: 800; letter-spacing: -.055em; }
-.book-hero .intro { max-width: 670px; font-size: 1.9rem; opacity: .85; }
-.book-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 28px; }
-.book-actions a { display: inline-block; padding: 9px 18px; border: 1px solid var(--links); border-radius: 7px; font-size: 1.5rem; font-weight: 600; }
-.book-actions a.primary { color: #fff; background: #087f73; border-color: #087f73; }
-.book-actions a:hover { text-decoration: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--links) 18%, transparent); }
-@media (max-width: 600px) {
-  .content table { display: block; overflow-x: auto; }
-  .book-hero { padding-top: 12px; }
+.content details { margin-block: 16px; padding: 10px 14px; border: 1px solid var(--rule); border-radius: 6px; }
+.content summary { cursor: pointer; font-weight: 600; }
+
+/* Tables: quiet rules, no zebra; wide tables scroll inside themselves. */
+.content .table-wrapper { margin-block: 22px; overflow-x: auto; }
+.content table { width: 100%; margin: 0; border-collapse: collapse; font-size: .95em; }
+.content table thead { background: transparent; }
+.content table th {
+  padding: 8px 14px; border: 0; border-bottom: 2px solid var(--rule);
+  text-align: start; font-weight: 600; color: var(--muted); white-space: nowrap;
+}
+.content table td {
+  padding: 9px 14px; border: 0; border-bottom: 1px solid var(--rule);
+  vertical-align: top; line-height: 1.5;
+}
+.content table tbody tr:hover { background: var(--wash); }
+.content table td:first-child, .content table th:first-child { padding-inline-start: 4px; }
+
+/* Diagrams sit on their own surface and scroll rather than shrink. */
+.content pre.mermaid {
+  margin-block: 22px; padding: 18px 12px; overflow-x: auto; text-align: center;
+  border: 1px solid var(--rule); border-radius: 6px; background: var(--wash);
+}
+
+.content pre.mermaid { position: relative; cursor: zoom-in; }
+.content pre.mermaid:hover { border-color: var(--brand); }
+.content pre.mermaid svg { display: block; margin-inline: auto; }
+.diagram-dialog {
+  width: min(96vw, 1800px); height: 92vh; padding: 0; overflow: hidden;
+  border: 1px solid var(--rule); border-radius: 8px; background: var(--bg); color: var(--fg);
+}
+.diagram-dialog::backdrop { background: rgba(8, 14, 18, .6); }
+.diagram-bar { display: flex; justify-content: flex-end; padding: 8px; border-bottom: 1px solid var(--rule); }
+.diagram-dialog button {
+  padding: 6px 14px; border: 1px solid var(--rule); border-radius: 6px;
+  background: var(--wash); color: var(--fg); font: inherit; font-size: 1.4rem; cursor: pointer;
+}
+.diagram-dialog button:hover { border-color: var(--brand); }
+.diagram-canvas { height: calc(100% - 50px); padding: 20px; overflow: auto; box-sizing: border-box; }
+.diagram-canvas svg { display: block; margin: 0 auto; max-width: none; }
+
+/* Sidebar: parts are quiet labels, nested chapters are indented under a rule. */
+.sidebar { font-size: 1.45rem; }
+.sidebar .sidebar-scrollbox { padding: 14px 12px 28px; }
+.sidebar .chapter { line-height: 1.45; }
+.sidebar .chapter li.chapter-item { margin-block-start: .5em; }
+.sidebar .chapter li.part-title {
+  margin: 26px 0 4px; font-size: 1.25rem; font-weight: 700; color: var(--muted);
+}
+.sidebar .chapter li.spacer { display: none; }
+.sidebar .chapter ol.section {
+  margin-top: 4px; margin-inline-start: 6px; padding-inline-start: 12px;
+  border-inline-start: 1px solid var(--sidebar-spacer);
+}
+.sidebar .chapter a { border-radius: 4px; }
+.sidebar .chapter a.active { font-weight: 600; }
+.sidebar .on-this-page { margin-left: 8px; border-inline-start: 2px solid var(--sidebar-active); font-size: .95em; }
+.sidebar .chapter a:hover { color: var(--sidebar-active); text-decoration: none; }
+
+.menu-title { font-weight: 600; letter-spacing: .01em; }
+.nav-chapters { font-size: 2em; }
+
+/* Landing page */
+.landing { padding: 8px 0 4px; }
+.landing .lede { max-width: 62ch; margin: 0 0 22px; font-size: 1.95rem; line-height: 1.55; color: var(--muted); }
+.actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 0 0 6px; }
+.actions a {
+  display: inline-block; padding: 9px 16px; border: 1px solid var(--rule); border-radius: 6px;
+  font-size: 1.5rem; font-weight: 600; color: var(--fg); text-decoration: none;
+}
+.actions a:hover { border-color: var(--brand); color: var(--brand); text-decoration: none; }
+.actions a.primary { border-color: var(--brand); background: var(--brand); color: var(--brand-ink); }
+.actions a.primary:hover { color: var(--brand-ink); filter: brightness(1.08); }
+
+/* Quality ladder: each bar is the compressed size against the full-width input. */
+.ladder { margin: 22px 0 8px; }
+.ladder table { font-variant-numeric: tabular-nums; }
+.ladder th, .ladder td { white-space: nowrap; }
+.ladder td.size { width: 55%; white-space: normal; }
+.ladder .track {
+  display: block; height: 22px; border-radius: 3px;
+  background: repeating-linear-gradient(90deg, var(--rule) 0 1px, transparent 1px 10%), var(--wash);
+}
+.ladder .fill {
+  display: block; height: 100%; min-width: 4.2em; padding-inline-end: 7px; box-sizing: border-box;
+  border-radius: 3px; background: var(--brand); color: var(--brand-ink);
+  font-size: 1.25rem; font-weight: 600; line-height: 22px; text-align: end;
+}
+.ladder tbody tr:hover { background: transparent; }
+.ladder .num { text-align: end; }
+.content .note { margin-top: 6px; font-size: 1.4rem; color: var(--muted); }
+
+/* Path tiles */
+.paths { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 12px; margin: 20px 0; }
+.paths a {
+  display: block; padding: 14px 16px; border: 1px solid var(--rule); border-radius: 6px;
+  color: var(--fg); text-decoration: none;
+}
+.paths a:hover { border-color: var(--brand); background: var(--wash); text-decoration: none; }
+.paths strong { display: block; margin-bottom: 3px; color: var(--links); font-size: 1.65rem; }
+.paths span { display: block; font-size: 1.45rem; line-height: 1.45; color: var(--muted); }
+.tag {
+  display: inline-block; margin-inline-start: 6px; padding: 0 6px; border: 1px solid currentColor;
+  border-radius: 999px; font-size: 1.15rem; font-weight: 600; color: var(--caution); vertical-align: 1px;
+}
+
+@media (max-width: 620px) {
+  .content h1 { font-size: 2.8rem; }
+  .content h2 { font-size: 2.1rem; }
+  .landing .lede { font-size: 1.75rem; }
+  .ladder .wide { display: none; }
+  .ladder td.size { width: auto; min-width: 150px; }
+}
+@media print {
+  .content pre.mermaid, .content pre { border-color: #999; }
 }

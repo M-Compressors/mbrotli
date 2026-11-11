@@ -258,5 +258,5 @@ Short sink writes and errors must not cause accepted input to be replayed.
 The writer adapters retain pending output, and a later call may report an error
 after an earlier call already accepted input. `WouldBlock` is not EOF. If you
 need explicit readiness handling, use native sessions and drive them when your
-runtime says buffers are ready. See [streaming completion](README.md#streaming-and-completion)
+runtime says buffers are ready. See [streaming completion](streaming.md)
 and [framed retry mechanics](../architecture/framing.md#state-cancellation-and-retry).

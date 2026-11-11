@@ -155,7 +155,7 @@ See [framed event semantics](../architecture/framed-decoder.md).
 
 Set input, output, window, and workspace budgets in `DecoderConfig` before
 starting a raw decoder. For framing, use `FramedDecodeConfig` and its framing
-limits in addition to raw decoder limits. See [resource-limit configuration](README.md#decompression).
+limits in addition to raw decoder limits. See [resource-limit configuration](decompression.md).
 
 Output delivered before a later error is partial and has not passed complete
 validation. Failure values carry consumed/produced counts for that failing

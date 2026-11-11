@@ -74,7 +74,7 @@ while retrying it, keep the same operation and exact unconsumed input suffix.
 
 Use `InputSize::Exact` when the total input size is known. Otherwise use the
 default unknown size; the encoder infers its size hint when it first encodes.
-See [stream scheduling and identity](README.md#output-compatibility).
+See [stream scheduling and identity](correctness.md#output-compatibility).
 
 ## Drive parallel input
 

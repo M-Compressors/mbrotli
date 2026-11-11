@@ -2,7 +2,7 @@
 
 The public `compressor` module owns configuration, reusable codec state,
 sessions, dictionaries and synchronous I/O. Private `core` modules own encoding
-and state machines. See the [user guide](../docs/README.md) for usage.
+and state machines. See the [guides](../docs/README.md) for usage.
 
 ## Boundaries and configuration
 

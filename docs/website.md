@@ -36,17 +36,35 @@ JavaScript into `target/book-assets/`, then invokes `mdbook build` using the roo
 are renamed to `index.md` and the introductory page becomes the root `index.md`;
 their links are rewritten to match.
 
-Getting started, recipes, and benchmarks have curated navigation. Architecture
-entries follow the tables in `architecture/README.md`. Every source Markdown
-file must appear in the table of contents: a missing architecture entry fails
-preparation. New guide pages are included automatically at the end of the guide
-navigation until they receive a curated position.
+The sidebar has five parts in reading order: **Start here**, **Guides**,
+**Performance and correctness**, **How it works**, and **Contributing**.
+`GUIDE_PARTS` and `CONTRIBUTING` in `scripts/docs.py` hold the curated order.
+Nested chapters, such as the per-quality benchmark pages, stay folded until
+their parent is opened.
+
+Architecture entries follow the tables in `architecture/README.md`. Each
+`##` section there becomes a generated landing page under
+`architecture/sections/`, with its specifications nested beneath it. Every
+source Markdown file must appear in the table of contents: a missing
+architecture entry fails preparation. A new guide page is included
+automatically at the end of **Guides** until it receives a curated position.
 
 Relative links between published pages stay local. Links to source files outside
 the published directories point to GitHub's `master` branch. Code fences are
 preserved. The staged index pages become `index.html` pages. The build checks
 local files **and heading anchors** after rendering,
-including HTML links, images, and downloaded benchmark data.
+including HTML links, images, and downloaded benchmark data. It also resolves
+every link from the root `README.md` into the published site, so renaming a
+guide without updating the README fails the build.
+
+## Theme and diagrams
+
+`book-theme/custom.css` sets the palette for the default light theme and the
+`navy` dark theme, and styles tables, the sidebar, and the landing page
+(`docs/introduction.md`). `book-theme/diagram-zoom.js` opens a Mermaid diagram
+at its natural size when it is clicked or activated from the keyboard; `Close`
+or <kbd>Esc</kbd> returns it to the page. Both files are plain CSS and
+JavaScript with no build step.
 
 ## Check the examples
 
@@ -54,10 +72,9 @@ including HTML links, images, and downloaded benchmark data.
 python3 scripts/docs.py test-examples
 ```
 
-This compiles and runs each Rust program in getting started, parallel, frames,
-Sans I/O compression/decompression, and the I/O guide against the local crate
-with std and experimental features, plus
-Rayon. Each program checks its decoded result. Temporary consumer source and
+This compiles and runs each Rust program in the guides listed in `RECIPES` in
+`scripts/docs.py` against the local crate with std and experimental features,
+plus Rayon. A fenced `rust` block in those guides must be a complete program. Each program checks its decoded result. Temporary consumer source and
 build products remain under `target/book-examples/`.
 
 ## Publish with GitHub Pages

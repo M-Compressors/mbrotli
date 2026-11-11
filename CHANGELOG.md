@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+- Reorganize the documentation website and the README for readers. The sidebar
+  now has five parts in reading order (Start here, Guides, Performance and
+  correctness, How it works, Contributing) and folds nested chapters: the 24
+  per-quality benchmark pages and the architecture specifications open under
+  their parent instead of filling the sidebar. Each section of
+  `architecture/README.md` gets a generated landing page, and the index gains
+  reading paths and one-line scopes.
+  The catch-all user guide is split into `docs/configuration.md`,
+  `docs/memory.md`, `docs/decompression.md` and `docs/streaming.md`;
+  `docs/README.md` becomes the API chooser with the full entry-point table.
+  Output compatibility moves into `docs/correctness.md`, and the dated AFL
+  campaign records move to `docs/fuzz-campaigns.md`. The landing page leads
+  with a round trip and a quality ladder drawn from the 2026-11-08 lzbench run.
+  The theme has its own light and dark palette, quieter tables and a dialog that
+  shows a Mermaid diagram at its natural size. The README drops from 533 to
+  276 lines: quick start first, one API table, and links into the site for the
+  material that lives there. The book build now also checks every README link
+  into the published site, and the recipe check covers the four new guides.
+  Documentation only; the crate is unchanged.
+
 ## [v0.5.21](https://github.com/M-Compressors/mbrotli/releases/tag/v0.5.21) - 2026-11-11
 
 - Add an mdBook documentation website for GitHub Pages, publishing all guides,
