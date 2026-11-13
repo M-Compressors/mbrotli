@@ -244,7 +244,7 @@ sequenceDiagram
     CF-->>PR: job fails on a crash, with the reproducer
     Cron->>CF: batch: build (address), fuzz 17400 s on all cores
     CF->>Store: grown corpus, crashes
-    Cron->>CF: prune: minimize corpus, 14400 s
+    Cron->>CF: prune: merge timeout budget 45000 s, job limit 6 h
     CF->>Store: pruned corpus
     Cron->>CF: coverage: build (coverage), report
     CF->>Store: coverage report
@@ -268,17 +268,34 @@ build, the earlier 19800 seconds overran the limit by two minutes in run
 17400 seconds totals about 5 h 36 min, which leaves room for a slower build
 and a few more targets.
 
-Pruning gets 14400 seconds. ClusterFuzzLite visits the targets in a shuffled
+Pruning gets a 45000-second merge timeout budget and an explicit six-hour job
+limit, including builds. ClusterFuzzLite visits the targets in a shuffled
 order and gives each one the remaining budget divided by the targets still to
 run, as the timeout of that target's corpus merge; time a fast merge leaves
 unused passes to the later targets. The first timeout fails the whole job.
-600 seconds left 24 seconds per target, not enough to merge `c_abi`'s 5035
-inputs after the first batch run. 7200 seconds left about five minutes, and
-`parallel`, whose merge runs at about one input per second under
-AddressSanitizer, timed out after 333 seconds on 539 inputs when it came early
-in the order; it needs about 320 seconds for 600 inputs. 14400 seconds gives
-each target about ten minutes. The job takes only as long as the merges do,
-about 50 minutes, so the larger budget costs nothing unless a merge needs it.
+In run [43207937695](https://github.com/M-Compressors/mbrotli/actions/runs/43207937695),
+the previous 14400-second budget gave `encoder_session` about 633 seconds for
+6579 inputs. Its merge timed out, raising `TimeoutError: Merging new testcases
+timed out.` Batch fuzzing and coverage succeeded; no codec crash was reported.
+The larger budget gives each of the current 25 targets at least 1800 seconds,
+nearly three times that failed allowance. It is a sum of timeout allowances,
+not a requested execution duration: fast merges return immediately. The sum
+can exceed six hours while the independent job limit bounds actual wall time.
+This adds headroom; it does not guarantee completion for arbitrarily growing
+corpora or target counts.
+
+```mermaid
+flowchart TD
+    Budget[45000 s merge timeout budget] --> Share[remaining budget / remaining targets]
+    Floor[initial budget / target count: 1800 s for 25 targets] --> Limit[max of current share and initial share]
+    Share --> Limit
+    Limit --> Merge[merge one corpus under ASan]
+    Merge -->|completed| Upload[upload pruned corpus]
+    Upload --> Next[deduct elapsed time and visit next target]
+    Next --> Share
+    Merge -->|timed out| Fail[fail pruning job]
+    Wall[six-hour job limit including builds] -->|exceeded| Stop[cancel job]
+```
 
 In `ci-cflite-cron.yml` the jobs are chained: pruning follows batch fuzzing
 (ClusterFuzzLite requires pruning whenever batch fuzzing runs), and coverage

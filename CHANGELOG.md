@@ -2,12 +2,18 @@
 
 ## Unreleased
 
-- Fix Rust 1.100 Clippy failures by using const-compatible array swaps and
-  iterating cached distances and Huffman length counts directly. Generated
-  tables, probe order and Huffman validation remain unchanged.
+
 
 ## [v0.5.22](https://github.com/M-Compressors/mbrotli/releases/tag/v0.5.22) - 2026-11-13
 
+- Increase ClusterFuzzLite's corpus-pruning timeout budget to 45000 seconds
+  (at least 30 minutes per target for the current 25 targets), with an explicit
+  six-hour job limit. The previous budget timed out merging `encoder_session`'s
+  6579 inputs in run 43207937695; batch fuzzing itself succeeded.
+
+- Fix Rust 1.100 Clippy failures by using const-compatible array swaps and
+  iterating cached distances and Huffman length counts directly. Generated
+  tables, probe order and Huffman validation remain unchanged.
 - Speed up compression at qualities 0, 2 and 3, where lzbench had mbrotli
   within run-to-run noise of Google Brotli, by writing the common command
   with one store and without branches that depend on its shape. Profiling

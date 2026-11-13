@@ -124,6 +124,6 @@ How the repository measures, tests, proves and publishes itself.
 | --- | --- |
 | [Implementation comparison](benchmark-comparison.md) | Isolated library comparisons, validation, provenance and charts. |
 | [Fuzzing](fuzzing.md) | Target inputs, oracles, campaigns, regression replay and the libFuzzer adapters. |
-| [Continuous integration](ci.md) | Triggers, checks, Miri and AddressSanitizer, fuzz campaigns, coverage gating and release publishing. |
+| [Continuous integration](ci.md) | Triggers, checks, Miri and AddressSanitizer, fuzz campaigns and corpus merge budgets, coverage gating and release publishing. |
 | [Documentation publishing](documentation.md) | Source staging, navigation, section pages, recipe execution, link validation and Pages deployment. |
 | [Formal verification](formal-verification.md) | Charon/Aeneas translation to Lean 4, function specifications, round-trip theorems and the trusted base. |
