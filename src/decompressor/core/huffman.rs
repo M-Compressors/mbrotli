@@ -609,12 +609,12 @@ impl Builder {
         }
         let mut space = 1i32;
         let mut max_length = 0;
-        for length in 1..=MAX_LENGTH {
-            space = space * 2 - i32::from(self.counts[length]);
+        for (length, &count) in self.counts.iter().enumerate().skip(1) {
+            space = space * 2 - i32::from(count);
             if space < 0 {
                 return Err(InvalidDataKind::Huffman.into());
             }
-            if self.counts[length] != 0 {
+            if count != 0 {
                 max_length = length;
             }
         }

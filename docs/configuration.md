@@ -78,11 +78,11 @@ The default feature set is `std`, `compression`, and `decompression`.
 
 | Configuration | Dependency |
 | --- | --- |
-| Default std encoder + decoder | `mbrotli = "0.5.21"` |
-| Encoder only | `mbrotli = { version = "0.5.21", default-features = false, features = ["std", "compression"] }` |
-| Decoder only | `mbrotli = { version = "0.5.21", default-features = false, features = ["std", "decompression"] }` |
-| Framing and experimental formats | `mbrotli = { version = "0.5.21", features = ["experimental"] }` |
-| Alloc-backed codecs without std | `mbrotli = { version = "0.5.21", default-features = false, features = ["no_std", "compression", "decompression"] }` |
+| Default std encoder + decoder | `mbrotli = "0.5.22"` |
+| Encoder only | `mbrotli = { version = "0.5.22", default-features = false, features = ["std", "compression"] }` |
+| Decoder only | `mbrotli = { version = "0.5.22", default-features = false, features = ["std", "decompression"] }` |
+| Framing and experimental formats | `mbrotli = { version = "0.5.22", features = ["experimental"] }` |
+| Alloc-backed codecs without std | `mbrotli = { version = "0.5.22", default-features = false, features = ["no_std", "compression", "decompression"] }` |
 
 | Feature | Surface |
 | --- | --- |

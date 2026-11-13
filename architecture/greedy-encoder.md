@@ -751,7 +751,8 @@ through whole. Without the second run (ten probes), code 1's byte is read on its
 own. The mask is a superset of the scalar filter's admissions only when the
 cache holds `prepare_distance_cache`'s entries; a debug assertion checks that,
 and the search tests prepare their caches as the encoder does. Four-probe shapes
-and the scalar backend keep the plain loop. The vector range test loads the
+and the scalar backend enumerate the selected cache prefix directly, preserving
+each entry's index for short-code scoring. The vector range test loads the
 signed cache directly with `i32x16::load_array_ref`, then uses `Bytes::bitcast`
 to interpret its unchanged bits as `u32x16`. Zero and negative distances retain
 their rejection semantics. No owned array mapping or intermediate element
@@ -1236,6 +1237,40 @@ distance tables keep their checked lookups because static and built codes have
 different lengths. On a 285 KB binary map (`mapsdatazrh`) this is 3.3% fewer
 instructions at q2 and 0.1% on text at q2 and q3.
 
+Above 128 commands both paths first gather the three histograms with
+`build_histograms`, and then replay the commands through
+`store_data_with_huffman_codes`. Both loops run once per command and, in the
+reference's shape, both end in branches the data decides: how many literals
+the command inserts and whether it codes a distance. Most commands insert
+zero, one or two literals (46%, 25% and 10% on `silesia.tar` at quality 2),
+which a predictor cannot learn, so each loop was mispredicted about once per
+command. Both now treat a command with at most three literals without those
+branches:
+
+- `build_histograms` adds `u32::from(index < insert_len)` to the counters of
+  the three bytes at the command's position, and `u32::from(has_distance)` to
+  the counter of its distance code. The three totals are counted in locals
+  and added to the histograms once at the end; incremented through
+  `Histogram::add`, each total was reloaded and stored back for every symbol,
+  chaining every command to the one before it.
+- `store_data_with_huffman_codes` masks the absent literal and distance codes
+  to zero bits and stores the whole command with one write; see
+  [bit-output.md](bit-output.md#greedy-command-packing).
+
+Longer runs keep a loop, over one slice of the input where the run does not
+wrap the ring. The counts and the bits are the same either way.
+
+```mermaid
+flowchart LR
+    C[command] --> H["build_histograms:<br/>command code += 1"]
+    H --> S{"insert_len <= 3 and<br/>3 bytes in one slice?"}
+    S -->|yes| M["3 literal counters += (index < insert_len)"]
+    S -->|no| L["loop over the run's slice,<br/>or masked bytes across the wrap"]
+    M --> D["distance counter += has_distance"]
+    L --> D
+    D --> T["totals += locals, once per meta-block"]
+```
+
 `ShouldCompress` refuses blocks of at most two bytes outright, and samples
 every thirteenth literal of a block that is almost all literals: if the sample's
 entropy exceeds 7.92 bits per byte the block is stored verbatim, which is both
@@ -1509,6 +1544,14 @@ verify the same result when the policy selects the general fallback instead.
 - **Histogram accumulation and context sampling remain scalar.** Bucket tag
   filtering and the high-quality match-length scans have SIMD
   implementations; the greedy matchers scan whole words.
+- **The quick matchers do not hint a candidate's data.** The first byte a
+  search reads at a candidate is the most sampled load of the quality 2
+  search (15% of its cycles on `silesia.tar`; 23% in the reference). Hashing a
+  later position, reading its slot and prefetching the candidate measured 3
+  to 5% slower eight positions ahead and no faster three ahead at qualities
+  2 to 4:
+  the searches that follow are already in flight, and the hint costs an
+  extra hash and table read per position.
 - **Cold bucket matchers initialize their tables.** The reference leaves
   its bucket table uninitialised; safe Rust cannot. A cold q5–q8 call either
   zeroes a 1–16 MiB table (from the dense limit, or after a mid-stream

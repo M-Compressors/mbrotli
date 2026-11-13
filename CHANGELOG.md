@@ -2,6 +2,71 @@
 
 ## Unreleased
 
+- Fix Rust 1.100 Clippy failures by using const-compatible array swaps and
+  iterating cached distances and Huffman length counts directly. Generated
+  tables, probe order and Huffman validation remain unchanged.
+
+## [v0.5.22](https://github.com/M-Compressors/mbrotli/releases/tag/v0.5.22) - 2026-11-13
+
+- Speed up compression at qualities 0, 2 and 3, where lzbench had mbrotli
+  within run-to-run noise of Google Brotli, by writing the common command
+  with one store and without branches that depend on its shape. Profiling
+  `silesia.tar` in lzbench showed the remaining cost there was not
+  instructions but mispredictions: 46% of quality 2 commands carry no
+  literal, 25% one and 10% two, and 86% code a distance, so the loop over a
+  command's literals and the test for its distance were each mispredicted
+  about once per command, in the histogram pass and again in the writer.
+  - Qualities 2 and 3 (`store_meta_block_fast`, `store_meta_block_trivial`):
+    a command with at most three literals has the three literal codes at its
+    position and its distance code looked up unconditionally, the absent
+    ones masked to zero bits, and is stored — command code and extra bits,
+    literals, distance code and extra bits — in one write when that is at
+    most 56 bits. `build_histograms` counts the same way, adding zero for
+    absent symbols, and keeps its three totals in locals instead of
+    reloading and storing them per symbol. Mispredictions per compression
+    of `silesia.tar` fall from 67 to 51 million at quality 2 and from 73 to
+    59 million at quality 3; instructions rise 4.6% and 3.5%.
+  - Quality 0: the insert length, the copy length after a distance and the
+    copy length at the last distance take their symbol and extra-bit count
+    from tables built at compile time instead of an `if` chain over the
+    code ranges; the distance symbol and the repeat symbol are selected
+    rather than branched on; and the first four literals are packed next to
+    the insert symbol. A typical command is one store where it was four, and
+    a match that follows a match is one store where it was two. One
+    compression of `silesia.tar` runs 2.8% fewer instructions (5216 against
+    5366 million).
+
+  Output is byte-identical at every quality: the fields are concatenated in
+  the order separate writes emitted them, and differential unit tests
+  compare both paths with field-by-field emission across every table
+  boundary, with codes shallow enough to share a write and deep enough to
+  split it. In lzbench 2.4.1 (master `a6fa8aa`, gcc 15.2, fat LTO,
+  `-march=native`/`target-cpu=native`, AMD Ryzen 9 7950X VDS, one pinned
+  vCPU, whole `silesia.tar`, window 22; best iteration over eight fresh
+  processes per codec, the three codecs interleaved), compression speed in
+  MB/s is:
+
+  | Quality | Google Brotli 1.2.0 | before | after | after / before | after / Brotli |
+  | --- | ---: | ---: | ---: | ---: | ---: |
+  | 0 | 544.5 | 544.5 | 566.7 | +4.1% | 1.04 |
+  | 2 | 208.2 | 215.0 | 225.5 | +4.9% | 1.08 |
+  | 3 | 171.7 | 186.2 | 193.7 | +4.0% | 1.13 |
+
+  Compressed sizes are unchanged (78,466,829, 68,070,634 and 67,392,818
+  bytes) and equal to Google Brotli's. Qualities 1 and 4 to 11 run the same
+  code as before (instruction counts within 0.2%). Fresh processes differ by
+  up to 5% on this host, which is why each figure is a best of eight rather
+  than one run.
+
+  Measured and left out, with the numbers in the specifications: carrying
+  the bit writer's partial byte in a register instead of reading it back
+  (quality 1 ran 3% more instructions and slower), a look-ahead prefetch of
+  the candidate's data for the quality 2 to 4 matchers (3 to 5% slower
+  eight positions ahead, no faster three ahead), moving the quality 0 scan into a
+  function of its own (the bounds tests stayed and a call per match was
+  added) and packing an insert's first literals with its code in quality 1's
+  second pass (6% fewer mispredictions, no measurable speedup).
+
 - Reorganize the documentation website and the README for readers. The sidebar
   now has five parts in reading order (Start here, Guides, Performance and
   correctness, How it works, Contributing) and folds nested chapters: the 24

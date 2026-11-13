@@ -151,6 +151,12 @@ all workspace above its threshold; ReleaseAll releases on each operation drop.
 
 ## Parsing and regeneration
 
+Huffman table construction enumerates the fixed length-count array from length
+one through `MAX_LENGTH`, excluding the unused zero-length entry. At each length
+it doubles the remaining prefix-code space and subtracts that length's count;
+negative space rejects an oversubscribed code, and nonzero final space rejects
+an incomplete code. A single-symbol code takes the separate zero-bit path.
+
 ```mermaid
 flowchart TD
     Window[Demand-read window header] --> Header[Transactional meta-block header]
