@@ -216,33 +216,68 @@ existing backend selection and output overflow/error handling are unchanged;
 all code tables stay private. Focused tests cover single-symbol and wider
 literal alphabets, the 128-command boundary, and transitions in a reused writer.
 
-## Greedy literal packing
+## Greedy command packing
 
-`shared::bitstream::store_data_with_huffman_codes` emits the command, its extra
-bits, literal run and optional distance in reference order. A contiguous literal
-run is split into pairs and an optional final symbol. Two literal codes are
-packed least-significant first into one writer call: the second code starts at
-the first code's width. General literal trees have depth at most 15, so a pair
-needs at most 30 of the writer's 56 supported bits. Zero-width singleton codes
-also preserve the same bit position and output. This scalar bit packing has no
-SIMD dispatch boundary; it reduces the sequential writer calls.
+`shared::bitstream::store_data_with_huffman_codes` emits each command, its
+extra bits, its literal run and its optional distance in reference order, for
+the two storage paths that use one code per stream (qualities 2 and 3). How a
+command is written depends on its literal run.
 
-Ring-wrapped or incomplete input retains individual masked lookups, including
-its existing zero fallback for an absent byte. Huffman trees, command decisions
-and the resulting stream are unchanged. The caller provides the encoder's
-reserved initialized output with writer slack; overflow remains reported at the
-encoder boundary.
+**At most three literals** (`SHORT_RUN`). The three input bytes at the
+command's position are loaded as one array (`short_run`), whatever the run's
+length: a shorter run reads into the bytes its copy covers. Each of the three
+literal codes is looked up and then masked with an all-ones or all-zero word
+derived from `index < insert_len`, so the codes past the run contribute zero
+bits. The distance code and its extra bits are masked the same way with
+`has_distance`. The command code and extra bits, the literal codes, the
+distance code and its extra bits are then concatenated least-significant first
+— the order separate writes would emit them — and stored with one
+`BitWriter::write` when they total at most 56 bits. Deeper codes fall back to
+the paired writes below. Nothing in this path branches on the command's shape
+except the 56-bit test, which is almost always taken.
+
+**Longer runs, or no three-byte slice** (the end of the input, or a run across
+the ring's wrap). The command and its extra bits are one `write_pair`. A
+contiguous run is split into pairs and an optional final symbol; two literal
+codes are packed least-significant first into one writer call. General
+literal trees have depth at most 15, so a pair needs at most 30 of the
+writer's 56 bits and three codes at most 45. Ring-wrapped or incomplete input
+retains individual masked lookups, including the zero fallback for an absent
+byte. The distance, when the command has one, is a second `write_pair`.
+
+The short path exists because of how commands are distributed, not because
+its instruction count is lower — it is higher. On `silesia.tar` at quality 2,
+46% of commands carry no literal, 25% one and 10% two (85% at most three), and
+86% code a distance. A loop over a run that short and that variable, and a
+branch on whether a distance follows, were each mispredicted about once per
+command: the writer and the histogram pass (§5 of
+[greedy-encoder.md](greedy-encoder.md)) together accounted for a third of all
+mispredictions at quality 2. Masking instead of branching cut mispredictions
+per compression of that corpus from 67 to 51 million at quality 2 and from 73
+to 59 million at quality 3, while instructions rose 4.6% and 3.5%.
+
+A masked field is never written as a store of its own: the one-write path
+always carries the command code, and the fallback tests `insert_len != 0` and
+`has_distance` before its writes. No write is therefore issued at a position
+the field-by-field writer would not have written at. Huffman trees, command
+decisions and the resulting stream are unchanged; this scalar bit packing has
+no SIMD dispatch boundary. The caller provides the encoder's reserved
+initialized output with writer slack; overflow remains reported at the encoder
+boundary.
 
 ```mermaid
 flowchart TD
-    Command[Write command and extra bits] --> Run{Literal run contiguous?}
-    Run -->|yes| Pair[Pack two codes in original order]
-    Pair --> Write[Write at most 30 bits]
-    Write --> Pair
-    Write --> Tail[Write optional final symbol]
-    Run -->|no| Mask[Masked individual literal lookups and writes]
-    Tail --> Distance[Write optional distance]
-    Mask --> Distance
+    Command[Command code and extra bits] --> Short{"At most 3 literals and<br/>3 input bytes in one slice?"}
+    Short -->|yes| Mask["Look up 3 literal codes, distance code and extra bits;<br/>mask the absent ones to zero bits"]
+    Mask --> Fits{"Total at most 56 bits?"}
+    Fits -->|yes| One[One write for the whole command]
+    Fits -->|no| Split["write_pair command; write literals;<br/>write_pair distance"]
+    Short -->|no| Pair["write_pair command"]
+    Pair --> Run{Literal run contiguous?}
+    Run -->|yes| Two["Pack two codes per write, then the odd one"]
+    Run -->|no| Wrapped[Masked individual literal lookups and writes]
+    Two --> Distance["write_pair distance, if the command has one"]
+    Wrapped --> Distance
 ```
 
 ## Verification and known gaps
@@ -252,13 +287,27 @@ implicit and explicit distances, copy-length deltas and insert-only commands.
 Paired-field tests exercise both sides of the 56-bit limit at every alignment.
 A differential test compares packed and individual literal writes across every
 bit alignment, zero and maximum code widths, odd/even run lengths, ring wrapping
-and incomplete input.
+and incomplete input. A second one compares whole commands — zero to six
+literals, short and long copies, the last distance and explicit ones — with
+field-by-field writes, with shallow codes that fit one write and with the
+deepest codes, which take the split path, in flat, ring-wrapped and truncated
+input.
 
 Unit tests compare growing and fixed storage across bit/byte boundaries, rewinds,
 updates, prefixes, large raw writes and invalid byte indices. Fast-fragment tests
 compare both destinations across consecutive blocks and every host backend,
 including independent-fragment kernels. Integration tests and AFL compare full
 streams with C, and exercise append rollback and exact-sized slice behavior.
+
+`BitWriter::write` reads the partial byte back from the buffer on every
+call, as `BrotliWriteBits` does, so each write waits for the previous store to
+reach its load. Carrying that byte in the writer instead was measured and
+left out: it adds a shift per write, and on `silesia.tar` it moved qualities 0
+and 2 by less than run-to-run noise while quality 1, which writes the most
+fields, ran 3% more instructions and measurably slower. Writing fewer, wider
+fields — the command packing above and quality 0's in
+[fast-encoder.md](fast-encoder.md#41-command-emission) — is what shortens
+the chain.
 
 Direct growing output serves fast one-shot appends and known verbatim greedy
 append blocks. Fast I/O adapters use fixed output backing through the session

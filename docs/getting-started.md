@@ -8,14 +8,14 @@ Requires **Rust 1.89+**.
 ```sh
 cargo new brotli-demo
 cd brotli-demo
-cargo add mbrotli@0.5.21
+cargo add mbrotli@0.5.22
 ```
 
 Or add this to `Cargo.toml`:
 
 ```toml
 [dependencies]
-mbrotli = "0.5.21"
+mbrotli = "0.5.22"
 ```
 
 ## Compress and decompress

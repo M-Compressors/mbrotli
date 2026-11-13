@@ -222,6 +222,66 @@ The scan follows this order:
 - the final size guard rewrites the whole fragment verbatim when the compressed
   form exceeds `31 + 8 * len` bits.
 
+### 4.1. Command emission
+
+A serial fragment emits two kinds of command. A match the scan finds follows
+literals: its command is the insert length, the literals, the distance (or
+symbol 64, which repeats the last one) and the copy length. A match found
+immediately after another has no literals: a copy length and a distance.
+The reference writes each field with its own `BrotliWriteBits` behind an
+`if` chain over the field's code ranges; `one_pass::emit_insert_len`,
+`emit_literals`, `emit_distance`, `emit_copy_len` and
+`emit_copy_len_last_distance` are those functions and remain the general
+path.
+
+The common commands take `one_pass::emit_command` and
+`one_pass::emit_copy_and_distance` instead, which produce the same bits with
+fewer stores and no branch on the code range:
+
+- The symbol and extra-bit count of an insert length below 130, of a copy
+  length below 134 after a distance and of a copy length below 72 at the last
+  distance come from three tables (`INSERT_CODES`, `COPY_CODES`,
+  `LAST_COPY_CODES`), built at compile time by `length_codes` from the same
+  two formulas the `if` chains hold. The extra bits are the low `nbits` bits
+  of the biased length, so one expression serves the direct codes (no extra
+  bits, empty mask) and the two-prefix codes.
+- The distance symbol and the repeat symbol are both computed and one is
+  selected.
+- The first four literal codes are looked up for every command and the ones
+  past the run are masked to zero bits. A run longer than four continues
+  with `emit_literals` from the fifth literal.
+- Fields that fit the writer's 56 bits share a store. The distance and copy
+  length are at most 14 + 16 and 15 + 5 bits and always do; the insert
+  symbol and the packed literals are stored with them when the run is at
+  most four literals and the whole command is at most 56 bits, which is the
+  typical command: one store where the field-by-field path makes four.
+
+A command outside the tables — an insert of 130 or more (which is also where
+the uncompressed-mode test lives), a longer copy, or literals within four
+bytes of the end of the fragment — is refused before anything is written,
+and the caller emits it field by field. Independent parallel fragments spell
+their copies differently (an explicit copy of `matched - 2` and a second
+distance) and always take the general path for the first kind of command;
+they share `emit_copy_and_distance`.
+
+On `silesia.tar` 72% of the scan's matches insert at most four literals (42%
+exactly one) and 83% copy fewer than twelve bytes. One compression of it
+runs 2.8% fewer instructions than with field-by-field emission (5216 against
+5366 million, lzbench's fat-LTO build, AVX-512 host).
+
+```mermaid
+flowchart TD
+    M["match after literals"] --> T{"insert < 130, copy < 72,<br/>4 literal bytes loadable?"}
+    T -->|no| G["general path: emit_insert_len (or uncompressed mode),<br/>emit_literals, distance, emit_copy_len_last_distance"]
+    T -->|yes| F["table lookups: insert and copy symbols;<br/>select distance or repeat symbol;<br/>4 literal codes, masked past the run"]
+    F --> S{"insert <= 4 and<br/>command <= 56 bits?"}
+    S -->|yes| W1["one write: insert, literals, distance, copy"]
+    S -->|no| W2["write_pair insert + first 4 literals;<br/>emit_literals for the rest;<br/>one write: distance, copy"]
+    C["match right after a match"] --> U{"copy < 134?"}
+    U -->|yes| W3["one write: copy length, distance"]
+    U -->|no| G2["emit_copy_len, emit_distance"]
+```
+
 For a serial **final** fragment, `q0::stores_verbatim` checks
 `len <= cmd_code_numbits / 8` (an empty final fragment always qualifies: it is
 just the closing block). The compressed form needs at least 19 header bits,
@@ -555,6 +615,7 @@ removes their bounds checks without any unsafe code:
 | `match_len_vectors_*` | `as_chunks::<LANES>` plus `load_array_ref` |
 | `match_len_bytes` | `zip` + `take_while` over the tails |
 | `histogram::accumulate` | `as_chunks::<4>` into four independent counters, scalar tail |
+| `emit_command` (q0) | `first_chunk::<4>` of the run, the codes past its end masked to zero bits |
 | `emit_literals` (q0) | `as_chunks::<4>` above an eight literal run, then `as_chunks::<2>`, then singles |
 | `pack_literals` (q1) | greedy accumulation up to the writer's 56 bit limit |
 
@@ -562,8 +623,11 @@ removes their bounds checks without any unsafe code:
 
 The tree builder caps a literal depth at fourteen bits, so four codes are at
 most 56 bits and always fit one `BitWriter::write`; two fit with room to spare.
-Quality 0 emits literals between matches. Runs of at least eight literals use
-quadruples, followed by pairs and singles; shorter runs start with pairs.
+Quality 0 emits literals between matches. The first four of a run travel
+with the command (§4.1); what `emit_literals` writes — the rest of a longer
+run, or the whole run of a command outside the tables — uses quadruples for
+at least eight literals, followed by pairs and singles; shorter runs start
+with pairs.
 Quality 1 replays a meta-block's literals in quadruples too (`pack_literals`),
 then writes the up to three left over in one more call. It used to accumulate
 codes until the next would overflow 56 bits; that per-literal test cost more
@@ -605,7 +669,19 @@ smaller blocks and can substantially increase compressed size.
   `ip + 16` inside the input by construction. Carrying the loaded word
   between iterations removes one of the four; the scan on binary input still
   executes about a third more instructions per position than the C build and
-  measures 85% of it, against 96–99% on incompressible input.
+  measures 85% of it, against 96–99% on incompressible input. Moving the
+  scan into a function of its own, with the input cut sixteen bytes past
+  the limit, left all three compares in place and added a call per match:
+  1.6% more instructions on `silesia.tar`, so the scan stays inline.
+- **Quality 1 replays its commands one word per write.** `store_commands`
+  branches on whether a word is an insert and loops over its literals, which
+  is where a third of quality 1's mispredictions land. Quality 0's
+  whole-command emission (§4.1) has no counterpart there: the first pass
+  buffers insert, copy and distance as separate words. Packing an insert's
+  first four literals with its code, masked as in §4.1, was measured on
+  `silesia.tar`: mispredictions fell 6% (31.9 to 30.1 million per
+  compression), instructions rose 3.5% and throughput did not move outside
+  run-to-run noise, so the second pass is unchanged.
 - **`ShouldMergeBlock` and `ShouldCompress` use floating point.** They
   reproduce the reference's `double` arithmetic, including its
   single-precision `log2` table, because the decisions are observable in the

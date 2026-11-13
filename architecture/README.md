@@ -76,9 +76,9 @@ From the public `Compressor` down to the three encoder cores and the bit writer.
 | --- | --- |
 | [Compressor](compressor.md) | Public API, sessions, size-hint inference, I/O, dispatch and errors. |
 | [Encoder workspace](encoder-workspace.md) | Retained output backing, reset, parked match-finder tables, accounting and backpressure. |
-| [Bit output](bit-output.md) | Destinations, command-prefix lookup, literal tables, direct Vec appends, bit operations and overflow. |
+| [Bit output](bit-output.md) | Destinations, command-prefix lookup, literal tables, whole-command packing, direct Vec appends, bit operations and overflow. |
 | [Serial output identity](universal-encoding.md) | Shared scheduling, empty finalization and C compatibility. |
-| [Fast encoder](fast-encoder.md) | Qualities 0–1: fragments, direct encoding, entropy coding, prefix-code builders and SIMD scans. |
+| [Fast encoder](fast-encoder.md) | Qualities 0–1: fragments, direct encoding, table-driven command emission, entropy coding, prefix-code builders and SIMD scans. |
 | [Greedy encoder](greedy-encoder.md) | Qualities 2–9: hash tables and their growth, SIMD range hashing, match scoring, distance-cache prefilter and meta-blocks. |
 | [High-quality encoder](hq-encoder.md) | Qualities 10–11: tree search, SIMD distance-cache and dictionary filters, command pricing and clustering. |
 | [Owned sessions](owned-sessions.md) | Lifetime-free raw and framed sessions, `reinit` and input-free `flush`/`finish`. |
