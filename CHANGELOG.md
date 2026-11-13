@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Fix Rust 1.100 Clippy failures by using const-compatible array swaps and
+  iterating cached distances and Huffman length counts directly. Generated
+  tables, probe order and Huffman validation remain unchanged.
+
 ## [v0.5.22](https://github.com/M-Compressors/mbrotli/releases/tag/v0.5.22) - 2026-11-13
 
 - Speed up compression at qualities 0, 2 and 3, where lzbench had mbrotli

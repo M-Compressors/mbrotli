@@ -2776,8 +2776,8 @@ fn probe_last_distances<S: Simd, const BLOCK: usize>(
         probe_derived_distances::<S, BLOCK>(simd, query, &mut best_len, &mut found);
     } else {
         // The probe count is a constant, so this loop unrolls.
-        for index in 0..count {
-            let backward = query.cache[index] as usize;
+        for (index, &distance) in query.cache[..count].iter().enumerate() {
+            let backward = distance as usize;
             let prev_ix = cur_ix.wrapping_sub(backward);
             if prev_ix >= cur_ix || backward > max_backward {
                 continue;

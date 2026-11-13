@@ -751,7 +751,8 @@ through whole. Without the second run (ten probes), code 1's byte is read on its
 own. The mask is a superset of the scalar filter's admissions only when the
 cache holds `prepare_distance_cache`'s entries; a debug assertion checks that,
 and the search tests prepare their caches as the encoder does. Four-probe shapes
-and the scalar backend keep the plain loop. The vector range test loads the
+and the scalar backend enumerate the selected cache prefix directly, preserving
+each entry's index for short-code scoring. The vector range test loads the
 signed cache directly with `i32x16::load_array_ref`, then uses `Bytes::bitcast`
 to interpret its unchanged bits as `u32x16`. Zero and negative distances retain
 their rejection semantics. No owned array mapping or intermediate element

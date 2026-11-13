@@ -28,6 +28,10 @@ transform application and decode-only dictionary storage. It owns its own bit
 reader, Huffman reader, window/history and parser state in `decompressor::core`;
 encoder bit output and match-search types are not reused as decoder state.
 
+`shared::tables` builds the code-length repetition tables at compile time.
+Its reversal helpers use const-compatible slice swaps, reversing symbol and
+extra-bit entries in lockstep without changing their pairing or emitted bits.
+
 The encoder's experimental transform-list ownership and index construction stay
 under `compressor::core::rfc9841`, but application delegates to the same borrowed
 `Transform` that serialized-dictionary decoding uses. Built-in words in the

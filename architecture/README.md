@@ -65,7 +65,7 @@ Feature gates and primitives that both codecs share.
 | --- | --- |
 | [Codec features](codec-features.md) | Codec gates, shared types and isolated consumer checks. |
 | [No standard library](no-std.md) | Alloc-backed APIs, feature precedence and compile-time SIMD. |
-| [Shared primitives](shared-primitives.md) | Common data, transforms, fixed boxed tables, the baseline SIMD level, prefetch and mask scans. |
+| [Shared primitives](shared-primitives.md) | Common data, const repetition tables, transforms, fixed boxed tables, the baseline SIMD level, prefetch and mask scans. |
 | [Uninitialized output](uninit-output.md) | Write-only destinations for sessions and one-shot calls, and the C ABI's use of them. |
 
 ## Compression
