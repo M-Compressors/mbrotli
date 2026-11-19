@@ -361,6 +361,14 @@ switch runs only when `switch_ready` reports a complete header and more than one
 type. Otherwise the loop pauses and `prepare` takes the byte-exact switch or
 returns the error, so the hot loop pays no extra test.
 
+`switch_fast` reads without refilling: a type code and a count code of up to
+fifteen bits each, then up to 24 extra bits, so it needs 54 buffered bits. The
+command switch runs right after the command's refill, which leaves at least
+56. The literal and distance switches refill first when fewer than 54 remain
+and pause when they cannot. The 40 (47 for a large window) bits a distance
+symbol and its extra field need do not cover a switch. Before 0.5.23 the
+distance switch relied on them, which GHSA-gf34-947h-27j2 reported.
+
 ```mermaid
 stateDiagram-v2
     [*] --> Counting: header, count = BLEN or 16777216 for one type
@@ -390,7 +398,7 @@ flowchart TD
     More -->|done| Dist
     Extra -->|insert = 0| Dist{implicit?}
     Dist -->|yes| Pop[cache.pop]
-    Dist -->|no| Sym[distance block switch?; distance symbol]
+    Dist -->|no| Sym[distance block switch? refill to 54 bits first; distance symbol]
     Sym -->|code 0| Pop
     Sym -->|codes 1..15| Short[cache offset]
     Sym -->|others| Tab[layout table entry: base + extra << postfix]

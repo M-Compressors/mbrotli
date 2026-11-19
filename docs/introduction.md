@@ -13,7 +13,7 @@
 
 ```toml
 [dependencies]
-mbrotli = "0.5.22"
+mbrotli = "0.5.23"
 ```
 
 ```rust

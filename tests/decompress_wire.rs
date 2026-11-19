@@ -503,3 +503,114 @@ fn exhausted_single_type_block_count_is_rejected_like_c() {
         }
     ));
 }
+
+/// Writes a complex prefix code description for `lengths`, one entry per
+/// alphabet symbol up to the last nonzero length. Every code length from 0 to
+/// 15 gets a four-bit code-length code, which keeps the writer uniform.
+fn complex_code(wire: &mut Wire, lengths: &[u8]) {
+    const ORDER: [u8; 18] = [1, 2, 3, 4, 0, 5, 17, 6, 16, 7, 8, 9, 10, 11, 12, 13, 14, 15];
+    wire.bits(2, 0); // HSKIP = 0
+    for symbol in ORDER {
+        // The static code: (2, 1) is length four, (2, 0) is length zero.
+        wire.bits(2, u64::from(symbol < 16));
+    }
+    for &length in lengths {
+        // Canonical code-length codes equal their symbol, read MSB first.
+        wire.bits(4, u64::from(length.reverse_bits() >> 4));
+    }
+}
+
+/// GHSA-gf34-947h-27j2: a distance block switch in the fast command loop ran
+/// with only the 40 bits a distance needs, but a switch can read 54: a
+/// fifteen-bit type code, a fifteen-bit count code and 24 extra bits.
+///
+/// Each command here copies with ten extra bits after the command's refill
+/// left 56 to 63 buffered, so the second command's distance switch starts
+/// with 46 to 53 and needs all 54.
+fn distance_switch_after_a_ten_bit_copy() -> (Vec<u8>, Vec<u8>) {
+    // Few enough commands for the fuzz targets' 64 KiB output cap, so the
+    // AFL regression seed is this same stream.
+    const COMMANDS: usize = 56;
+    const COPY: usize = 1094; // Copy code 22: base 1094, ten extra bits.
+    // Lengths 1..=14 then two of 15 form a complete code whose longest
+    // codewords are all ones; `ones` is the last symbol's codeword.
+    let skewed = |zeros: usize| -> Vec<u8> {
+        let mut lengths: Vec<u8> = (1..=14).collect();
+        lengths.extend(std::iter::repeat_n(0, zeros));
+        lengths.extend([15, 15]);
+        lengths
+    };
+    let ones = (15, 0x7fff);
+    let length = COMMANDS * COPY;
+
+    let mut wire = Wire::window(16, false);
+    wire.raw(b"abcd");
+    wire.bits(1, 0); // ISLAST
+    wire.bits(2, 0); // four nibbles
+    wire.bits(16, length as u64 - 1);
+    wire.bits(1, 0); // compressed
+    wire.bits(1, 0); // one literal block type
+    wire.bits(1, 0); // one command block type
+    wire.bits(1, 1); // NBLTYPESD - 1 = 8 + 7: sixteen distance types
+    wire.bits(3, 3);
+    wire.bits(3, 7);
+    complex_code(&mut wire, &skewed(0)); // 18 type symbols, 15 is all ones
+    complex_code(&mut wire, &skewed(10)); // 26 count symbols, 25 is all ones
+    wire.bits(1, 0); // first count: symbol 0, base 1
+    wire.bits(2, 0);
+    wire.bits(6, 0); // NPOSTFIX = NDIRECT = 0
+    wire.bits(2, 0); // literal context mode
+    wire.bits(1, 0); // one literal tree
+    wire.bits(1, 0); // one distance tree
+    for (width, symbol) in [(8, u64::from(b'a')), (10, 390), (6, 0)] {
+        // Single-symbol simple codes: any literal, insert 0 with copy code
+        // 22 and an explicit distance, and distance symbol 0 (last distance).
+        wire.bits(2, 1);
+        wire.bits(2, 0);
+        wire.bits(width, symbol);
+    }
+    for command in 0..COMMANDS {
+        wire.bits(10, 0); // copy extra
+        if command == 1 {
+            wire.bits(ones.0, ones.1); // type symbol 15: type 13
+            wire.bits(ones.0, ones.1); // count symbol 25: base 16625
+            wire.bits(24, 0);
+        }
+    }
+    let expected = b"abcd".repeat(1 + length / 4);
+    (wire.finish(), expected)
+}
+
+#[test]
+fn distance_block_switch_needing_fifty_four_bits_decodes_like_c() {
+    let (compressed, expected) = distance_switch_after_a_ten_bit_copy();
+    assert_eq!(
+        c_decompress_status(&compressed, expected.len()),
+        Ok(expected.clone())
+    );
+    let mut decoder = Decompressor::new(DecoderConfig::default()).unwrap();
+    assert_eq!(decoder.decompress(&compressed).unwrap(), expected);
+}
+
+#[test]
+fn distance_block_switch_needing_fifty_four_bits_decodes_in_small_chunks() {
+    let (compressed, expected) = distance_switch_after_a_ten_bit_copy();
+    let mut decoder = Decompressor::new(DecoderConfig::default()).unwrap();
+    let mut session = decoder.start(DecodeStreamConfig::default()).unwrap();
+    let mut decoded = Vec::new();
+    let mut output = [0; 4096];
+    for chunk in compressed.chunks(7) {
+        let mut input = chunk;
+        loop {
+            let progress = session
+                .process(input, &mut output, DecodeOperation::Process)
+                .unwrap();
+            decoded.extend_from_slice(&output[..progress.produced]);
+            input = &input[progress.consumed..];
+            if input.is_empty() && progress.produced < output.len() {
+                break;
+            }
+        }
+    }
+    assert_eq!(decoded, expected);
+}

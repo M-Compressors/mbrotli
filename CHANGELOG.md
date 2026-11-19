@@ -4,6 +4,32 @@
 
 
 
+## [v0.5.23](https://github.com/M-Compressors/mbrotli/releases/tag/v0.5.23) - 2026-11-19
+
+- Fix a decoder bit-stream desynchronization at distance block switches
+  (GHSA-gf34-947h-27j2, reported by inikep through lzbench's CI). The fast
+  command loop switched the distance block type with only the 40 buffered
+  bits (47 for a large window) that a distance needs, but a switch reads up
+  to 54: a fifteen-bit type code, a fifteen-bit count code and 24 extra bits.
+  When fewer were buffered the reservoir count underflowed. Debug builds and
+  builds with `overflow-checks` panicked in `Bits::take`. Release builds lost
+  sync with the stream and rejected valid input; a Google Brotli quality-11
+  stream of an 18 MB ELF binary failed with `DictionaryReference`. The
+  distance switch now refills to 54 bits first, or pauses, like the literal
+  switch already did. No memory safety impact: the crate forbids `unsafe`
+  and output stays bounded by the meta-block length. A hand-built stream
+  whose distance switch needs all 54 bits with 46 to 53 buffered is now
+  decoded one-shot and in 7-byte chunks, and checked against C Brotli; the
+  same 125-byte stream is an AFL regression seed for the `decompress` and
+  `decode_streaming` targets.
+  - Decoding speed is unchanged: the check runs only on the cold
+    distance-switch branch. `cargo bench --bench decompress --
+    'decompress/reused/.*/mbrotli/' --warm-up-time 1 --measurement-time 3`
+    on Apple Silicon (Neon), 132 streams at qualities 0 to 11, before and after:
+    median changes between −10% and +7.5%, centred near −1%, with
+    incompressible inputs that barely enter the loop moving by ±3%, which
+    is run-to-run noise.
+
 ## [v0.5.22](https://github.com/M-Compressors/mbrotli/releases/tag/v0.5.22) - 2026-11-13
 
 - Increase ClusterFuzzLite's corpus-pruning timeout budget to 45000 seconds

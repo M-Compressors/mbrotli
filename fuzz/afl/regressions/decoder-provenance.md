@@ -54,3 +54,16 @@ write underflowed its `len() - 1` mask. The `decode_io_limits` input is
 deletion cannot shrink because the stream is bit-packed. The same path is
 covered deterministically, without AFL, by
 `tests/decompress_wire.rs::zero_length_transformed_dictionary_word_at_position_zero_matches_c`.
+
+`crash-distance-switch-54-bits.bin` in `decompress` and `decode_streaming` is
+the 125-byte reproducer for GHSA-gf34-947h-27j2, reported from lzbench's CI
+on a Google Brotli quality-11 stream of an 18 MB binary. It is not AFL
+output: it is the stream written by
+`tests/decompress_wire.rs::distance_switch_after_a_ten_bit_copy`, which the
+reporter's input cannot be shrunk to by bisection. Sixteen distance block
+types with fifteen-bit codes for type symbol 15 and count symbol 25, and
+copies with ten extra bits, put the second command's distance switch at 46 to
+53 buffered bits when it needs 54. The fast loop underflowed the reservoir
+count there: a panic in debug builds, a rejected stream in release ones. It
+decodes to 61,268 bytes, inside the targets' 64 KiB output cap, and C Brotli
+accepts it.
