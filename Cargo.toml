@@ -79,7 +79,7 @@ version = "0.8"
 
 # Criterion adapter for `hotpath-criterion.yml`.
 [dev-dependencies.hotpath]
-version = "0.31.0"
+version = "0.32.0"
 features = ["criterion-0-8"]
 
 [dev-dependencies.google-brotli-ffi]

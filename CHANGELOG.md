@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-
+- Update the optional `hotpath` profiling dependency to 0.32.0.
 
 ## [v0.5.23](https://github.com/M-Compressors/mbrotli/releases/tag/v0.5.23) - 2026-11-19
 
